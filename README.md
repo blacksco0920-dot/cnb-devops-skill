@@ -30,7 +30,7 @@ GitHub push main
 
 ```bash
 mkdir -p ~/.codex/skills
-git clone https://github.com/YOUR_NAME/cnb-devops-skill.git ~/.codex/skills/cnb-devops-skill
+git clone https://github.com/blacksco0920-dot/cnb-devops-skill.git ~/.codex/skills/cnb-devops-skill
 ```
 
 如果你是本地开发这个仓库，也可以运行：
