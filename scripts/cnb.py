@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from urllib import error, parse, request
 
 
@@ -57,6 +58,40 @@ def print_json(value):
     print(json.dumps(value, ensure_ascii=False, indent=2))
 
 
+def build_status(repo: str, sn: str):
+    return api("GET", f"/{encode_repo(repo)}/-/build/status/{parse.quote(sn, safe='')}")
+
+
+def active_stage_names(status_payload):
+    names = []
+    for pipeline in (status_payload.get("pipelinesStatus") or {}).values():
+        for stage in pipeline.get("stages") or []:
+            if stage.get("status") in ("start", "running"):
+                names.append(stage.get("name") or stage.get("id") or "unknown")
+    return names
+
+
+def error_stage_names(status_payload):
+    names = []
+    for pipeline in (status_payload.get("pipelinesStatus") or {}).values():
+        for stage in pipeline.get("stages") or []:
+            if stage.get("status") in ("error", "failed"):
+                names.append(stage.get("name") or stage.get("id") or "unknown")
+    return names
+
+
+def print_status_line(status_payload):
+    status = status_payload.get("status", "unknown")
+    active = active_stage_names(status_payload)
+    errors = error_stage_names(status_payload)
+    parts = [status]
+    if active:
+        parts.append("active: " + ", ".join(active))
+    if errors:
+        parts.append("error: " + ", ".join(errors))
+    print(" | ".join(parts), flush=True)
+
+
 def cmd_me(_args):
     print_json(api("GET", "/user"))
 
@@ -102,7 +137,51 @@ def cmd_trigger(args):
 
 
 def cmd_status(args):
-    print_json(api("GET", f"/{encode_repo(args.repo)}/-/build/status/{parse.quote(args.sn, safe='')}"))
+    payload = build_status(args.repo, args.sn)
+    if args.compact:
+        print_status_line(payload)
+    else:
+        print_json(payload)
+
+
+def cmd_builds(args):
+    query = parse.urlencode({"size": args.size})
+    payload = api("GET", f"/{encode_repo(args.repo)}/-/build/logs?{query}") or {}
+    builds = payload.get("data") if isinstance(payload, dict) else None
+    if not args.compact or builds is None:
+        print_json(payload)
+        return
+    for build in builds[: args.size]:
+        sn = build.get("sn", "")
+        status = build.get("status", "")
+        created = build.get("createTime", "")
+        sha = (build.get("sha") or "")[:10]
+        title = (build.get("commitTitle") or "").replace("\n", " ")[:100]
+        print(f"{sn}\t{status}\t{created}\t{sha}\t{title}")
+
+
+def cmd_wait(args):
+    deadline = time.monotonic() + args.timeout
+    last_status = None
+    while True:
+        payload = build_status(args.repo, args.sn)
+        status = payload.get("status", "unknown")
+        line_signature = (
+            status,
+            tuple(active_stage_names(payload)),
+            tuple(error_stage_names(payload)),
+        )
+        if line_signature != last_status or args.verbose:
+            print_status_line(payload)
+            last_status = line_signature
+
+        if status == "success":
+            return
+        if status in ("error", "failed"):
+            raise CnbError(f"Build {args.sn} ended with {status}")
+        if time.monotonic() >= deadline:
+            raise CnbError(f"Timed out waiting for build {args.sn} after {args.timeout}s")
+        time.sleep(args.interval)
 
 
 def cmd_runner_log(args):
@@ -150,7 +229,22 @@ def build_parser():
     p = sub.add_parser("status", help="Get build status by build sn")
     p.add_argument("repo", help="owner/repo")
     p.add_argument("sn", help="Build serial number")
+    p.add_argument("--compact", action="store_true", help="Print one status line instead of JSON")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("builds", help="List recent build records")
+    p.add_argument("repo", help="owner/repo")
+    p.add_argument("--size", type=int, default=5, help="Number of builds to fetch")
+    p.add_argument("--compact", action="store_true", help="Print tab-separated summary lines")
+    p.set_defaults(func=cmd_builds)
+
+    p = sub.add_parser("wait", help="Wait for a build to finish")
+    p.add_argument("repo", help="owner/repo")
+    p.add_argument("sn", help="Build serial number")
+    p.add_argument("--interval", type=int, default=20, help="Polling interval in seconds")
+    p.add_argument("--timeout", type=int, default=1800, help="Maximum wait time in seconds")
+    p.add_argument("--verbose", action="store_true", help="Print every poll, not only changes")
+    p.set_defaults(func=cmd_wait)
 
     p = sub.add_parser("runner-log", help="Download runner log by pipeline id")
     p.add_argument("repo", help="owner/repo")
