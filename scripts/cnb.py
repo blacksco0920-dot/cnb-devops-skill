@@ -116,8 +116,8 @@ def cmd_settings(args):
 def cmd_enable_auto(args):
     current = api("GET", f"/{encode_repo(args.repo)}/-/settings/cloud-native-build") or {}
     current["auto_trigger"] = True
-    current.setdefault("cron_auto_trigger", False)
-    current.setdefault("forked_repo_auto_trigger", False)
+    current["cron_auto_trigger"] = False
+    current["forked_repo_auto_trigger"] = False
     result = api("PUT", f"/{encode_repo(args.repo)}/-/settings/cloud-native-build", current)
     print_json({"ok": True, "repo": args.repo, "settings": current, "result": result})
 
