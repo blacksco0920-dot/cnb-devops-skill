@@ -41,7 +41,13 @@ python scripts/cnb.py promote <owner/repo> --branch main --sha <完整提交SHA>
 - `repo-cnb-trigger:rw`：手动触发测试或生产事件。
 - `group-resource:rw`：创建仓库。
 
-手动触发返回 `403` 且缺少 `repo-cnb-trigger:rw` 时，可在已启用自动触发且不会影响业务主仓库的前提下，通过普通 Git push 触发分支规则；不要绕过生产审批。
+手动触发返回 `403` 且缺少 `repo-cnb-trigger:rw` 时：
+
+- 测试环境可在已启用自动触发的前提下，通过普通 Git push 触发分支规则。
+- 同仓库生产晋级优先用专用审批分支执行 `cnb:apply`，由它对当前完整提交触发 `api_trigger_production`。
+- 跨仓库 `cnb:trigger` 仍需要具备对应权限的 Token。
+
+不要为了绕过权限而让 `main` 自动部署生产，也不要让审批分支重新构建镜像。
 
 ## 密钥仓库边界
 

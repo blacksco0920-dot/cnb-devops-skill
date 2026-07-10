@@ -105,6 +105,8 @@ python3 scripts/cnb.py promote <组织/仓库名> \
 
 `promote` 不接受短 SHA。生产流水线应拉取测试环境已经验证的镜像摘要，不应重新构建一次“看起来相同”的镜像。
 
+如果现有 Token 没有 `repo-cnb-trigger:rw`，同仓库可以配置一个专用 `production` 分支：分支 `push` 只执行 `cnb:apply`，对当前提交同步触发 `api_trigger_production`。这样仍有明确审批动作，也不需要把 `main` 改成自动部署生产。跨仓库触发仍需 Token 权限。
+
 ## CNB 密钥仓库说明
 
 CNB Secret 类型仓库目前只能在 CNB Web 创建和编辑，不能通过 Git clone/push 修改，也没有受支持的 OpenAPI 文件写入能力。因此推荐流程是：

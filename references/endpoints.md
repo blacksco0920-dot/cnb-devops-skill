@@ -118,6 +118,8 @@ Secret 类型仓库目前需要在 CNB Web 创建和编辑，不能 clone，也�
 
 `403` 且提示 `repo-cnb-trigger:rw`：Token 可以读或推送代码，但不能调用手动构建端点。重新创建最小权限 Token，或使用已经开启的普通 push 自动触发测试规则。
 
+同仓库生产审批可以在专用分支的 `push` 流水线中使用 `cnb:apply`，对当前提交触发 `api_trigger_production`；它不等同于跨仓库 `cnb:trigger`。参考 CNB 官方[内置任务文档](https://docs.cnb.cool/zh/build/internal-steps.html#apply)。
+
 `406`：确认 `Accept` Header，并确认 `owner/repo` 已整体 URL 编码。
 
 `docker pull unauthorized`：这是 TCR 登录问题，不是 CNB Token 问题。检查流水线和服务器各自的 TCR 凭据。
