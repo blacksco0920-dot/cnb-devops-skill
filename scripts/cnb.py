@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from urllib import error, parse, request
@@ -14,6 +15,13 @@ class CnbError(RuntimeError):
     pass
 
 
+CNB_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+EVENT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+GIT_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$")
+COMMIT_SHA = re.compile(r"^[0-9a-fA-F]{7,64}$")
+FULL_COMMIT_SHA = re.compile(r"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$")
+
+
 def token() -> str:
     value = os.environ.get("CNB_TOKEN", "").strip()
     if not value:
@@ -21,10 +29,52 @@ def token() -> str:
     return value
 
 
+def redact(value: str) -> str:
+    secret = os.environ.get("CNB_TOKEN", "")
+    return value.replace(secret, "[REDACTED]") if secret else value
+
+
+def validate_component(value: str, label: str) -> str:
+    if not CNB_COMPONENT.fullmatch(value):
+        raise CnbError(f"{label} must contain only letters, digits, '.', '_' or '-'")
+    return value
+
+
 def encode_repo(repo: str) -> str:
-    if "/" not in repo:
+    if repo.count("/") != 1:
         raise CnbError("Repository must be in owner/repo format, for example blacksco0920/FinAgent")
+    owner, name = repo.split("/", 1)
+    validate_component(owner, "Repository owner")
+    validate_component(name, "Repository name")
     return parse.quote(repo, safe="")
+
+
+def validate_git_ref(value: str, label: str = "Branch") -> str:
+    invalid = (
+        not GIT_REF.fullmatch(value)
+        or value.startswith(("/", "."))
+        or value.endswith(("/", ".", ".lock"))
+        or ".." in value
+        or "//" in value
+        or "@{" in value
+    )
+    if invalid:
+        raise CnbError(f"{label} is not a safe Git reference")
+    return value
+
+
+def validate_event(value: str) -> str:
+    if not EVENT_NAME.fullmatch(value):
+        raise CnbError("Event must contain only letters, digits, '.', '_' or '-'")
+    return value
+
+
+def validate_commit_sha(value: str, *, full: bool) -> str:
+    pattern = FULL_COMMIT_SHA if full else COMMIT_SHA
+    if not pattern.fullmatch(value):
+        requirement = "a full 40 or 64 character" if full else "a 7 to 64 character"
+        raise CnbError(f"Commit SHA must be {requirement} hexadecimal value")
+    return value.lower()
 
 
 def api(method: str, path: str, body=None):
@@ -49,7 +99,7 @@ def api(method: str, path: str, body=None):
                 return raw
     except error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
-        raise CnbError(f"CNB API {exc.code} {exc.reason}: {raw}") from exc
+        raise CnbError(f"CNB API {exc.code} {exc.reason}: {redact(raw)}") from exc
     except error.URLError as exc:
         raise CnbError(f"CNB API network error: {exc.reason}") from exc
 
@@ -97,16 +147,52 @@ def cmd_me(_args):
 
 
 def cmd_repos(args):
-    print_json(api("GET", f"/{parse.quote(args.slug, safe='')}/-/repos"))
+    slug = validate_component(args.slug, "Owner or group")
+    print_json(api("GET", f"/{parse.quote(slug, safe='')}/-/repos"))
+
+
+def repository_entries(payload):
+    if isinstance(payload, list):
+        return [entry for entry in payload if isinstance(entry, dict)]
+    if isinstance(payload, dict):
+        for key in ("data", "repositories", "repos", "items"):
+            entries = payload.get(key)
+            if isinstance(entries, list):
+                return [entry for entry in entries if isinstance(entry, dict)]
+    return []
+
+
+def repository_name(entry):
+    return entry.get("name") or entry.get("repo_name") or entry.get("repoName") or ""
+
+
+def create_repository(slug: str, name: str, description: str, public: bool):
+    body = {
+        "name": validate_component(name, "Repository name"),
+        "description": description or "",
+        "visibility": "public" if public else "private",
+    }
+    return api("POST", f"/{parse.quote(slug, safe='')}/-/repos", body)
 
 
 def cmd_create_repo(args):
-    body = {
-        "name": args.name,
-        "description": args.description or "",
-        "visibility": "private" if args.private else "public",
-    }
-    print_json(api("POST", f"/{parse.quote(args.slug, safe='')}/-/repos", body))
+    slug = validate_component(args.slug, "Owner or group")
+    print_json(create_repository(slug, args.name, args.description, args.public))
+
+
+def cmd_ensure_repo(args):
+    slug = validate_component(args.slug, "Owner or group")
+    name = validate_component(args.name, "Repository name")
+    payload = api("GET", f"/{parse.quote(slug, safe='')}/-/repos")
+    existing = next(
+        (entry for entry in repository_entries(payload) if repository_name(entry) == name),
+        None,
+    )
+    if existing is not None:
+        print_json({"ok": True, "created": False, "repository": existing})
+        return
+    created = create_repository(slug, name, args.description, args.public)
+    print_json({"ok": True, "created": True, "repository": created})
 
 
 def cmd_settings(args):
@@ -124,15 +210,26 @@ def cmd_enable_auto(args):
 
 def cmd_trigger(args):
     body = {
-        "branch": args.branch,
-        "event": args.event,
+        "branch": validate_git_ref(args.branch),
+        "event": validate_event(args.event),
         "title": args.title,
         "sync": "false",
     }
     if args.sha:
-        body["sha"] = args.sha
+        body["sha"] = validate_commit_sha(args.sha, full=False)
     if args.tag:
-        body["tag"] = args.tag
+        body["tag"] = validate_git_ref(args.tag, "Tag")
+    print_json(api("POST", f"/{encode_repo(args.repo)}/-/build/start", body))
+
+
+def cmd_promote(args):
+    body = {
+        "branch": validate_git_ref(args.branch),
+        "event": validate_event(args.event),
+        "title": args.title,
+        "sha": validate_commit_sha(args.sha, full=True),
+        "sync": "false",
+    }
     print_json(api("POST", f"/{encode_repo(args.repo)}/-/build/start", body))
 
 
@@ -202,12 +299,19 @@ def build_parser():
     p.add_argument("slug", help="Owner or group slug, for example blacksco0920")
     p.set_defaults(func=cmd_repos)
 
-    p = sub.add_parser("create-repo", help="Create a repository under an owner/group")
+    p = sub.add_parser("create-repo", help="Create a private repository under an owner/group")
     p.add_argument("slug", help="Owner or group slug")
     p.add_argument("name", help="Repository name")
     p.add_argument("--description", default="", help="Repository description")
-    p.add_argument("--private", action="store_true", help="Create as private repository")
+    p.add_argument("--public", action="store_true", help="Explicitly create a public repository")
     p.set_defaults(func=cmd_create_repo)
+
+    p = sub.add_parser("ensure-repo", help="Reuse an existing repository or create it privately")
+    p.add_argument("slug", help="Owner or group slug")
+    p.add_argument("name", help="Repository name")
+    p.add_argument("--description", default="", help="Repository description")
+    p.add_argument("--public", action="store_true", help="Explicitly create a public repository")
+    p.set_defaults(func=cmd_ensure_repo)
 
     p = sub.add_parser("settings", help="Get cloud-native build settings")
     p.add_argument("repo", help="owner/repo")
@@ -225,6 +329,14 @@ def build_parser():
     p.add_argument("--sha", default="", help="Optional commit SHA")
     p.add_argument("--tag", default="", help="Optional tag")
     p.set_defaults(func=cmd_trigger)
+
+    p = sub.add_parser("promote", help="Trigger production for one exact full commit SHA")
+    p.add_argument("repo", help="owner/repo")
+    p.add_argument("--sha", required=True, help="Full 40 or 64 character commit SHA")
+    p.add_argument("--branch", default="main", help="Release branch containing the commit")
+    p.add_argument("--event", default="api_trigger_production", help="CNB production event name")
+    p.add_argument("--title", default="Promote verified commit", help="Build title")
+    p.set_defaults(func=cmd_promote)
 
     p = sub.add_parser("status", help="Get build status by build sn")
     p.add_argument("repo", help="owner/repo")

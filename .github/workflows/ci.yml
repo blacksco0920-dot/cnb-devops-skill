@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 安装 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: 运行单元测试
+        run: python3 -m unittest discover -s tests -v
+
+      - name: 验证 Python 语法
+        run: python3 -m py_compile scripts/cnb.py
+
+      - name: 检查 Bash 语法
+        run: bash -n scripts/install-local.sh

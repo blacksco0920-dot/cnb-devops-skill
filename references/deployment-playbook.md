@@ -1,132 +1,144 @@
-# CNB Deployment Playbook
+# CNB 部署排查手册
 
-Use this reference after CNB API access works and the remaining problem is build, image, server deploy, or public routing.
+当 API 已可访问，但构建、镜像、服务器或公网链路失败时使用本手册。
 
-## Fast Triage
-
-1. List recent builds:
+## 1. 先定位失败层
 
 ```bash
-python scripts/cnb.py builds <owner/repo> --compact
-```
-
-2. Wait for the latest build:
-
-```bash
-python scripts/cnb.py wait <owner/repo> <sn>
-```
-
-3. If it fails, download the runner log and read the last useful section:
-
-```bash
-python scripts/cnb.py runner-log <owner/repo> <sn>-001 > /tmp/cnb.log
+python3 scripts/cnb.py builds <owner/repo> --compact
+python3 scripts/cnb.py wait <owner/repo> <build-sn>
+python3 scripts/cnb.py runner-log <owner/repo> <pipeline-id> > /tmp/cnb.log
 tail -240 /tmp/cnb.log
 ```
 
-4. Classify the failing stage:
+按阶段分类：
 
 ```text
-verify                  Local/CI build command mismatch or missing workspace package build.
-build and push image    Dockerfile, clean install, tsconfig, generated files, or registry push.
-deploy with server-ops  SSH, TCR login, server path, image env vars, compose, migrations.
-public route            DNS or Caddy/Nginx config, not necessarily app deployment.
+verify          依赖、monorepo 顺序或真实构建命令不一致
+image build     Dockerfile、构建上下文、干净安装或平台架构
+registry push   TCR 登录、命名空间、配额或网络
+server deploy   SSH 指纹、私钥、TCR 登录、Compose、迁移或健康检查
+public route    Caddy 网络、DNS、443、证书或应用 5xx
 ```
 
-## Preflight Before Pushing Fixes
+## 2. 复现流水线真实命令
 
-Run the nearest equivalent of the CNB commands locally before pushing:
+不要用单独 `tsc` 代替框架构建。读取 `.cnb.yml` 和 Dockerfile 后，运行完全相同的命令：
 
 ```bash
-rm -rf packages/*/dist apps/*/dist apps/*/.next
 pnpm install --frozen-lockfile
-pnpm db:generate
 pnpm --filter <workspace-package> build
 pnpm --filter <app> build
+docker build -f <Dockerfile> -t <local-test-tag> <context>
 ```
 
-For Docker-only failures, inspect the Dockerfile and run the exact command:
+常见差异：
+
+- Nest 的 `nest-cli.json` 可能指向 `tsconfig.build.json`。
+- Next 的 `next build` 会执行额外类型和路由检查。
+- Docker 使用干净依赖图，本机缓存可能掩盖 lockfile 或隐式依赖问题。
+- monorepo 必须先复制并构建被应用引用的 workspace 包。
+- 跨平台桌面项目要在 Windows、macOS、Linux CI 分别编译。
+
+## 3. 确认不可变镜像
+
+测试环境镜像使用完整提交标识，例如 `sha-<commit>`。测试通过后记录 registry digest：
 
 ```bash
-rg -n "RUN .*build|nest build|next build|tsc" Dockerfile apps packages
+docker buildx imagetools inspect <registry>/<image>:sha-<commit>
 ```
 
-If time permits, build the image locally with the same build args that CNB uses. This catches clean-install and copied-file differences earlier.
-
-## TypeScript Failures Seen In Docker
-
-Symptom:
+生产环境应引用：
 
 ```text
-TS2688: Cannot find type definition file for 'minimatch'
-Entry point for implicit type library 'minimatch'
+<registry>/<image>@sha256:<digest>
 ```
 
-Fix pattern:
+禁止生产重新构建，也不要依赖 `latest`。生产晋级后核对容器实际 image digest 与测试候选一致。
 
-```json
-{
-  "compilerOptions": {
-    "types": ["node"]
-  }
-}
-```
+## 4. 检查 SSH 身份
 
-For React/Next apps:
+首次接入：
 
-```json
-{
-  "compilerOptions": {
-    "types": ["node", "react", "react-dom"]
-  }
-}
-```
+1. 为项目生成独立 Ed25519 密钥。
+2. 把公钥加入服务器 `authorized_keys`。
+3. 通过可信渠道展示服务器主机指纹，让用户确认。
+4. 保存确认后的完整 `known_hosts` 内容。
 
-Important checks:
-
-- Nest may use `tsconfig.build.json` through `nest-cli.json`.
-- Next uses the app `tsconfig.json` during `next build`.
-- Workspace packages that extend a root tsconfig need the root config copied into the Docker build context before compilation.
-- Avoid adding stub `@types/*` packages as the first fix. Constrain type roots/types first.
-
-## Server Deploy Verification
-
-After CNB reports success, verify on the server:
-
-```bash
-docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
-```
-
-Check that the deployed image tag matches the Git SHA used by CNB:
-
-```bash
-awk -F= '/IMAGE=/ {print $1"="$2}' /opt/apps/<app>/.env
-```
-
-If containers are not reachable from the host, check the Docker network instead of assuming failure:
-
-```bash
-docker network inspect apps --format '{{range .Containers}}{{.Name}} {{end}}'
-docker exec infra-caddy wget -S --spider --timeout=5 http://<service-name>:<port>/ 2>&1
-```
-
-## Reverse Proxy Verification
-
-Deployment can succeed before public routing exists. Check which Caddyfile is actually mounted:
-
-```bash
-docker inspect infra-caddy --format '{{json .Mounts}}'
-```
-
-Then inspect that file, not a stale copy:
-
-```bash
-sudo sed -n '1,240p' /path/from/docker/inspect/Caddyfile
-```
-
-Report these states separately:
+流水线连接必须包含：
 
 ```text
-App deployed and healthy.
-Reverse proxy network can reach the app.
-Public DNS/domain route is not configured yet.
+BatchMode=yes
+StrictHostKeyChecking=yes
+UserKnownHostsFile=<managed-known-hosts>
 ```
+
+`ssh-keyscan` 只能采集候选公钥，不能独立建立信任。若流水线必须临时扫描，应先计算指纹并与已固定值严格比较。
+
+## 5. 检查服务器运行面
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+docker compose --env-file .release.env -f docker-compose.yml config --quiet
+docker compose --env-file .release.env -f docker-compose.yml ps
+```
+
+重点确认：
+
+- 服务器已登录 TCR，且能按 digest 拉取镜像。
+- 容器是 `healthy`，不是仅仅 `running`。
+- 数据库迁移在应用切流前成功。
+- 数据目录使用命名卷或明确挂载，发布不会删除持久卷。
+- 回滚仅恢复上一个 `.release.env`；迁移后的数据库需要单独评估兼容性。
+
+## 6. 检查统一 Caddy
+
+应用容器加入项目独立网络，统一 Caddy 同时加入该网络。先从 Caddy 容器内访问服务：
+
+```bash
+docker exec <caddy-container> wget -S --spider --timeout=5 \
+  http://<service-alias>:<port>/health
+```
+
+再验证并热加载真实挂载的 Caddyfile：
+
+```bash
+docker exec <caddy-container> caddy validate \
+  --config /etc/caddy/Caddyfile --adapter caddyfile
+docker exec <caddy-container> caddy reload \
+  --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+不要额外启动第二个反向代理占用 80/443。
+
+## 7. 分离公网诊断
+
+依次检查：
+
+```text
+域名是否解析到目标服务器
+TCP 443 是否可达
+Caddy 是否成功签发证书
+HTTPS 是否返回预期状态
+应用是否返回 5xx
+```
+
+状态应分别报告：
+
+```text
+应用已部署并健康。
+Caddy 已能访问应用。
+DNS 尚未生效，公网路由待处理。
+```
+
+DNS、443 或证书修复后只重查公网路由，不重建镜像。
+
+## 8. 发布完成验收
+
+- 构建记录对应预期完整 SHA。
+- 测试与生产的镜像 digest 一致。
+- Compose 服务 healthy。
+- Caddy 配置校验通过并可访问服务别名。
+- DNS 指向正确服务器。
+- HTTPS 证书有效，页面和 API 均无 5xx。
+- 发布历史保留最近若干个 `.release.env`，手动回滚可用。

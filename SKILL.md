@@ -1,115 +1,72 @@
 ---
 name: cnb-devops-skill
-description: Use this skill when working with CNB/cnb.cool DevOps workflows: querying or creating CNB repositories, enabling cloud-native build auto triggers, triggering builds, checking build status or logs, wiring GitHub-to-CNB-to-server deployment, or troubleshooting CNB/TCR/SSH Docker Compose deployments for independent projects.
-metadata:
-  short-description: Operate CNB DevOps workflows
+description: 安全操作 CNB/cnb.cool DevOps：查询或幂等创建仓库、启用云原生构建、同步 GitHub、触发并追踪构建、以同一提交和不可变镜像晋级生产，以及排查 CNB、TCR、SSH、Docker Compose、Caddy 和 HTTPS。用户提到 CNB API、自动部署、构建日志、密钥仓库或国内服务器发布时使用。
 ---
 
-# CNB DevOps Skill
+# CNB DevOps
 
-Use this skill to help users connect GitHub, CNB cloud-native build, Tencent TCR, and a lightweight server deployment based on Docker Compose.
+用确定性脚本操作 CNB API，并把构建成功、服务器健康和公网可访问作为三个独立验收面。
 
-## Default Workflow
+## 标准流程
 
-1. Confirm the user has a CNB token available as `CNB_TOKEN`.
-2. Confirm secrets are loaded from a private env file or shell variables. Never ask the user to paste secrets again if they already exist locally.
-3. Before pushing a deployment fix, run the same build surface that CNB/Docker will run:
-   - Monorepo packages first, then app build.
-   - For Nest, check `nest-cli.json` because it may use `tsconfig.build.json`, not `tsconfig.json`.
-   - For Next, run `next build`, not only `tsc`.
-   - If a failure only appears in Docker, inspect the Dockerfile command and reproduce that exact command or build the image locally.
-4. Prefer the bundled CLI for CNB API calls:
+1. 读取本机已有的 `CNB_TOKEN`，不要要求用户重复粘贴已保存的令牌。
+2. 先运行项目真实构建命令和 Docker 构建，再修改或触发远程流水线。
+3. 用 `ensure-repo` 幂等创建普通 CNB 仓库；默认私有，只有用户明确要求时才传 `--public`。
+4. 用临时 Git HTTP Header 同步代码。禁止把令牌放进 Git URL、remote 或磁盘配置。
+5. 测试环境构建 `sha-<完整提交>` 镜像，部署后记录 registry digest，并标记为已验证候选。
+6. 生产环境只晋级测试通过的同一完整提交和同一镜像摘要，不重新构建。
+7. 生产发布需要明确审批；失败时只恢复上一个 `.release.env`，不回滚数据库或删除持久卷。
+8. CNB 成功后继续检查容器、Caddy 网络、DNS、443 和 HTTPS 响应。
+
+## 快速命令
 
 ```bash
 python scripts/cnb.py me
-python scripts/cnb.py repos <owner-or-group>
+python scripts/cnb.py repos <owner>
+python scripts/cnb.py ensure-repo <owner> <repo>
 python scripts/cnb.py settings <owner/repo>
 python scripts/cnb.py enable-auto <owner/repo>
-python scripts/cnb.py trigger <owner/repo> --branch main
+python scripts/cnb.py trigger <owner/repo> --branch main --event api_trigger_staging
 python scripts/cnb.py builds <owner/repo> --compact
-python scripts/cnb.py status <owner/repo> <build-sn>
 python scripts/cnb.py wait <owner/repo> <build-sn>
+python scripts/cnb.py promote <owner/repo> --branch main --sha <完整提交SHA>
 ```
 
-5. Never print tokens, passwords, SSH keys, or registry passwords.
-6. For write operations, explain what will change before calling the command.
-7. If an API returns `403`, identify the missing permission from the CNB endpoint:
-   - `repo-manage:r` for reading build settings.
-   - `repo-manage:rw` for updating build settings.
-   - `repo-cnb-trigger:rw` for manual build triggers.
-   - `group-resource:rw` for creating repositories under a group/user slug.
-8. For deployment issues, check the chain in this order:
+`promote` 只接受 40 或 64 位完整 SHA。不要用 `latest`、分支名、短 SHA 或重新构建的镜像代替生产候选。
+
+## 令牌权限
+
+- `repo-manage:r`：读取构建设置。
+- `repo-manage:rw`：更新构建设置。
+- `repo-cnb-trigger:rw`：手动触发测试或生产事件。
+- `group-resource:rw`：创建仓库。
+
+手动触发返回 `403` 且缺少 `repo-cnb-trigger:rw` 时，可在已启用自动触发且不会影响业务主仓库的前提下，通过普通 Git push 触发分支规则；不要绕过生产审批。
+
+## 密钥仓库边界
+
+CNB Secret 类型仓库目前需要用户在 CNB Web 创建和编辑，不能 clone，也没有受支持的 OpenAPI 用来写入文件。应生成带中文说明的 `secret.example.yml`，引导用户一次性填入 Web 页面；不要伪造 API、浏览器脚本或把密钥提交到普通仓库。
+
+流水线只引用变量名。禁止打印 Token、TCR 密码、SSH 私钥、业务密钥或完整环境文件。
+
+## SSH 与 Caddy
+
+- 为每个项目生成独立 Ed25519 流水线身份，只把公钥安装到服务器。
+- 首次连接让用户确认主机指纹；保存完整 `known_hosts`，后续启用 `StrictHostKeyChecking=yes`。
+- 禁止不校验指纹地直接信任 `ssh-keyscan` 结果。
+- 默认使用统一 Caddy 容器管理反向代理和自动 HTTPS；应用容器不直接占用宿主机 80/443。
+- DNS 未解析或证书尚未签发时，报告“应用已部署，公网路由待处理”，不要重新构建镜像。
+
+## 故障定位
+
+按以下顺序检查，避免在错误层反复修改业务代码：
 
 ```text
-GitHub push
--> GitHub sync workflow
--> CNB repository exists
--> CNB auto_trigger enabled
--> CNB build succeeds
--> Dockerfile command matches local verification
--> image pushed to TCR
--> server can docker login / docker pull
--> /opt/server-ops exists
--> deploy script runs docker compose pull/up
--> containers are healthy on the Docker network
--> reverse proxy routes domain correctly
+Git 同步 -> CNB 规则 -> verify -> Docker 构建 -> TCR push
+-> SSH/known_hosts -> Docker Compose 健康 -> Caddy 网络
+-> DNS -> 443/证书 -> HTTP 响应
 ```
 
-## Deployment Lessons
+本地构建不能替代 Docker 构建。Nest 需确认 `nest-cli.json` 实际使用的 tsconfig；Next 需运行 `next build`；monorepo 需在干净依赖图中构建被引用包。
 
-- Treat CNB success as stage-based: `verify`, image build, image push, and server deploy can fail for different reasons.
-- Do not trust a local app build to prove Docker build health. Docker often copies different files, runs different tsconfigs, and installs a clean dependency graph.
-- When TypeScript reports a missing implicit type library such as `minimatch`, first constrain `compilerOptions.types` in the tsconfig actually used by the failing tool.
-- For Nest builds, `nest-cli.json` decides the tsconfig path. Patch `tsconfig.build.json` when `nest build` fails.
-- For Next builds, `next build` performs its own type validation. Patch the app tsconfig and rerun `next build`.
-- After CNB says `success`, still verify server state with `docker ps`, image tags, health status, and reverse proxy reachability.
-- If public domains are not resolved or not present in Caddy/Nginx, report "deployment succeeded, public route pending" instead of treating it as app failure.
-
-## Common Commands
-
-List repositories:
-
-```bash
-python scripts/cnb.py repos blacksco0920
-```
-
-Create a repository:
-
-```bash
-python scripts/cnb.py create-repo blacksco0920 FinAgentCrm
-```
-
-Enable cloud-native build auto trigger:
-
-```bash
-python scripts/cnb.py enable-auto blacksco0920/FinAgentCrm
-```
-
-Trigger a build:
-
-```bash
-python scripts/cnb.py trigger blacksco0920/FinAgentCrm --branch main
-```
-
-Get status:
-
-```bash
-python scripts/cnb.py status blacksco0920/FinAgentCrm <sn>
-```
-
-List recent builds:
-
-```bash
-python scripts/cnb.py builds blacksco0920/FinAgentCrm --compact
-```
-
-Wait for a build:
-
-```bash
-python scripts/cnb.py wait blacksco0920/FinAgentCrm <sn>
-```
-
-## References
-
-Read `references/endpoints.md` when you need endpoint paths, permissions, request bodies, or troubleshooting notes.
-Read `references/deployment-playbook.md` when a build or server deployment fails after the basic CNB API call succeeds.
+需要端点、权限和请求体时读取 `references/endpoints.md`。需要构建、服务器或公网故障排查时读取 `references/deployment-playbook.md`。

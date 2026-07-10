@@ -1,84 +1,72 @@
-# CNB Endpoint Notes
+# CNB OpenAPI 参考
 
-Base URL:
+## 连接约定
 
 ```text
-https://api.cnb.cool
-```
-
-Authentication:
-
-```http
-Authorization: Bearer <CNB_TOKEN>
+Base URL: https://api.cnb.cool
 Accept: application/vnd.cnb.api+json
-Content-Type: application/json
+Authorization: Bearer <CNB_TOKEN>
 ```
 
-Repository path parameters such as `owner/repo` must be URL encoded:
+`owner/repo` 作为单个路径参数时必须整体 URL 编码：
 
 ```text
-blacksco0920/FinAgentCrm -> blacksco0920%2FFinAgentCrm
+team/sample -> team%2Fsample
 ```
 
-## Safe Read Endpoints
+脚本只从环境变量读取 Token。禁止把 Token 放进命令参数、Git URL、remote 或普通配置文件。
 
-Current user:
+## 只读端点
+
+当前用户：
 
 ```http
 GET /user
 ```
 
-List repositories:
+列出组织或用户仓库：
 
 ```http
 GET /{slug}/-/repos
 ```
 
-Get cloud-native build settings:
+读取云原生构建设置，需要 `repo-manage:r`：
 
 ```http
-GET /{repo}/-/settings/cloud-native-build
+GET /{encoded-owner/repo}/-/settings/cloud-native-build
 ```
 
-Required permission:
-
-```text
-repo-manage:r
-```
-
-Get build status:
+读取构建状态和记录：
 
 ```http
-GET /{repo}/-/build/status/{sn}
+GET /{encoded-owner/repo}/-/build/status/{sn}
+GET /{encoded-owner/repo}/-/build/logs?size=5
+GET /{encoded-owner/repo}/-/build/runner/download/log/{pipelineId}
 ```
 
-Download runner log:
+## 写入端点
 
-```http
-GET /{repo}/-/build/runner/download/log/{pipelineId}
-```
-
-## Write Endpoints
-
-Create repository:
+创建普通仓库，需要 `group-resource:rw`：
 
 ```http
 POST /{slug}/-/repos
 ```
 
-Required permission:
-
-```text
-group-resource:rw
+```json
+{
+  "name": "sample",
+  "description": "",
+  "visibility": "private"
+}
 ```
 
-Update cloud-native build settings:
+CLI 默认 `private`，只有显式 `--public` 才创建公开仓库。优先使用 `ensure-repo`，避免重试时创建失败或重复操作。
+
+更新构建设置，需要 `repo-manage:rw`：
 
 ```http
-PUT /{repo}/-/settings/cloud-native-build
+PUT /{encoded-owner/repo}/-/settings/cloud-native-build
 ```
-
-Example body:
 
 ```json
 {
@@ -88,58 +76,50 @@ Example body:
 }
 ```
 
-Required permission:
-
-```text
-repo-manage:rw
-```
-
-Start build:
+触发构建，需要 `repo-cnb-trigger:rw`：
 
 ```http
-POST /{repo}/-/build/start
+POST /{encoded-owner/repo}/-/build/start
 ```
 
-Example body:
+测试事件：
 
 ```json
 {
   "branch": "main",
-  "event": "api_trigger_codex",
-  "title": "Triggered by Codex",
+  "event": "api_trigger_staging",
+  "title": "Build release candidate",
   "sync": "false"
 }
 ```
 
-Required permission:
+生产晋级必须传完整提交 SHA：
 
-```text
-repo-cnb-trigger:rw
+```json
+{
+  "branch": "main",
+  "event": "api_trigger_production",
+  "title": "Promote verified commit",
+  "sha": "0123456789abcdef0123456789abcdef01234567",
+  "sync": "false"
+}
 ```
 
-## Troubleshooting
+## Secret 仓库限制
 
-`403` from build trigger:
+Secret 类型仓库目前需要在 CNB Web 创建和编辑，不能 clone，也没有受支持的 OpenAPI 用于写入 `envs.yml`。API 助手不得把 Secret 仓库当成普通仓库创建，也不得尝试本地 push。
 
-```text
-The token usually lacks repo-cnb-trigger:rw.
-```
+推荐让工具生成字段模板，再让用户在 Web 端一次性填写。参考 CNB 官方文档：
 
-`406` from settings endpoints:
+- <https://docs.cnb.cool/zh/repo/secret.html>
+- <https://docs.cnb.cool/zh/develops/openapi.html>
 
-```text
-Check the Accept header and ensure owner/repo is URL encoded.
-```
+## 常见响应
 
-`docker pull unauthorized` on the server:
+`403` 且提示 `repo-cnb-trigger:rw`：Token 可以读或推送代码，但不能调用手动构建端点。重新创建最小权限 Token，或使用已经开启的普通 push 自动触发测试规则。
 
-```text
-This is a TCR login issue, not a CNB token issue.
-Run docker login ccr.ccs.tencentyun.com on the deployment server.
-```
+`406`：确认 `Accept` Header，并确认 `owner/repo` 已整体 URL 编码。
 
-Server deployment fails with missing `/opt/server-ops`:
+`docker pull unauthorized`：这是 TCR 登录问题，不是 CNB Token 问题。检查流水线和服务器各自的 TCR 凭据。
 
-```text
-Clone or sync the deployment repository to /opt/server-ops, then rerun the CNB deployment.
-```
+CNB `success` 但域名失败：继续检查服务器容器、Caddy 网络、DNS、443 与证书，不要直接重新构建镜像。
