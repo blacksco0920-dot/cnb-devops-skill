@@ -4,6 +4,14 @@
 
 ## 1. 先定位失败层
 
+首次同步空仓库前，先建立并推送 `main`，再同步其他分支和标签。完成后校验：
+
+```bash
+python3 scripts/cnb.py head <owner/repo>
+```
+
+若默认分支不是 `main`，先在 CNB Web 切换默认分支。不要直接删除当前默认分支，也不要依赖首次功能分支推送来初始化仓库。
+
 ```bash
 python3 scripts/cnb.py builds <owner/repo> --compact
 python3 scripts/cnb.py wait <owner/repo> <build-sn>

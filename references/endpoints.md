@@ -36,6 +36,14 @@ GET /{slug}/-/repos
 GET /{encoded-owner/repo}/-/settings/cloud-native-build
 ```
 
+读取仓库默认分支，需要 `repo-code:r`：
+
+```http
+GET /{encoded-owner/repo}/-/git/head
+```
+
+当前受支持的 OpenAPI 没有修改默认分支的端点。新建空仓库应先推送 `main`；若历史仓库默认分支错误，在 CNB Web 的仓库基础设置中切换后，再删除旧分支。
+
 读取构建状态和记录：
 
 ```http

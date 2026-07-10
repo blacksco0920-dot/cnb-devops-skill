@@ -24,7 +24,7 @@ Caddy 自动 HTTPS
 
 ## 能做什么
 
-- 查询 CNB 用户、仓库、构建设置和构建记录
+- 查询 CNB 用户、仓库、默认分支、构建设置和构建记录
 - 幂等创建普通仓库，默认私有
 - 开启云原生构建自动触发
 - 手动触发测试构建并等待结果
@@ -83,6 +83,15 @@ python3 scripts/cnb.py enable-auto <组织/仓库名>
 ```bash
 python3 scripts/cnb.py ensure-repo <组织> <仓库名> --public
 ```
+
+新建空仓库时，先推送 `main`，再推送功能分支和标签。CNB 可能把第一个收到的分支设为默认分支：
+
+```bash
+git push cnb main
+python3 scripts/cnb.py head <组织/仓库名>
+```
+
+预期输出中的 `name` 为 `main`。Git remote 中不要包含 Token，认证继续使用临时 HTTP Header 或系统凭据。若历史仓库默认分支已经设错，先在 CNB Web 的“仓库设置 -> 基础设置”中切换为 `main`，确认后再删除旧分支；当前受支持的 OpenAPI 只提供默认分支读取接口。
 
 ### 2. 构建并验证测试环境
 
@@ -148,6 +157,7 @@ python3 scripts/cnb.py me
 python3 scripts/cnb.py repos <owner>
 python3 scripts/cnb.py create-repo <owner> <repo>
 python3 scripts/cnb.py ensure-repo <owner> <repo>
+python3 scripts/cnb.py head <owner/repo>
 python3 scripts/cnb.py settings <owner/repo>
 python3 scripts/cnb.py enable-auto <owner/repo>
 python3 scripts/cnb.py trigger <owner/repo> [选项]

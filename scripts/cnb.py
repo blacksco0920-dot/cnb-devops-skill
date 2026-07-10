@@ -199,6 +199,10 @@ def cmd_settings(args):
     print_json(api("GET", f"/{encode_repo(args.repo)}/-/settings/cloud-native-build"))
 
 
+def cmd_head(args):
+    print_json(api("GET", f"/{encode_repo(args.repo)}/-/git/head"))
+
+
 def cmd_enable_auto(args):
     current = api("GET", f"/{encode_repo(args.repo)}/-/settings/cloud-native-build") or {}
     current["auto_trigger"] = True
@@ -316,6 +320,10 @@ def build_parser():
     p = sub.add_parser("settings", help="Get cloud-native build settings")
     p.add_argument("repo", help="owner/repo")
     p.set_defaults(func=cmd_settings)
+
+    p = sub.add_parser("head", help="Get the repository default branch")
+    p.add_argument("repo", help="owner/repo")
+    p.set_defaults(func=cmd_head)
 
     p = sub.add_parser("enable-auto", help="Enable cloud-native build auto trigger")
     p.add_argument("repo", help="owner/repo")

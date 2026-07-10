@@ -85,6 +85,18 @@ class CnbCliTests(unittest.TestCase):
         self.assertTrue(result["created"])
         self.assertEqual(api.call_count, 2)
 
+    def test_head_reads_encoded_repository_default_branch(self):
+        args = types.SimpleNamespace(repo="team/sample")
+        with mock.patch.object(
+            cnb,
+            "api",
+            return_value={"name": "main", "protected": False},
+        ) as api:
+            result = self.capture(cnb.cmd_head, args)
+
+        self.assertEqual(result["name"], "main")
+        api.assert_called_once_with("GET", "/team%2Fsample/-/git/head")
+
     def test_trigger_rejects_unsafe_git_reference_before_api_call(self):
         args = types.SimpleNamespace(
             repo="team/sample",

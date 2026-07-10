@@ -12,11 +12,13 @@ description: 安全操作 CNB/cnb.cool DevOps：查询或幂等创建仓库、�
 1. 读取本机已有的 `CNB_TOKEN`，不要要求用户重复粘贴已保存的令牌。
 2. 先运行项目真实构建命令和 Docker 构建，再修改或触发远程流水线。
 3. 用 `ensure-repo` 幂等创建普通 CNB 仓库；默认私有，只有用户明确要求时才传 `--public`。
-4. 用临时 Git HTTP Header 同步代码。禁止把令牌放进 Git URL、remote 或磁盘配置。
-5. 测试环境构建 `sha-<完整提交>` 镜像，部署后记录 registry digest，并标记为已验证候选。
-6. 生产环境只晋级测试通过的同一完整提交和同一镜像摘要，不重新构建。
-7. 生产发布需要明确审批；失败时只恢复上一个 `.release.env`，不回滚数据库或删除持久卷。
-8. CNB 成功后继续检查容器、Caddy 网络、DNS、443 和 HTTPS 响应。
+4. 新建空仓库时先同步 `main`，再同步功能分支和标签；首个推送分支可能被 CNB 设为默认分支。
+5. 用 `head` 校验默认分支。若历史仓库不是 `main`，先在 CNB Web 切换，再删除旧分支；当前受支持的 OpenAPI 只提供读取能力。
+6. 用临时 Git HTTP Header 同步代码。禁止把令牌放进 Git URL、remote 或磁盘配置。
+7. 测试环境构建 `sha-<完整提交>` 镜像，部署后记录 registry digest，并标记为已验证候选。
+8. 生产环境只晋级测试通过的同一完整提交和同一镜像摘要，不重新构建。
+9. 生产发布需要明确审批；失败时只恢复上一个 `.release.env`，不回滚数据库或删除持久卷。
+10. CNB 成功后继续检查容器、Caddy 网络、DNS、443 和 HTTPS 响应。
 
 ## 快速命令
 
@@ -24,6 +26,7 @@ description: 安全操作 CNB/cnb.cool DevOps：查询或幂等创建仓库、�
 python scripts/cnb.py me
 python scripts/cnb.py repos <owner>
 python scripts/cnb.py ensure-repo <owner> <repo>
+python scripts/cnb.py head <owner/repo>
 python scripts/cnb.py settings <owner/repo>
 python scripts/cnb.py enable-auto <owner/repo>
 python scripts/cnb.py trigger <owner/repo> --branch main --event api_trigger_staging
