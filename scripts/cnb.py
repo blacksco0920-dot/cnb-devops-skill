@@ -40,11 +40,18 @@ def validate_component(value: str, label: str) -> str:
     return value
 
 
+def validate_namespace(value: str, label: str = "Organization") -> str:
+    parts = value.split("/")
+    if not parts or any(not CNB_COMPONENT.fullmatch(part) for part in parts):
+        raise CnbError(f"{label} must contain valid path components")
+    return value
+
+
 def encode_repo(repo: str) -> str:
-    if repo.count("/") != 1:
+    if "/" not in repo:
         raise CnbError("Repository must be in owner/repo format, for example blacksco0920/FinAgent")
-    owner, name = repo.split("/", 1)
-    validate_component(owner, "Repository owner")
+    owner, name = repo.rsplit("/", 1)
+    validate_namespace(owner, "Repository organization")
     validate_component(name, "Repository name")
     return parse.quote(repo, safe="")
 
@@ -146,8 +153,12 @@ def cmd_me(_args):
     print_json(api("GET", "/user"))
 
 
+def cmd_groups(_args):
+    print_json(api("GET", "/user/groups?page=1&page_size=100"))
+
+
 def cmd_repos(args):
-    slug = validate_component(args.slug, "Owner or group")
+    slug = validate_namespace(args.slug)
     print_json(api("GET", f"/{parse.quote(slug, safe='')}/-/repos"))
 
 
@@ -176,16 +187,20 @@ def create_repository(slug: str, name: str, description: str, public: bool):
 
 
 def cmd_create_repo(args):
-    slug = validate_component(args.slug, "Owner or group")
+    slug = validate_namespace(args.slug)
     print_json(create_repository(slug, args.name, args.description, args.public))
 
 
 def cmd_ensure_repo(args):
-    slug = validate_component(args.slug, "Owner or group")
+    slug = validate_namespace(args.slug)
     name = validate_component(args.name, "Repository name")
     payload = api("GET", f"/{parse.quote(slug, safe='')}/-/repos")
     existing = next(
-        (entry for entry in repository_entries(payload) if repository_name(entry) == name),
+        (
+            entry
+            for entry in repository_entries(payload)
+            if repository_name(entry).casefold() == name.casefold()
+        ),
         None,
     )
     if existing is not None:
@@ -298,6 +313,9 @@ def build_parser():
 
     p = sub.add_parser("me", help="Show current CNB user")
     p.set_defaults(func=cmd_me)
+
+    p = sub.add_parser("groups", help="List organizations available to the current CNB user")
+    p.set_defaults(func=cmd_groups)
 
     p = sub.add_parser("repos", help="List repositories under an owner/group")
     p.add_argument("slug", help="Owner or group slug, for example blacksco0920")

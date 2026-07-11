@@ -24,6 +24,14 @@ team/sample -> team%2Fsample
 GET /user
 ```
 
+列出当前用户加入的组织：
+
+```http
+GET /user/groups?page=1&page_size=100
+```
+
+仓库必须属于组织。`GET /user` 返回的 `username` 是登录身份，不是可用于创建仓库的组织路径；创建或查询仓库前应从该列表选择 `path`。单个可写组织可自动选择，多个组织应让用户选择。
+
 列出组织或用户仓库：
 
 ```http
@@ -68,7 +76,7 @@ POST /{slug}/-/repos
 }
 ```
 
-CLI 默认 `private`，只有显式 `--public` 才创建公开仓库。优先使用 `ensure-repo`，避免重试时创建失败或重复操作。
+CLI 默认 `private`，只有显式 `--public` 才创建公开仓库。优先使用 `ensure-repo`，避免重试时创建失败或重复操作。查询已有仓库时应忽略名称大小写，并继续使用服务端返回的实际路径。
 
 更新构建设置，需要 `repo-manage:rw`：
 

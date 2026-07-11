@@ -11,22 +11,24 @@ description: 安全操作 CNB/cnb.cool DevOps：查询或幂等创建仓库、�
 
 1. 读取本机已有的 `CNB_TOKEN`，不要要求用户重复粘贴已保存的令牌。
 2. 先运行项目真实构建命令和 Docker 构建，再修改或触发远程流水线。
-3. 用 `ensure-repo` 幂等创建普通 CNB 仓库；默认私有，只有用户明确要求时才传 `--public`。
-4. 新建空仓库时先同步 `main`，再同步功能分支和标签；首个推送分支可能被 CNB 设为默认分支。
-5. 用 `head` 校验默认分支。若历史仓库不是 `main`，先在 CNB Web 切换，再删除旧分支；当前受支持的 OpenAPI 只提供读取能力。
-6. 用临时 Git HTTP Header 同步代码。禁止把令牌放进 Git URL、remote 或磁盘配置。
-7. 功能分支只做开发；`main` 表示已合并的唯一代码基线，不直接代表生产版本。
-8. 测试环境构建 `sha-<完整提交>` 镜像，部署并通过健康检查后记录 registry digest，再创建 `deploydesk-<完整提交>` 候选标签。
-9. 使用 `.cnb/tag_deploy.yml` 暴露 CNB 原生测试/生产环境。生产审批后只调用共用的生产部署流水线，不重新构建。
-10. 生产环境必须使用候选测试运行记录中的同一完整提交、服务集合和镜像摘要；缺少摘要或任一摘要不一致时阻断发布。
-11. CNB Web、手机 H5 或桌面端发起的生产发布必须落到同一流水线，并按构建序号和完整 SHA 回写同一发布审计记录。
-12. 生产发布失败时只恢复上一个 `.release.env`，不回滚数据库或删除持久卷。
-13. CNB 成功后继续检查容器、Caddy 网络、DNS、443 和 HTTPS 响应。
+3. 调用 `GET /user/groups` 获取当前账号加入的组织。`GET /user` 返回的 `username` 只是登录身份，禁止把它当作仓库所属组织。
+4. 单个可写组织可自动选择；多个组织必须显式选择。再用 `ensure-repo` 按组织幂等复用或创建普通 CNB 仓库；匹配已有仓库名时忽略大小写并保留远端实际路径。默认私有，只有用户明确要求时才传 `--public`。
+5. 新建空仓库时先同步 `main`，再同步功能分支和标签；首个推送分支可能被 CNB 设为默认分支。
+6. 用 `head` 校验默认分支。若历史仓库不是 `main`，先在 CNB Web 切换，再删除旧分支；当前受支持的 OpenAPI 只提供读取能力。
+7. 用临时 Git HTTP Header 同步代码。禁止把令牌放进 Git URL、remote 或磁盘配置。
+8. 功能分支只做开发；`main` 表示已合并的唯一代码基线，不直接代表生产版本。
+9. 测试环境构建 `sha-<完整提交>` 镜像，部署并通过健康检查后记录 registry digest，再创建 `deploydesk-<完整提交>` 候选标签。
+10. 使用 `.cnb/tag_deploy.yml` 暴露 CNB 原生测试/生产环境。生产审批后只调用共用的生产部署流水线，不重新构建。
+11. 生产环境必须使用候选测试运行记录中的同一完整提交、服务集合和镜像摘要；缺少摘要或任一摘要不一致时阻断发布。
+12. CNB Web、手机 H5 或桌面端发起的生产发布必须落到同一流水线，并按构建序号和完整 SHA 回写同一发布审计记录。
+13. 生产发布失败时只恢复上一个 `.release.env`，不回滚数据库或删除持久卷。
+14. CNB 成功后继续检查容器、Caddy 网络、DNS、443 和 HTTPS 响应。
 
 ## 快速命令
 
 ```bash
 python scripts/cnb.py me
+python scripts/cnb.py groups
 python scripts/cnb.py repos <owner>
 python scripts/cnb.py ensure-repo <owner> <repo>
 python scripts/cnb.py head <owner/repo>

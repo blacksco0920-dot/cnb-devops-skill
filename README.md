@@ -74,9 +74,12 @@ python3 scripts/cnb.py me
 ### 1. 准备构建仓库
 
 ```bash
+python3 scripts/cnb.py groups
 python3 scripts/cnb.py ensure-repo <组织> <仓库名>
 python3 scripts/cnb.py enable-auto <组织/仓库名>
 ```
+
+先从 `groups` 输出中选择组织的 `path`。`me` 输出里的 `username` 只是登录身份，不能代替组织路径；这是 CNB 返回 404 时最常见的原因之一。
 
 仓库默认私有。只有明确需要开源时才使用：
 
@@ -154,6 +157,7 @@ CNB 构建成功不代表域名一定可访问；DNS 或证书失败也不应触
 ```bash
 python3 scripts/cnb.py --help
 python3 scripts/cnb.py me
+python3 scripts/cnb.py groups
 python3 scripts/cnb.py repos <owner>
 python3 scripts/cnb.py create-repo <owner> <repo>
 python3 scripts/cnb.py ensure-repo <owner> <repo>

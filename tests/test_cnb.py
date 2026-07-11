@@ -51,6 +51,12 @@ class CnbCliTests(unittest.TestCase):
 
         self.assertEqual(api.call_args.args[2]["visibility"], "public")
 
+    def test_groups_uses_current_user_organization_endpoint(self):
+        with mock.patch.object(cnb, "api", return_value=[]) as api:
+            self.capture(cnb.cmd_groups, types.SimpleNamespace())
+
+        api.assert_called_once_with("GET", "/user/groups?page=1&page_size=100")
+
     def test_ensure_repository_reuses_existing_repository(self):
         args = types.SimpleNamespace(
             slug="team",
@@ -66,6 +72,24 @@ class CnbCliTests(unittest.TestCase):
             result = self.capture(cnb.cmd_ensure_repo, args)
 
         self.assertFalse(result["created"])
+        api.assert_called_once_with("GET", "/team/-/repos")
+
+    def test_ensure_repository_reuses_existing_name_case_insensitively(self):
+        args = types.SimpleNamespace(
+            slug="team",
+            name="finagent",
+            description="",
+            public=False,
+        )
+        with mock.patch.object(
+            cnb,
+            "api",
+            return_value={"data": [{"name": "FinAgent", "path": "team/FinAgent"}]},
+        ) as api:
+            result = self.capture(cnb.cmd_ensure_repo, args)
+
+        self.assertFalse(result["created"])
+        self.assertEqual(result["repository"]["path"], "team/FinAgent")
         api.assert_called_once_with("GET", "/team/-/repos")
 
     def test_ensure_repository_creates_when_missing(self):
