@@ -207,15 +207,21 @@ ready, and whenever its role, instance, region, or maintenance window changes.
    Token, then execute a harmless TAT preflight before any release.
 
 Current compatibility gate: do not infer STS support from the plugin README.
-The exact pinned `tcloud-cmd` artifact verified for this workflow reads
-`PLUGIN_TOKEN` and passes it with SecretId and SecretKey to the Tencent Cloud
-SDK, even though the public parameter table omits the token field. Treat that
-implementation check as capability evidence, not release evidence. Production
-remains blocked until the selected digest receives the complete temporary
-credential triple through an approved Secret boundary and passes a harmless TAT
-preflight. If a selected artifact does not support all three fields, use a
-separate reviewed adapter or SDK client; never fall back to a long-lived
-customer key.
+The artifact inspected on 2026-08-30 was
+`tencentcom/tcloud-cmd:v1.2.0@sha256:04824cba6a59858a2c78d6ddfc75c63a30941c219c85f414b379f425c43e8845`.
+After confirming that exact RepoDigest, inspection of `/app/index.js` inside the
+image verified that it reads `PLUGIN_TOKEN`, passes Token with SecretId and
+SecretKey to the Tencent Cloud SDK, calls `RunCommand`, always polls
+`DescribeInvocations`, and calls `DescribeInvocationTasks` when instance output
+is requested. Repeat this inspection whenever the selected digest changes; a
+tag name or README claim is not transferable capability evidence.
+
+Treat that implementation check as capability evidence, not release evidence.
+Production remains blocked until the selected digest receives the complete
+temporary credential triple through an approved Secret boundary and passes a
+harmless TAT preflight. If a selected artifact does not support all three
+fields, use a separate reviewed adapter or SDK client; never fall back to a
+long-lived customer key.
 
 Official guidance:
 

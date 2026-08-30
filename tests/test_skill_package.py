@@ -74,6 +74,9 @@ class SkillPackageTests(unittest.TestCase):
             "tat:RunCommand",
             "tat:DescribeInvocations",
             "tat:DescribeInvocationTasks",
+            "tencentcom/tcloud-cmd:v1.2.0@sha256:04824cba6a59858a2c78d6ddfc75c63a30941c219c85f414b379f425c43e8845",
+            "/app/index.js",
+            "Repeat this inspection whenever the selected digest changes",
             "PLUGIN_TOKEN",
             "harmless TAT preflight",
         ):
