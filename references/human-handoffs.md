@@ -204,7 +204,12 @@ ready, and whenever its role, instance, region, or maintenance window changes.
    variable names and their `secret receipt`s.
 6. Grant the dedicated operator identity `AssumeRole` only for this role. A
    reviewed client must exchange it for temporary SecretId, SecretKey, and
-   Token, then execute a harmless TAT preflight before any release.
+   Token. Record the returned credential expiration in a value-free receipt.
+   Choose the shortest `DurationSeconds` that still covers the declared
+   worst-case remote timeout, all control-plane work, and an explicit safety
+   margin. Immediately before approval, refresh the complete triple whenever
+   its remaining lifetime no longer covers that bound, then execute a harmless
+   TAT preflight before any release.
 
 Current compatibility gate: do not infer STS support from the plugin README.
 The artifact inspected on 2026-08-30 was
@@ -226,6 +231,7 @@ long-lived customer key.
 Official guidance:
 
 - <https://cloud.tencent.com/document/product/598/19381>
+- <https://cloud.tencent.com/document/api/598/35840>
 - <https://cloud.tencent.com/document/product/598/13895>
 - <https://cloud.tencent.com/document/product/1340/56294>
 - <https://cloud.tencent.com/document/product/1340/50821>
@@ -234,10 +240,11 @@ Official guidance:
 ### Acceptance
 
 The role trusts only the dedicated programmatic identity, external-ID checking
-is enabled, TAT is online, the policy is least privilege, and all four receipts
-exist. Until the reviewed STS-capable execution path passes the harmless
-preflight with the full temporary credential triple, acceptance is explicitly
-**blocked for production**.
+is enabled, TAT is online, the policy is least privilege, the four static
+receipts exist, and the current temporary credential receipt shows enough
+remaining lifetime. Until the reviewed STS-capable execution path passes the
+harmless preflight with the full temporary credential triple, acceptance is
+explicitly **blocked for production**.
 
 ### Never deliver
 

@@ -78,6 +78,8 @@ class SkillPackageTests(unittest.TestCase):
             "/app/index.js",
             "Repeat this inspection whenever the selected digest changes",
             "PLUGIN_TOKEN",
+            "credential expiration",
+            "worst-case remote timeout",
             "harmless TAT preflight",
         ):
             self.assertIn(phrase, handoffs)
