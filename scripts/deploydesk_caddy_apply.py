@@ -1350,10 +1350,13 @@ class SharedCaddyHelper:
             if _lock_identity(actual) != expected:
                 raise SecurityError("pre-created lock identity was replaced")
 
-    def _snapshot(self, deployment_id, bundle_id, transaction_id):
+    def _snapshot(
+        self, deployment_id, bundle_id, transaction_id, discard_intake=None,
+    ):
         intake = self.layout.intake_root / transaction_id
         os.mkdir(intake, 0o700)
         hashes = {}
+        discard_intake = discard_intake or self._discard_pretransaction_artifacts
         try:
             if os.stat(intake).st_uid != self.trust.owner_uid:
                 raise SecurityError("intake owner mismatch")
@@ -1368,7 +1371,7 @@ class SharedCaddyHelper:
             _fsync_dir(intake)
             _fsync_dir(self.layout.intake_root)
         except BaseException:
-            self._discard_pretransaction_artifacts(intake=intake)
+            discard_intake(intake=intake)
             raise
         return intake, hashes
 
@@ -1570,7 +1573,7 @@ class SharedCaddyHelper:
                 if existing[field] != incoming_manifest[field]:
                     raise MaintenanceRequired("ownership identity change requires separate maintenance authority")
         for path in sorted(manifests.glob("*.json")):
-            value = incoming_manifest if path == current_target else read_json(path)
+            value = read_json(path)
             validate_manifest(value)
             if path.stem != value["deployment_id"]:
                 raise OwnershipError("manifest filename and deployment identity differ")
@@ -1730,6 +1733,17 @@ class SharedCaddyHelper:
             or _lexists(self.layout.recovery_marker)
         ):
             raise RecoveryRequired("retained recovery state blocks shared-Caddy preflight")
+
+    def _discard_preflight_intake(self, intake=None):
+        """Remove preflight-only intake without creating durable recovery state."""
+        try:
+            if intake is not None and Path(intake).exists():
+                for directory, _, _ in os.walk(intake, topdown=True, followlinks=False):
+                    os.chmod(directory, 0o700)
+                shutil.rmtree(intake)
+                _fsync_dir(self.layout.intake_root)
+        except Exception as exc:
+            raise RecoveryRequired("preflight intake cleanup failed") from exc
 
     def _discard_pretransaction_artifacts(self, intake=None, staged=None):
         """Remove uncommitted derived state before any durable transaction exists."""
@@ -2064,6 +2078,7 @@ class SharedCaddyHelper:
                 )
                 intake, hashes = self._snapshot(
                     deployment_id, bundle_id, "preflight-" + uuid.uuid4().hex,
+                    discard_intake=self._discard_preflight_intake,
                 )
                 _declaration, manifest, _provenance = self._load_snapshot(
                     intake, hashes, deployment_id, bundle_id, helper_hash,
@@ -2094,7 +2109,7 @@ class SharedCaddyHelper:
                         "generation_id": current.name,
                     }
         finally:
-            self._discard_pretransaction_artifacts(intake=intake)
+            self._discard_preflight_intake(intake=intake)
 
 
 def _deployment_argument(value):

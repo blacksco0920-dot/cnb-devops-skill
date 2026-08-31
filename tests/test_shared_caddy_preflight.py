@@ -203,6 +203,30 @@ class SharedCaddyPreflightTests(unittest.TestCase):
         self.assertEqual(1, len(self.runtime.validations))
         self.assertEqual([], list(self.layout.intake_root.iterdir()))
 
+    def test_preflight_accepts_a_changed_fragment_for_the_existing_owner(self):
+        old_fragment = "app.example.test {\n    respond 200\n}\n"
+        old_manifest = self.write_live_owner(
+            DEPLOYMENT_ID,
+            "app.example.test",
+            fragment=old_fragment,
+            manifest_updates={"source_repo": "https://cnb.cool/ecat/energy"},
+        )
+        incoming_manifest = json.loads(
+            (
+                self.layout.bundle_dir(DEPLOYMENT_ID, self.bundle_id)
+                / "server-manifest.json"
+            ).read_text()
+        )
+        self.assertNotEqual(
+            old_manifest["fragment_sha256"], incoming_manifest["fragment_sha256"],
+        )
+
+        result = self.preflight()
+
+        self.assertEqual("passed", result["status"])
+        self.assertEqual(self.bundle_id, result["bundle_id"])
+        self.assertEqual([], list(self.layout.intake_root.iterdir()))
+
     def test_preflight_requires_the_callers_release_lock(self):
         with self.assertRaises(self.h.SecurityError):
             self.helper.preflight(DEPLOYMENT_ID, self.bundle_id)
@@ -354,6 +378,51 @@ class SharedCaddyPreflightTests(unittest.TestCase):
             self.preflight()
         self.assertEqual("", output.getvalue())
         self.assertEqual([], list(self.layout.intake_root.iterdir()))
+        self.assertEqual(receipts_before, list(self.layout.receipts_root.iterdir()))
+
+    def test_preflight_cleanup_fsync_failure_creates_no_recovery_state(self):
+        real_fsync_dir = self.h._fsync_dir
+
+        def fail_after_intake_removal(path):
+            path = Path(path)
+            if path == self.layout.intake_root and not any(path.iterdir()):
+                raise OSError("injected preflight intake cleanup fsync failure")
+            return real_fsync_dir(path)
+
+        receipts_before = list(self.layout.receipts_root.iterdir())
+        self.h._fsync_dir = fail_after_intake_removal
+        try:
+            with self.assertRaises(self.h.RecoveryRequired):
+                self.preflight()
+        finally:
+            self.h._fsync_dir = real_fsync_dir
+
+        self.assertEqual([], list(self.layout.intake_root.iterdir()))
+        self.assertFalse(self.layout.transaction_path.exists())
+        self.assertFalse(self.layout.recovery_marker.exists())
+        self.assertFalse(self.layout.history_path.exists())
+        self.assertEqual(receipts_before, list(self.layout.receipts_root.iterdir()))
+
+    def test_preflight_snapshot_fsync_failure_creates_no_recovery_state(self):
+        real_fsync_dir = self.h._fsync_dir
+
+        def fail_every_intake_root_fsync(path):
+            if Path(path) == self.layout.intake_root:
+                raise OSError("injected preflight snapshot fsync failure")
+            return real_fsync_dir(path)
+
+        receipts_before = list(self.layout.receipts_root.iterdir())
+        self.h._fsync_dir = fail_every_intake_root_fsync
+        try:
+            with self.assertRaises(self.h.RecoveryRequired):
+                self.preflight()
+        finally:
+            self.h._fsync_dir = real_fsync_dir
+
+        self.assertEqual([], list(self.layout.intake_root.iterdir()))
+        self.assertFalse(self.layout.transaction_path.exists())
+        self.assertFalse(self.layout.recovery_marker.exists())
+        self.assertFalse(self.layout.history_path.exists())
         self.assertEqual(receipts_before, list(self.layout.receipts_root.iterdir()))
 
 
