@@ -107,7 +107,7 @@ class SkillPackageTests(unittest.TestCase):
             r"(?m)^\| `[A-Z_]+` \| `([^`]+)` \| (?:PASS|FAIL) \|$",
             scenarios,
         )
-        self.assertEqual(12, len(mappings))
+        self.assertEqual(13, len(mappings))
         self.assertEqual(len(mappings), len(set(mappings)))
         for test_id in mappings:
             module_name, class_name, method_name = test_id.rsplit(".", 2)
@@ -123,6 +123,41 @@ class SkillPackageTests(unittest.TestCase):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
             self.assertIn(method_name, methods, test_id)
+
+    def test_shared_caddy_preflight_guidance_requires_the_exact_safe_boundary(self):
+        contract = self.text("references/shared-caddy-v1/contract.md")
+        handoff = self.text("references/shared-caddy-v1/host-handoff.md")
+        scenarios = self.text("tests/skill-scenarios.md")
+        sudoers = self.text(
+            "references/shared-caddy-v1/examples/deploydesk-caddy-apply.sudoers",
+        )
+        for phrase in (
+            "immutable bundle publication",
+            "exact sudo bundle preflight",
+            "pull/backup/migrate/up",
+            "exact sudo apply",
+            "semantic probes",
+            "immutable evidence",
+            "root-private",
+            "incoming hostname",
+            "before live mutation",
+            "third privileged artifact",
+        ):
+            self.assertIn(phrase, contract + handoff + scenarios)
+        self.assertIn(
+            "Cmnd_Alias ECAT_CADDY_PREFLIGHT = /usr/local/sbin/deploydesk-caddy-apply "
+            "^--preflight --deployment-id ecat-energy--test --bundle-id [0-9a-f]{64}$",
+            sudoers,
+        )
+        self.assertIn(
+            "Cmnd_Alias ECAT_CADDY_APPLY = /usr/local/sbin/deploydesk-caddy-apply "
+            "^--deployment-id ecat-energy--test --bundle-id [0-9a-f]{64}$",
+            sudoers,
+        )
+        self.assertIn(
+            "ubuntu ALL=(root) NOPASSWD: ECAT_CADDY_PREFLIGHT, ECAT_CADDY_APPLY",
+            sudoers,
+        )
 
     def test_markdown_local_links_resolve(self):
         markdown_files = [

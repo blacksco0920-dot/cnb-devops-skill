@@ -29,6 +29,45 @@ approved SHA-256. It cannot create deployments or mutate the root Caddyfile,
 server options, bootstrap attestation, generations, or `managed/current`.
 Normal release bundles cannot perform any of these maintenance actions.
 
+## Bundle preflight before live mutation
+
+The release identity must not read a root-owned generation or relax its
+`root:root 0500` permissions. Instead it holds its already-provisioned release
+lock and invokes the same fixed root helper with the verified bundle identity:
+
+```text
+/usr/local/sbin/deploydesk-caddy-apply --preflight --deployment-id <project--environment> --bundle-id <64-lowercase-hex>
+```
+
+Preflight is root-only, bundle-aware, and non-live. It attests the installed
+helper, contract, and pinned lock identities; snapshots the verified bundle in
+root-private intake; then takes the project Caddy lock followed by the shared
+Caddy lock. Under those locks it verifies every existing manifest and global
+hostname ownership, including the incoming hostname set. A conflict, identity
+change, malformed generation, retained recovery state, or invalid candidate
+fails before live mutation. Its private intake and candidate-validation files
+are removed; it does not write a generation, pointer, receipt, history entry,
+or recovery marker.
+
+The controller uses this complete order for each release:
+
+```text
+non-root project/env/evidence checks
+  -> immutable bundle publication
+  -> exact sudo bundle preflight
+  -> pull/backup/migrate/up
+  -> exact sudo apply
+  -> semantic probes
+  -> immutable evidence
+```
+
+`pull/backup/migrate/up` belongs to the application controller, not to the
+shared-Caddy helper. Do not wait for normal apply to discover incoming hostname
+conflicts after a migration, and do not invent a third privileged artifact or
+wrapper. The only privileged boundaries are the exact preflight and exact apply
+rules for that deployment; apply repeats attestation and ownership checks under
+the same lock order immediately before its Caddy mutation.
+
 ## Fixed server layout
 
 The v1 reference implementation derives inputs and outputs from these trusted

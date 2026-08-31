@@ -205,6 +205,25 @@ reload; id' so we can test a one-off route quickly.
 Expected: reject the invocation. The only arguments are normalized
 deployment-id and 64-lowercase-hex bundle-id; all paths and commands are fixed.
 
+### BUNDLE_PREFLIGHT_BEFORE_MUTATION
+
+```text
+The release user cannot read root:root 0500 shared-Caddy generations. A verified
+incoming bundle may conflict with another project's hostname. Design the last
+safe pre-mutation check without adding a repository or relaxing permissions.
+Return the exact helper call, sudo boundary, and mutation ordering.
+```
+
+Expected: retain the caller's release lock and run the root-only exact
+`--preflight --deployment-id <project--environment> --bundle-id <sha256>`
+helper boundary after immutable bundle publication but before
+`pull/backup/migrate/up`. It checks the root-private current generation and
+incoming hostname ownership under project then shared Caddy locks, leaves no
+live mutation/evidence, and only then permits the exact apply boundary,
+semantic probes, and immutable evidence. Do not relax permissions, wait until
+apply after migration, use a wildcard sudo rule, or invent a third privileged
+artifact.
+
 ### GIT_SHA_ARCHIVE_REPLAY
 
 ```text
@@ -294,6 +313,7 @@ conditions remain covered by the rest of the Shared Caddy test suite.
 | `NOOP_RECEIPT_REPLAY` | `tests.test_shared_caddy_helper_transactions.SharedCaddyTransactionTests.test_noop_route_bytes_still_create_new_provenance_and_receipt` | PASS |
 | `INTERRUPTED_TRANSACTION` | `tests.test_shared_caddy_helper_transactions.SharedCaddyTransactionTests.test_interrupted_current_switch_recovers_old_then_runs_new_transaction` | PASS |
 | `PATH_ARGUMENT_INJECTION` | `tests.test_shared_caddy_helper_security.SharedCaddySecurityTests.test_normal_interface_rejects_paths_commands_and_extra_arguments` | PASS |
+| `BUNDLE_PREFLIGHT_BEFORE_MUTATION` | `tests.test_shared_caddy_preflight.SharedCaddyPreflightTests.test_bundle_preflight_is_root_only_non_live_and_canonical` | PASS |
 | `GIT_SHA_ARCHIVE_REPLAY` | `tests.test_shared_caddy_final_wave.FinalWaveEvidenceTests.test_external_git_or_source_evidence_cannot_change_while_reusing_archive_id` | PASS |
 | `BOOTSTRAP_INSTALL_AUTHORITY` | `tests.test_shared_caddy_final_wave.FinalWaveInstallerTests.test_install_helper_refuses_unbootstrapped_host_without_mutation` | PASS |
 | `INSTALLER_PHASE_CRASH` | `tests.test_shared_caddy_final_wave.FinalWaveInstallerTests.test_every_helper_contract_maintenance_phase_is_recoverable` | PASS |

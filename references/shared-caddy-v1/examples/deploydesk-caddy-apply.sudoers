@@ -1,4 +1,5 @@
-# Install only after visudo validation. Replace deploydesk-release with the fixed release identity.
-# The caller first holds /var/lib/deploydesk/locks/releases/<deployment-id>.release.lock.
-Cmnd_Alias DEPLOYDESK_CADDY_APPLY = /usr/local/sbin/deploydesk-caddy-apply ^--deployment-id [a-z0-9][a-z0-9-]*--[a-z0-9][a-z0-9-]* --bundle-id [0-9a-f]{64}$
-deploydesk-release ALL=(root) NOPASSWD: DEPLOYDESK_CADDY_APPLY
+# Generated and reviewed for one explicitly provisioned deployment; validate with visudo.
+# The caller retains /var/lib/deploydesk/locks/releases/ecat-energy--test.release.lock.
+Cmnd_Alias ECAT_CADDY_PREFLIGHT = /usr/local/sbin/deploydesk-caddy-apply ^--preflight --deployment-id ecat-energy--test --bundle-id [0-9a-f]{64}$
+Cmnd_Alias ECAT_CADDY_APPLY = /usr/local/sbin/deploydesk-caddy-apply ^--deployment-id ecat-energy--test --bundle-id [0-9a-f]{64}$
+ubuntu ALL=(root) NOPASSWD: ECAT_CADDY_PREFLIGHT, ECAT_CADDY_APPLY

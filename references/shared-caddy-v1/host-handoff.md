@@ -103,10 +103,26 @@ and reject symlinks, hardlinks, group/world-writable ancestors, replacements,
 and device crossings. The persistent lock tree has no symlink exception and
 stays on the trusted `/var/lib/deploydesk` local filesystem.
 
-Validate the sudoers example with `visudo`. The regex permits exactly the two
-normal-release arguments; avoid wildcard argument rules that also match spaces
-and appended options. The release identity must not write the helper, server
-contract, shared tree, state, locks, root config, or certificate storage.
+## Per-deployment sudo boundary
+
+Generate and review one pair of sudoers command aliases for each explicitly
+provisioned deployment. It grants the fixed root helper only the exact
+bundle-aware preflight and exact apply argument sequences for that deployment;
+it does not grant generation read access, a wildcard deployment, appended
+arguments, or a third privileged artifact/wrapper. The installer exposes the
+pure `render_deployment_sudoers(deployment_id, release_identity, alias)` helper
+to generate this text from normalized inputs, but never writes a sudoers file.
+
+Use the [example](examples/deploydesk-caddy-apply.sudoers) as the reviewed
+per-deployment form, then validate the installed file with `visudo`. Preflight
+must run before `pull/backup/migrate/up`, while the release lock remains held;
+apply runs only after that application stage and the controller then performs
+semantic probes and records immutable evidence. The root helper reads
+root-private generations and checks incoming hostname ownership, so do not
+relax `root:root 0500` modes for the release identity.
+
+The release identity must not write the helper, server contract, shared tree,
+state, locks, root config, or certificate storage.
 
 After installation, compare the actual helper hash and contract to the
 project's value-free helper requirement. Installation is not permission to

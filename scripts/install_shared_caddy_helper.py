@@ -28,6 +28,8 @@ DEPLOYMENT_RE = re.compile(
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 SAFE_RUNTIME_NAME_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}")
 CONFIG_ROOT_RE = re.compile(r"/(?:[A-Za-z0-9._-]+)(?:/[A-Za-z0-9._-]+)*")
+SUDOERS_IDENTITY_RE = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
+SUDOERS_ALIAS_RE = re.compile(r"[A-Z][A-Z0-9_]{0,62}")
 _REQUIRED_DIR_FD_OPERATIONS = (
     os.open, os.stat, os.mkdir, os.rename, os.symlink,
     os.unlink, os.readlink, os.rmdir,
@@ -54,6 +56,33 @@ def validate_bundle_id(value):
     if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
         raise ContractError("bundle-id must be 64 lowercase hexadecimal characters")
     return value
+
+
+def render_deployment_sudoers(deployment_id, release_identity, alias):
+    """Render the two exact sudoers grants for one provisioned deployment.
+
+    This pure helper deliberately does not write a sudoers file: a host
+    administrator reviews the generated text and validates its destination with
+    visudo as a separate host-maintenance step.
+    """
+    try:
+        validate_deployment_id(deployment_id)
+    except ContractError as exc:
+        raise InstallError("sudoers deployment-id must be normalized") from exc
+    if not isinstance(release_identity, str) or not SUDOERS_IDENTITY_RE.fullmatch(release_identity):
+        raise InstallError("release identity must be one normalized local account name")
+    if not isinstance(alias, str) or not SUDOERS_ALIAS_RE.fullmatch(alias):
+        raise InstallError("sudoers alias must be uppercase letters, digits, and underscores")
+    return (
+        f"Cmnd_Alias {alias}_CADDY_PREFLIGHT = "
+        "/usr/local/sbin/deploydesk-caddy-apply ^--preflight "
+        f"--deployment-id {deployment_id} --bundle-id [0-9a-f]{{64}}$\n"
+        f"Cmnd_Alias {alias}_CADDY_APPLY = "
+        "/usr/local/sbin/deploydesk-caddy-apply ^--deployment-id "
+        f"{deployment_id} --bundle-id [0-9a-f]{{64}}$\n"
+        f"{release_identity} ALL=(root) NOPASSWD: "
+        f"{alias}_CADDY_PREFLIGHT, {alias}_CADDY_APPLY\n"
+    )
 
 
 def sha256_bytes(data):
