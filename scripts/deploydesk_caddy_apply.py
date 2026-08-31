@@ -243,6 +243,46 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
+def _lock_identity(info):
+    return {
+        "device": info.st_dev,
+        "inode": info.st_ino,
+        "ctime_ns": info.st_ctime_ns,
+    }
+
+
+def _validate_lock_manifest(value):
+    if set(value) != {"schema_version", "shared", "deployments"}:
+        raise SecurityError("lock inode manifest fields are not exact")
+    if (
+        value["schema_version"] != "shared-caddy-lock-inodes/v1"
+        or not isinstance(value["deployments"], dict)
+    ):
+        raise SecurityError("unknown or malformed lock inode manifest")
+    identities = [value["shared"]]
+    for deployment_id, deployment in value["deployments"].items():
+        try:
+            validate_deployment_id(deployment_id)
+        except ContractError as exc:
+            raise SecurityError("malformed deployment lock evidence") from exc
+        if not isinstance(deployment, dict) or set(deployment) != {"project", "release"}:
+            raise SecurityError("malformed deployment lock evidence")
+        identities.extend((deployment["project"], deployment["release"]))
+    for identity in identities:
+        if (
+            not isinstance(identity, dict)
+            or set(identity) != {"device", "inode", "ctime_ns"}
+            or not all(
+                isinstance(identity[field], int)
+                and not isinstance(identity[field], bool)
+                and identity[field] >= 0
+                for field in identity
+            )
+        ):
+            raise SecurityError("malformed lock inode identity")
+    return value
+
+
 def read_json(path):
     try:
         value = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -568,6 +608,7 @@ def validate_bootstrap_attestation(value):
         "schema_version", "contract_version", "caddy_container", "container_config_root",
         "initial_generation", "initial_current_target", "root_config_sha256",
         "server_options_sha256", "shared_lock_device", "shared_lock_inode",
+        "shared_lock_ctime_ns",
     )
     _ensure_exact_keys(value, expected, "bootstrap attestation")
     if value["schema_version"] != "shared-caddy-host-bootstrap/v1" or value["contract_version"] != CONTRACT_VERSION:
@@ -583,7 +624,7 @@ def validate_bootstrap_attestation(value):
     for field in ("root_config_sha256", "server_options_sha256"):
         if not SHA256_RE.fullmatch(str(value[field])):
             raise ContractError("invalid bootstrap hash")
-    for field in ("shared_lock_device", "shared_lock_inode"):
+    for field in ("shared_lock_device", "shared_lock_inode", "shared_lock_ctime_ns"):
         if not isinstance(value[field], int) or isinstance(value[field], bool) or value[field] < 0:
             raise ContractError("invalid bootstrap lock identity")
     return value
@@ -854,9 +895,9 @@ def _open_fixed_lock(path, trust):
     flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags)
     after = os.fstat(descriptor)
-    if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+    if _lock_identity(before) != _lock_identity(after):
         os.close(descriptor)
-        raise SecurityError("lock inode changed while opening")
+        raise SecurityError("lock identity changed while opening")
     return descriptor
 
 
@@ -867,8 +908,8 @@ def _locked(path, trust):
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         current = os.lstat(path)
         opened = os.fstat(descriptor)
-        if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
-            raise SecurityError("lock inode was replaced")
+        if _lock_identity(current) != _lock_identity(opened):
+            raise SecurityError("lock identity was replaced")
         yield descriptor
     finally:
         with contextlib.suppress(OSError):
@@ -1222,7 +1263,11 @@ class SharedCaddyHelper:
         if bootstrap["root_config_sha256"] != sha256_file(self.layout.infra_root / "Caddyfile"):
             raise MaintenanceRequired("root Caddyfile differs from the bootstrapped baseline")
         shared_info = os.lstat(self.layout.shared_lock)
-        if (bootstrap["shared_lock_device"], bootstrap["shared_lock_inode"]) != (shared_info.st_dev, shared_info.st_ino):
+        if {
+            "device": bootstrap["shared_lock_device"],
+            "inode": bootstrap["shared_lock_inode"],
+            "ctime_ns": bootstrap["shared_lock_ctime_ns"],
+        } != _lock_identity(shared_info):
             raise AttestationError("bootstrap shared lock identity drift")
         actual_hash = sha256_file(self.executable_path)
         if (
@@ -1244,11 +1289,7 @@ class SharedCaddyHelper:
         return contract, actual_hash
 
     def _attest_lock_inodes(self, deployment_id):
-        value = read_json(self.layout.lock_manifest_path)
-        if set(value) != {"schema_version", "shared", "deployments"}:
-            raise SecurityError("lock inode manifest fields are not exact")
-        if value["schema_version"] != "shared-caddy-lock-inodes/v1":
-            raise SecurityError("unknown lock inode manifest")
+        value = _validate_lock_manifest(read_json(self.layout.lock_manifest_path))
         deployment = value["deployments"].get(deployment_id)
         if not isinstance(deployment, dict) or set(deployment) != {"project", "release"}:
             raise SecurityError("deployment lock inodes were not provisioned")
@@ -1258,17 +1299,15 @@ class SharedCaddyHelper:
             (self.layout.release_lock(deployment_id), deployment["release"], 0o640),
         )
         for path, expected, expected_mode in checks:
-            if not isinstance(expected, dict) or set(expected) != {"device", "inode"}:
-                raise SecurityError("malformed lock inode evidence")
             actual = os.lstat(path)
-            if {"device": actual.st_dev, "inode": actual.st_ino} != expected:
-                raise SecurityError("pre-created lock inode was replaced")
             if (
                 not stat.S_ISREG(actual.st_mode) or actual.st_nlink != 1
                 or actual.st_uid != self.trust.owner_uid
                 or stat.S_IMODE(actual.st_mode) != expected_mode
             ):
                 raise SecurityError("pre-created lock metadata drift")
+            if _lock_identity(actual) != expected:
+                raise SecurityError("pre-created lock identity was replaced")
 
     def _snapshot(self, deployment_id, bundle_id, transaction_id):
         intake = self.layout.intake_root / transaction_id

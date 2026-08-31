@@ -52,7 +52,11 @@ def changed_stat(
         values[4] = uid
     if gid is not None:
         values[5] = gid
-    return os.stat_result(values)
+    return os.stat_result(values, {
+        "st_atime_ns": info.st_atime_ns,
+        "st_mtime_ns": info.st_mtime_ns,
+        "st_ctime_ns": info.st_ctime_ns,
+    })
 
 
 class Runtime:
@@ -238,6 +242,7 @@ class FinalWaveInstallerTests(unittest.TestCase):
             "server_options_sha256": "d" * 64,
             "shared_lock_device": 1,
             "shared_lock_inode": 2,
+            "shared_lock_ctime_ns": 3,
         }
         cases = (
             ("validate_deployment_id", "sample-app--staging"),

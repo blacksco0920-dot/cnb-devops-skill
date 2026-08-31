@@ -1,0 +1,13 @@
+{
+  "schema_version": "shared-caddy-host-bootstrap/v1",
+  "contract_version": "shared-caddy-contract/v1",
+  "caddy_container": "shared-caddy",
+  "container_config_root": "/etc/caddy",
+  "initial_generation": "gen-00000000000000000000000000000000",
+  "initial_current_target": "generations/gen-00000000000000000000000000000000",
+  "root_config_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "server_options_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "shared_lock_device": 2049,
+  "shared_lock_inode": 41001,
+  "shared_lock_ctime_ns": 1780000000000000001
+}

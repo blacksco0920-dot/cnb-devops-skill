@@ -1,4 +1,5 @@
 import importlib.util
+import fcntl
 import hashlib
 import os
 from pathlib import Path
@@ -252,6 +253,50 @@ class SharedCaddyInstallerTests(unittest.TestCase):
         self.assertEqual(before["shared"], after["shared"])
         self.assertEqual(before["deployments"]["first--staging"], after["deployments"]["first--staging"])
         self.assertIn("second--staging", after["deployments"])
+
+    def test_lock_ctime_identity_survives_open_flock_upgrade_and_reprovision(self):
+        approved_hash = hashlib.sha256(HELPER_PATH.read_bytes()).hexdigest()
+        self.bootstrap()
+        self.install()
+        self.installer.provision_deployments(
+            self.layout, ["sample-app--staging"], owner_uid=os.getuid(),
+            release_uid=os.getuid(), release_gid=os.getgid(),
+        )
+        before = json.loads(self.layout.lock_manifest_path.read_text())
+        expected_identities = (
+            (self.layout.shared_lock, before["shared"]),
+            (
+                self.layout.project_lock("sample-app--staging"),
+                before["deployments"]["sample-app--staging"]["project"],
+            ),
+            (
+                self.layout.release_lock("sample-app--staging"),
+                before["deployments"]["sample-app--staging"]["release"],
+            ),
+        )
+        for path, expected in expected_identities:
+            self.assertEqual({"device", "inode", "ctime_ns"}, set(expected))
+            with path.open("r+") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                opened = os.fstat(lock.fileno())
+                self.assertEqual(
+                    expected,
+                    {
+                        "device": opened.st_dev,
+                        "inode": opened.st_ino,
+                        "ctime_ns": opened.st_ctime_ns,
+                    },
+                )
+                fcntl.flock(lock, fcntl.LOCK_UN)
+        self.installer.install(
+            self.layout, HELPER_PATH, approved_hash, owner_uid=os.getuid(),
+        )
+        self.installer.provision_deployments(
+            self.layout, ["sample-app--staging"], owner_uid=os.getuid(),
+            release_uid=os.getuid(), release_gid=os.getgid(),
+        )
+        after = json.loads(self.layout.lock_manifest_path.read_text())
+        self.assertEqual(before, after)
 
     def test_concurrent_provision_merges_manifest_under_shared_lock(self):
         self.bootstrap()

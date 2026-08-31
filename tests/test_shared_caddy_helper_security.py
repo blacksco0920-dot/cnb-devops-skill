@@ -141,23 +141,85 @@ class SharedCaddySecurityTests(unittest.TestCase):
         with self.assertRaises(self.helper_module.SecurityError):
             self._apply_with_release_lock()
 
-    def test_normal_helper_rejects_any_fixed_lock_mode_drift(self):
-        cases = (
-            (self.layout.shared_lock, 0o640, 0o600),
-            (self.layout.project_lock(DEPLOYMENT_ID), 0o640, 0o600),
-            (self.layout.release_lock(DEPLOYMENT_ID), 0o600, 0o640),
+    def test_reused_device_and_inode_with_changed_ctime_fails_attestation(self):
+        manifest = json.loads(self.layout.lock_manifest_path.read_text())
+        recorded = manifest["shared"]
+        real_lstat = self.helper_module.os.lstat
+
+        def same_inode_replacement(path, *args, **kwargs):
+            info = real_lstat(path, *args, **kwargs)
+            if Path(path) == self.layout.shared_lock:
+                values = list(info)
+                values[1] = recorded["inode"]
+                values[2] = recorded["device"]
+                values[9] = info.st_ctime + 60
+                return os.stat_result(values, {
+                    "st_atime_ns": info.st_atime_ns,
+                    "st_mtime_ns": info.st_mtime_ns,
+                    "st_ctime_ns": info.st_ctime_ns + 60_000_000_000,
+                })
+            return info
+
+        self.helper_module.os.lstat = same_inode_replacement
+        try:
+            with self.assertRaisesRegex(
+                self.helper_module.SecurityError,
+                "pre-created lock identity was replaced",
+            ):
+                self.subject._attest_lock_inodes(DEPLOYMENT_ID)
+        finally:
+            self.helper_module.os.lstat = real_lstat
+
+    def test_normal_helper_rejects_non_integer_lock_identity_values(self):
+        manifest = json.loads(self.layout.lock_manifest_path.read_text())
+        manifest["shared"]["device"] = float(manifest["shared"]["device"])
+        self.layout.lock_manifest_path.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n",
         )
-        for lock_path, drifted_mode, restored_mode in cases:
-            with self.subTest(lock=lock_path.name):
-                os.chmod(lock_path, drifted_mode)
-                try:
-                    with self.assertRaisesRegex(
-                        self.helper_module.SecurityError,
-                        "pre-created lock metadata drift",
-                    ):
-                        self._apply_with_release_lock()
-                finally:
-                    os.chmod(lock_path, restored_mode)
+
+        with self.assertRaisesRegex(
+            self.helper_module.SecurityError,
+            "malformed lock inode identity",
+        ):
+            self.subject._attest_lock_inodes(DEPLOYMENT_ID)
+
+    def test_normal_helper_rejects_malformed_unrelated_deployment_evidence(self):
+        manifest = json.loads(self.layout.lock_manifest_path.read_text())
+        manifest["deployments"]["other-app--production"] = {
+            "project": {"device": 1, "inode": 2},
+            "release": {"device": 3, "inode": 4, "ctime_ns": 5},
+            "unexpected": {},
+        }
+        self.layout.lock_manifest_path.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n",
+        )
+
+        with self.assertRaisesRegex(
+            self.helper_module.SecurityError,
+            "malformed deployment lock evidence",
+        ):
+            self.subject._attest_lock_inodes(DEPLOYMENT_ID)
+
+    def _assert_fixed_lock_mode_drift_rejected(self, lock_path, drifted_mode):
+        os.chmod(lock_path, drifted_mode)
+        with self.assertRaisesRegex(
+            self.helper_module.SecurityError,
+            "pre-created lock metadata drift",
+        ):
+            self._apply_with_release_lock()
+
+    def test_normal_helper_rejects_shared_lock_mode_drift(self):
+        self._assert_fixed_lock_mode_drift_rejected(self.layout.shared_lock, 0o640)
+
+    def test_normal_helper_rejects_project_lock_mode_drift(self):
+        self._assert_fixed_lock_mode_drift_rejected(
+            self.layout.project_lock(DEPLOYMENT_ID), 0o640,
+        )
+
+    def test_normal_helper_rejects_release_lock_mode_drift(self):
+        self._assert_fixed_lock_mode_drift_rejected(
+            self.layout.release_lock(DEPLOYMENT_ID), 0o600,
+        )
 
     def test_trusted_chain_rejects_cross_device_controlled_component(self):
         real_lstat = self.helper_module.os.lstat
@@ -245,7 +307,7 @@ class SharedCaddySecurityTests(unittest.TestCase):
         try:
             with self.assertRaisesRegex(
                 self.helper_module.SecurityError,
-                "pre-created lock inode was replaced",
+                "pre-created lock identity was replaced",
             ):
                 self._apply_with_release_lock()
         finally:

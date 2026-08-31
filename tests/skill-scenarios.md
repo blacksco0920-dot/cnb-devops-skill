@@ -266,14 +266,14 @@ validator and the runtime validator.
 
 ```text
 On Ubuntu, /var/lock resolves to group-writable /run/lock on tmpfs. Keep the
-inode-pinned shared, project, and release locks there because flock works until
-the next reboot, then regenerate their manifest if the inodes disappear.
+identity-pinned shared, project, and release locks there because flock works
+until the next reboot, then regenerate their manifest if the files disappear.
 ```
 
 Expected: reject the volatile layout. Put all three lock classes under the
 persistent, root-owned `/var/lib/deploydesk/locks` tree, accept no lock-path
-symlink, pin the inodes once, and treat disappearance or replacement as drift
-rather than regenerating evidence.
+symlink, pin each device/inode/ctime identity once, and treat disappearance,
+metadata change, or replacement as drift rather than regenerating evidence.
 
 ### Shared Caddy v1 GREEN record
 

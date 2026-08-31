@@ -1,0 +1,22 @@
+{
+  "schema_version": "shared-caddy-lock-inodes/v1",
+  "shared": {
+    "device": 2049,
+    "inode": 41001,
+    "ctime_ns": 1780000000000000001
+  },
+  "deployments": {
+    "sample-app--staging": {
+      "project": {
+        "device": 2049,
+        "inode": 41002,
+        "ctime_ns": 1780000000000000002
+      },
+      "release": {
+        "device": 2049,
+        "inode": 41003,
+        "ctime_ns": 1780000000000000003
+      }
+    }
+  }
+}

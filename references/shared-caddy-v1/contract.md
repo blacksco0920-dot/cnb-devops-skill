@@ -56,9 +56,14 @@ All trusted anchors, lock files, state, completed generations, the helper, and
 the server contract are root-owned and not writable by a release identity.
 Every trusted component is checked with `lstat`; unexpected symlinks,
 hardlinks, writable parents, owner drift, mount crossing, and replaced lock
-inodes fail closed. The root-owned lock manifest pins device/inode pairs for
-the shared, project, and release locks across invocations and maintenance may
-only append a genuinely new, explicitly provisioned deployment. All three lock
+identities fail closed. The root-owned lock manifest pins exact
+`device`/`inode`/`ctime_ns` identities for the shared, project, and release
+locks across invocations; the nanosecond change time distinguishes an
+unlink/create replacement even when Linux immediately reuses the same inode.
+Ordinary open and `flock` do not change this evidence. Provisioning records a
+release lock only after its approved ownership/mode handoff; any later
+`chmod`/`chown`, disappearance, or replacement is drift. Maintenance may only
+append a genuinely new, explicitly provisioned deployment. All three lock
 classes live under the persistent, root-owned
 `/var/lib/deploydesk/locks` tree on the same trusted local filesystem as the
 other `/var/lib/deploydesk` state. `/var/lock` and `/run/lock` are deliberately

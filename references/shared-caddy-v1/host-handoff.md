@@ -10,7 +10,7 @@ server.
   version.
 - Fixed release identity and group, Caddy container identity, host/container
   config mount, persistent `/var/lib/deploydesk/locks` local-filesystem
-  semantics, and the complete live Caddy config.
+  semantics with stable nanosecond ctime, and the complete live Caddy config.
 - Every live hostname, route behavior, owning deployment, project,
   environment, normalized source repository, and smoke check.
 - Confirmed maintenance window and proof that every old Caddy writer is
@@ -26,7 +26,7 @@ Run `--maintenance-action bootstrap-host` only on a host whose complete live
 configuration and old writers are controlled by this maintenance window. It
 creates the fixed layout, canonical root/server-options files, shared lock and
 lock manifest, immutable empty initial generation, `managed/current`, and a
-hash- and inode-bound bootstrap attestation. It must not install a helper or
+hash- and lock-identity-bound bootstrap attestation. It must not install a helper or
 provision a project. Keep its fsynced attestation as the authority prerequisite
 for the later, separate actions below.
 
@@ -82,16 +82,20 @@ and never deletes or replaces their inodes. The shared lock is a sibling at
 and group-readable so the release identity can open it read-only and hold
 `flock`; it is not group-writable. The complete lock tree is persistent across
 reboot and must never be placed under `/var/lock` or `/run/lock`.
-After the lock manifest is durable, provisioning opens each project controller
+Each manifest entry records exact device, inode, and `ctime_ns` after the final
+approved ownership/mode handoff. Ordinary open and `flock` leave that identity
+unchanged; later `chmod`/`chown` is drift, and `ctime_ns` detects an
+unlink/create replacement even when Linux reuses the same inode. After the
+lock manifest is durable, provisioning opens each project controller
 directory with `O_NOFOLLOW`, hands that exact directory FD to the fixed release
 UID/GID as private mode `0700`, and verifies the final entry and FD identity.
 An interrupted root-owned controller handoff is retryable; an unexpected owner,
-group, mode, inode, link, or device remains a hard failure.
+group, mode, device, inode, ctime, or link remains a hard failure.
 An ordinary helper upgrade must preserve both the recorded Caddy container
 identity and container config-root mount. Changing either is a separate,
 explicitly reviewed runtime/baseline maintenance action. Before helper upgrade
-or provisioning, compare every existing lock inode against `lock-inodes.json`;
-never regenerate evidence around a replacement inode.
+or provisioning, compare every existing lock identity against
+`lock-inodes.json`; never regenerate evidence around a replacement.
 
 All actions retain trusted directory descriptors throughout the operation,
 reattest parent entry identity before descriptor-relative reads and mutations,
@@ -122,10 +126,10 @@ ordinary update.
 Record only non-secret evidence:
 
 - server contract/helper versions and actual helper hash;
-- bootstrap root/server-options hashes and shared-lock device/inode;
+- bootstrap root/server-options hashes and shared-lock device/inode/ctime;
 - helper-maintenance transaction/marker absence and recovered phase, if any;
 - root config, server options, generation, manifest, and legacy hashes;
-- fixed lock inode/device identities and verified owner/mode;
+- fixed lock device/inode/ctime identities and verified owner/mode;
 - old-writer stop evidence and complete host inventory;
 - validate, reload, and per-host smoke results;
 - current/previous generation and recovery-marker absence;

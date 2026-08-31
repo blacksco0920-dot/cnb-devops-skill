@@ -60,6 +60,14 @@ def sha256_bytes(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def _lock_identity(info):
+    return {
+        "device": info.st_dev,
+        "inode": info.st_ino,
+        "ctime_ns": info.st_ctime_ns,
+    }
+
+
 def _ensure_exact_keys(value, expected, name):
     if not isinstance(value, dict) or set(value) != set(expected):
         raise ContractError(name + " has missing or unknown fields")
@@ -93,6 +101,7 @@ def validate_bootstrap_attestation(value):
         "schema_version", "contract_version", "caddy_container", "container_config_root",
         "initial_generation", "initial_current_target", "root_config_sha256",
         "server_options_sha256", "shared_lock_device", "shared_lock_inode",
+        "shared_lock_ctime_ns",
     )
     _ensure_exact_keys(value, expected, "bootstrap attestation")
     if (
@@ -114,7 +123,7 @@ def validate_bootstrap_attestation(value):
     for field in ("root_config_sha256", "server_options_sha256"):
         if not SHA256_RE.fullmatch(str(value[field])):
             raise ContractError("invalid bootstrap hash")
-    for field in ("shared_lock_device", "shared_lock_inode"):
+    for field in ("shared_lock_device", "shared_lock_inode", "shared_lock_ctime_ns"):
         if not isinstance(value[field], int) or isinstance(value[field], bool) or value[field] < 0:
             raise ContractError("invalid bootstrap lock identity")
     return value
@@ -759,7 +768,7 @@ def _load_lock_manifest(walker, layout):
         pairs.extend((pair["project"], pair["release"]))
     for item in pairs:
         if (
-            not isinstance(item, dict) or set(item) != {"device", "inode"}
+            not isinstance(item, dict) or set(item) != {"device", "inode", "ctime_ns"}
             or not all(isinstance(item[key], int) and not isinstance(item[key], bool) and item[key] >= 0 for key in item)
         ):
             raise InstallError("malformed lock inode identity")
@@ -785,12 +794,17 @@ def _attest_bootstrap(walker, layout):
     if (
         sha256_bytes(root_config) != evidence["root_config_sha256"]
         or sha256_bytes(server_options) != evidence["server_options_sha256"]
-        or (shared_info.st_dev, shared_info.st_ino)
-        != (evidence["shared_lock_device"], evidence["shared_lock_inode"])
     ):
         raise InstallError("bootstrapped host evidence drift")
     lock_manifest = _load_lock_manifest(walker, layout)
-    if lock_manifest["shared"] != {"device": shared_info.st_dev, "inode": shared_info.st_ino}:
+    _assert_recorded_locks(walker, layout, lock_manifest)
+    if _lock_identity(shared_info) != {
+        "device": evidence["shared_lock_device"],
+        "inode": evidence["shared_lock_inode"],
+        "ctime_ns": evidence["shared_lock_ctime_ns"],
+    }:
+        raise InstallError("bootstrapped shared lock identity drift")
+    if lock_manifest["shared"] != _lock_identity(shared_info):
         raise InstallError("bootstrap lock manifest disagrees with shared lock")
     return evidence, lock_manifest
 
@@ -814,8 +828,8 @@ def _assert_recorded_locks(walker, layout, manifest, release_gid=None):
                 raise InstallError("lock metadata differs from its fixed contract")
         except (InstallError, OSError) as exc:
             raise InstallError("recorded lock metadata drift: " + str(path)) from exc
-        if {"device": actual.st_dev, "inode": actual.st_ino} != expected:
-            raise InstallError("recorded lock inode was replaced: " + str(path))
+        if _lock_identity(actual) != expected:
+            raise InstallError("recorded lock identity was replaced: " + str(path))
 
 
 def _open_shared_lock(walker, layout, manifest):
@@ -832,7 +846,7 @@ def _open_shared_lock(walker, layout, manifest):
         walker._check_file(info, layout.shared_lock, parent.device)
         if stat.S_IMODE(info.st_mode) != 0o600:
             raise InstallError("shared lock mode differs from its fixed contract")
-        if {"device": info.st_dev, "inode": info.st_ino} != manifest["shared"]:
+        if _lock_identity(info) != manifest["shared"]:
             raise InstallError("shared lock changed while opening")
     except BaseException:
         os.close(descriptor)
@@ -893,7 +907,7 @@ def bootstrap_host(
         shared = walker.lstat(layout.shared_lock)
         lock_manifest = {
             "schema_version": "shared-caddy-lock-inodes/v1",
-            "shared": {"device": shared.st_dev, "inode": shared.st_ino},
+            "shared": _lock_identity(shared),
             "deployments": {},
         }
         walker.write_json(layout.lock_manifest_path, lock_manifest, 0o600)
@@ -908,6 +922,7 @@ def bootstrap_host(
             "server_options_sha256": sha256_bytes(server_options),
             "shared_lock_device": shared.st_dev,
             "shared_lock_inode": shared.st_ino,
+            "shared_lock_ctime_ns": shared.st_ctime_ns,
         }
         walker.write_json(layout.bootstrap_attestation_path, evidence, 0o644)
         walker.attest()
@@ -1220,8 +1235,8 @@ def provision_deployments(layout, deployment_ids, owner_uid=0, release_uid=None,
                     project_info = walker.lstat(project_path)
                     release_info = walker.lstat(release_path)
                     updated["deployments"][deployment_id] = {
-                        "project": {"device": project_info.st_dev, "inode": project_info.st_ino},
-                        "release": {"device": release_info.st_dev, "inode": release_info.st_ino},
+                        "project": _lock_identity(project_info),
+                        "release": _lock_identity(release_info),
                     }
             walker.write_json(layout.lock_manifest_path, updated, 0o600)
             _assert_recorded_locks(walker, layout, updated, release_gid=release_gid)

@@ -33,6 +33,8 @@ class SharedCaddyArtifactPresenceTests(unittest.TestCase):
             ROOT / "scripts" / "install_shared_caddy_helper.py",
             ROOT / "references" / "shared-caddy-v1" / "contract.md",
             ROOT / "references" / "shared-caddy-v1" / "host-handoff.md",
+            EXAMPLE_ROOT / "bootstrap-attestation.json",
+            EXAMPLE_ROOT / "lock-inodes.json",
         ]
         required.extend(SCHEMA_ROOT / name for name in (
             "declaration.schema.json",
@@ -111,6 +113,30 @@ class SharedCaddySchemaTests(unittest.TestCase):
             jsonschema.Draft202012Validator(schema).validate(
                 self.load_json(EXAMPLE_ROOT / example_name)
             )
+
+    def test_host_lock_examples_bind_ctime_with_device_and_inode(self):
+        bootstrap = self.load_json(EXAMPLE_ROOT / "bootstrap-attestation.json")
+        locks = self.load_json(EXAMPLE_ROOT / "lock-inodes.json")
+        self.helper.validate_bootstrap_attestation(bootstrap)
+        self.assertEqual("shared-caddy-lock-inodes/v1", locks["schema_version"])
+        identities = [locks["shared"]]
+        for deployment in locks["deployments"].values():
+            self.assertEqual({"project", "release"}, set(deployment))
+            identities.extend((deployment["project"], deployment["release"]))
+        for identity in identities:
+            self.assertEqual({"device", "inode", "ctime_ns"}, set(identity))
+            for value in identity.values():
+                self.assertIsInstance(value, int)
+                self.assertNotIsInstance(value, bool)
+                self.assertGreaterEqual(value, 0)
+        self.assertEqual(
+            locks["shared"],
+            {
+                "device": bootstrap["shared_lock_device"],
+                "inode": bootstrap["shared_lock_inode"],
+                "ctime_ns": bootstrap["shared_lock_ctime_ns"],
+            },
+        )
 
     def test_declaration_rejects_unknown_fields_wildcards_and_path_ids(self):
         declaration = self.load_json(EXAMPLE_ROOT / "declaration.json")
