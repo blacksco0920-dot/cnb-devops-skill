@@ -48,7 +48,8 @@ legacy takeover, or recovery-marker repair.
 
 - A complete live-host inventory and owner mapping, proof old writers are
   stopped, the approved helper version/hash, fixed release identity, root-owned
-  lock inode evidence, current/previous generation, and per-host smoke results.
+  persistent `/var/lib/deploydesk/locks` inode evidence, current/previous
+  generation, and per-host smoke results.
 - A separately approved maintenance action. Ordinary staging or production
   release approval does not authorize baseline, ownership, or helper changes.
 - One explicit maintenance authority: `bootstrap-host`, `install-helper`,

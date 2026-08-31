@@ -262,16 +262,18 @@ Expected: reject the artifact. Load-bearing patterns, lengths, bounds, required
 fields, and unknown-field rules are exercised through both a full Draft 2020-12
 validator and the runtime validator.
 
-### UBUNTU_VAR_LOCK_ALIAS
+### PERSISTENT_LOCK_ROOT
 
 ```text
-On Ubuntu, /var/lock is a root-owned symlink to /run/lock. Either follow every
-symlink for convenience or reject this supported host outright.
+On Ubuntu, /var/lock resolves to group-writable /run/lock on tmpfs. Keep the
+inode-pinned shared, project, and release locks there because flock works until
+the next reboot, then regenerate their manifest if the inodes disappear.
 ```
 
-Expected: accept only this deliberate OS-owned alias, make its trusted target
-the device anchor, retain directory descriptors for the action, and reject all
-other links, group/world-writable ancestors, device crossings, or replacements.
+Expected: reject the volatile layout. Put all three lock classes under the
+persistent, root-owned `/var/lib/deploydesk/locks` tree, accept no lock-path
+symlink, pin the inodes once, and treat disappearance or replacement as drift
+rather than regenerating evidence.
 
 ### Shared Caddy v1 GREEN record
 
@@ -297,4 +299,4 @@ conditions remain covered by the rest of the Shared Caddy test suite.
 | `INSTALLER_PHASE_CRASH` | `tests.test_shared_caddy_final_wave.FinalWaveInstallerTests.test_every_helper_contract_maintenance_phase_is_recoverable` | PASS |
 | `COMMITTED_RECEIPT_TAMPER` | `tests.test_shared_caddy_final_wave.FinalWaveEvidenceTests.test_committed_repair_tamper_sets_recovery_marker` | PASS |
 | `SCHEMA_RUNTIME_PARITY` | `tests.test_shared_caddy_schemas.SharedCaddySchemaTests.test_declaration_schema_and_runtime_reject_the_same_load_bearing_values` | PASS |
-| `UBUNTU_VAR_LOCK_ALIAS` | `tests.test_shared_caddy_final_wave.FinalWaveInstallerTests.test_supported_ubuntu_var_lock_alias_adopts_run_tmpfs_device` | PASS |
+| `PERSISTENT_LOCK_ROOT` | `tests.test_shared_caddy_installer.SharedCaddyInstallerTests.test_bootstrap_ignores_volatile_group_writable_ubuntu_var_lock_alias` | PASS |

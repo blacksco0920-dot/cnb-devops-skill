@@ -1,13 +1,19 @@
+import email.message
 import fcntl
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import shutil
 import copy
+import socket
 import tempfile
 import unittest
+import urllib.error
+import urllib.request
+import urllib.response
 from unittest import mock
 
 try:
@@ -85,6 +91,134 @@ class Runtime:
 
     def smoke(self, hosts):
         self.smokes += 1
+
+
+class MappingHTTPSHandler(urllib.request.HTTPSHandler):
+    """Deterministic HTTPS transport that leaves urllib redirect logic real."""
+
+    def __init__(self, responses):
+        super().__init__()
+        self.responses = responses
+        self.seen = []
+
+    def https_open(self, request):
+        self.seen.append((request.full_url, request.get_method()))
+        value = self.responses[request.full_url]
+        if isinstance(value, BaseException):
+            raise value
+        status, location = value
+        headers = email.message.Message()
+        if location is not None:
+            headers["Location"] = location
+        response = urllib.response.addinfourl(
+            io.BytesIO(b""), headers, request.full_url, status
+        )
+        response.msg = "test response"
+        return response
+
+
+@unittest.skipUnless(HELPER_PATH.is_file(), "helper not implemented yet")
+class DockerRuntimeSmokeTests(unittest.TestCase):
+    def setUp(self):
+        self.h = load(HELPER_PATH, "docker_runtime_smoke_helper")
+        self.runtime = self.h.DockerRuntime(
+            {"caddy_container": "caddy", "container_config_root": "/etc/caddy"},
+            mock.Mock(),
+        )
+
+    def test_generic_smoke_uses_head_at_host_root(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.status = 204
+        opener = mock.Mock()
+        opener.open.return_value = response
+        with mock.patch.object(self.h.urllib.request, "build_opener", return_value=opener):
+            self.runtime.smoke(["app.example.test"])
+
+        request = opener.open.call_args.args[0]
+        self.assertEqual("HEAD", request.get_method())
+        self.assertEqual("https://app.example.test/", request.full_url)
+        self.assertEqual(10, opener.open.call_args.kwargs["timeout"])
+
+    def test_generic_smoke_accepts_http_client_error_responses(self):
+        for status in (401, 404):
+            with self.subTest(status=status):
+                error = urllib.error.HTTPError(
+                    "https://app.example.test/", status, "client response", None, None
+                )
+                opener = mock.Mock()
+                opener.open.side_effect = error
+                try:
+                    with mock.patch.object(
+                        self.h.urllib.request, "build_opener", return_value=opener
+                    ):
+                        self.runtime.smoke(["app.example.test"])
+                finally:
+                    error.close()
+
+    def test_generic_smoke_rejects_http_server_error_responses(self):
+        for status in (500, 503):
+            with self.subTest(status=status):
+                error = urllib.error.HTTPError(
+                    "https://app.example.test/", status, "server response", None, None
+                )
+                opener = mock.Mock()
+                opener.open.side_effect = error
+                try:
+                    with mock.patch.object(
+                        self.h.urllib.request, "build_opener", return_value=opener
+                    ):
+                        with self.assertRaises(self.h.TransactionError):
+                            self.runtime.smoke(["app.example.test"])
+                finally:
+                    error.close()
+
+    def test_generic_smoke_rejects_dns_and_timeout_failures(self):
+        failures = (
+            urllib.error.URLError(socket.gaierror(-2, "name resolution failed")),
+            socket.timeout("timed out"),
+        )
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                opener = mock.Mock()
+                opener.open.side_effect = failure
+                with mock.patch.object(
+                    self.h.urllib.request, "build_opener", return_value=opener
+                ):
+                    with self.assertRaises(self.h.TransactionError):
+                        self.runtime.smoke(["app.example.test"])
+
+    def test_generic_smoke_does_not_follow_redirects_to_failed_targets(self):
+        source = "https://app.example.test/"
+        target = "https://redirect-target.example.test/"
+        failures = (
+            urllib.error.URLError("redirect target is unreachable"),
+            (503, None),
+        )
+        real_build_opener = urllib.request.build_opener
+        for target_response in failures:
+            with self.subTest(target_response=target_response):
+                responses = {source: (302, target), target: target_response}
+                following_transport = MappingHTTPSHandler(responses)
+                following_opener = real_build_opener(following_transport)
+                isolated_transports = []
+
+                def build_isolated_opener(*handlers):
+                    transport = MappingHTTPSHandler(responses)
+                    isolated_transports.append(transport)
+                    return real_build_opener(*handlers, transport)
+
+                with (
+                    mock.patch.object(self.h.urllib.request, "_opener", following_opener),
+                    mock.patch.object(
+                        self.h.urllib.request,
+                        "build_opener",
+                        side_effect=build_isolated_opener,
+                    ),
+                ):
+                    self.runtime.smoke(["app.example.test"])
+
+                self.assertEqual(1, len(isolated_transports))
+                self.assertEqual([(source, "HEAD")], isolated_transports[0].seen)
 
 
 @unittest.skipUnless(HELPER_PATH.is_file() and INSTALLER_PATH.is_file(), "helper not implemented yet")

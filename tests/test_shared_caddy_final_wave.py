@@ -337,345 +337,6 @@ class FinalWaveInstallerTests(unittest.TestCase):
         ):
             self.assertIn(suffix, joined)
 
-    def test_supported_ubuntu_var_lock_alias_is_deliberately_resolved(self):
-        (self.root / "var").mkdir()
-        (self.root / "run" / "lock").mkdir(parents=True)
-        (self.root / "var" / "lock").symlink_to("../run/lock", target_is_directory=True)
-        self.bootstrap()
-        self.install()
-        self.assertTrue((self.root / "run" / "lock" / "deploydesk" / "shared-caddy.lock").is_file())
-
-    def test_supported_var_lock_alias_opens_each_physical_segment_nofollow(self):
-        nofollow = getattr(self.i.os, "O_NOFOLLOW", 0)
-        if not nofollow:
-            self.skipTest("platform has no O_NOFOLLOW")
-        (self.root / "var").mkdir()
-        (self.root / "run" / "lock").mkdir(parents=True)
-        (self.root / "var" / "lock").symlink_to("../run/lock", target_is_directory=True)
-        original_open = self.i.os.open
-        physical_flags = {}
-
-        def record_open(path, flags, *args, **kwargs):
-            name = str(path)
-            if (
-                name in ("run", "lock")
-                and kwargs.get("dir_fd") is not None
-                and flags & getattr(self.i.os, "O_DIRECTORY", 0)
-            ):
-                physical_flags.setdefault(name, []).append(flags)
-            return original_open(path, flags, *args, **kwargs)
-
-        self.i.os.open = record_open
-        try:
-            self.bootstrap()
-        finally:
-            self.i.os.open = original_open
-        self.assertEqual({"run", "lock"}, set(physical_flags))
-        self.assertTrue(all(
-            flags & nofollow
-            for segment_flags in physical_flags.values()
-            for flags in segment_flags
-        ))
-
-    def test_supported_absolute_ubuntu_var_lock_alias_is_deliberately_resolved(self):
-        (self.root / "var").mkdir()
-        (self.root / "run" / "lock").mkdir(parents=True)
-        (self.root / "var" / "lock").symlink_to("/run/lock", target_is_directory=True)
-        with self.i.TrustedInstallerWalker(self.root, os.getuid()) as walker:
-            handle = walker.ensure_dir(self.root / "var" / "lock")
-            self.assertEqual(
-                os.stat(self.root / "run" / "lock").st_ino,
-                handle.inode,
-            )
-
-    def test_supported_ubuntu_var_lock_alias_adopts_run_tmpfs_device(self):
-        (self.root / "var").mkdir()
-        (self.root / "run" / "lock").mkdir(parents=True)
-        (self.root / "var" / "lock").symlink_to("../run/lock", target_is_directory=True)
-        original_open = self.i.os.open
-        original_close = self.i.os.close
-        original_fstat = self.i.os.fstat
-        original_stat = self.i.os.stat
-        alias_fds = set()
-        alias_device = original_stat(self.root).st_dev + 41
-
-        def record_open(path, flags, *args, **kwargs):
-            descriptor = original_open(path, flags, *args, **kwargs)
-            parent_fd = kwargs.get("dir_fd")
-            if (path == "run" and parent_fd is not None) or parent_fd in alias_fds:
-                alias_fds.add(descriptor)
-            return descriptor
-
-        def mounted_fstat(descriptor):
-            info = original_fstat(descriptor)
-            if descriptor in alias_fds:
-                return changed_stat(info, device=alias_device)
-            return info
-
-        def record_close(descriptor):
-            alias_fds.discard(descriptor)
-            return original_close(descriptor)
-
-        def mounted_stat(path, *args, **kwargs):
-            info = original_stat(path, *args, **kwargs)
-            if path == "run" and kwargs.get("dir_fd") is not None:
-                return changed_stat(info, device=alias_device)
-            if kwargs.get("dir_fd") in alias_fds:
-                return changed_stat(info, device=alias_device)
-            return info
-
-        self.i.os.open = record_open
-        self.i.os.close = record_close
-        self.i.os.fstat = mounted_fstat
-        self.i.os.stat = mounted_stat
-        try:
-            self.bootstrap()
-            self.install()
-        finally:
-            self.i.os.open = original_open
-            self.i.os.close = original_close
-            self.i.os.fstat = original_fstat
-            self.i.os.stat = original_stat
-        self.assertTrue((self.root / "run" / "lock" / "deploydesk" / "shared-caddy.lock").is_file())
-
-    def test_supported_alias_reanchor_still_rejects_descendant_device_crossing(self):
-        (self.root / "var").mkdir()
-        (self.root / "run" / "lock").mkdir(parents=True)
-        (self.root / "var" / "lock").symlink_to("../run/lock", target_is_directory=True)
-        original_open = self.i.os.open
-        original_close = self.i.os.close
-        original_fstat = self.i.os.fstat
-        original_stat = self.i.os.stat
-        alias_fds = set()
-        descendant_fds = set()
-        alias_device = original_stat(self.root).st_dev + 41
-        descendant_device = alias_device + 1
-
-        def record_open(path, flags, *args, **kwargs):
-            descriptor = original_open(path, flags, *args, **kwargs)
-            parent_fd = kwargs.get("dir_fd")
-            if path == "run" and parent_fd is not None:
-                alias_fds.add(descriptor)
-            elif parent_fd in alias_fds:
-                if path == "deploydesk":
-                    descendant_fds.add(descriptor)
-                else:
-                    alias_fds.add(descriptor)
-            return descriptor
-
-        def mounted_fstat(descriptor):
-            info = original_fstat(descriptor)
-            if descriptor in descendant_fds:
-                return changed_stat(info, device=descendant_device)
-            if descriptor in alias_fds:
-                return changed_stat(info, device=alias_device)
-            return info
-
-        def record_close(descriptor):
-            alias_fds.discard(descriptor)
-            descendant_fds.discard(descriptor)
-            return original_close(descriptor)
-
-        def mounted_stat(path, *args, **kwargs):
-            info = original_stat(path, *args, **kwargs)
-            parent_fd = kwargs.get("dir_fd")
-            if path == "run" and parent_fd is not None:
-                return changed_stat(info, device=alias_device)
-            if parent_fd in descendant_fds:
-                return changed_stat(info, device=descendant_device)
-            if parent_fd in alias_fds:
-                return changed_stat(info, device=alias_device)
-            return info
-
-        self.i.os.open = record_open
-        self.i.os.close = record_close
-        self.i.os.fstat = mounted_fstat
-        self.i.os.stat = mounted_stat
-        try:
-            with self.i.TrustedInstallerWalker(self.root, os.getuid()) as walker:
-                alias = walker.ensure_dir(self.root / "var" / "lock")
-                self.assertEqual(alias_device, alias.device)
-                with self.assertRaisesRegex(
-                    self.i.InstallError,
-                    r"maintenance path crosses a device boundary: .*deploydesk$",
-                ):
-                    walker.ensure_dir(self.root / "var" / "lock" / "deploydesk", create=True)
-        finally:
-            self.i.os.open = original_open
-            self.i.os.close = original_close
-            self.i.os.fstat = original_fstat
-            self.i.os.stat = original_stat
-
-    def test_var_lock_alias_rejects_non_exact_targets_and_nested_symlinks(self):
-        non_exact_targets = (
-            "../run/./lock",
-            "../run/not-lock",
-            "/run/lock-evil",
-            "/tmp/lock",
-        )
-        for target in non_exact_targets:
-            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                (root / "var").mkdir()
-                (root / "run" / "lock").mkdir(parents=True)
-                (root / "var" / "lock").symlink_to(target, target_is_directory=True)
-                with self.i.TrustedInstallerWalker(root, os.getuid()) as walker:
-                    with self.assertRaisesRegex(
-                        self.i.InstallError,
-                        "only the OS-owned /var/lock -> /run/lock alias is supported",
-                    ):
-                        walker.ensure_dir(root / "var" / "lock" / "deploydesk", create=True)
-                self.assertFalse((root / "run" / "lock" / "deploydesk").exists())
-
-        for nested_segment in ("run", "lock"):
-            label = "nested-" + nested_segment + "-symlink"
-            with self.subTest(case=label), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                (root / "var").mkdir()
-                if nested_segment == "run":
-                    (root / "real-run" / "lock").mkdir(parents=True)
-                    (root / "run").symlink_to("real-run", target_is_directory=True)
-                    nested_destination = root / "real-run" / "lock"
-                else:
-                    (root / "run").mkdir()
-                    (root / "run" / "real-lock").mkdir()
-                    (root / "run" / "lock").symlink_to(
-                        "real-lock", target_is_directory=True,
-                    )
-                    nested_destination = root / "run" / "real-lock"
-                (root / "var" / "lock").symlink_to(
-                    "../run/lock", target_is_directory=True,
-                )
-                with self.i.TrustedInstallerWalker(root, os.getuid()) as walker:
-                    with self.assertRaisesRegex(
-                        self.i.InstallError,
-                        "supported /var/lock alias target is absent or unsafe",
-                    ):
-                        walker.ensure_dir(root / "var" / "lock" / "deploydesk", create=True)
-                self.assertFalse((nested_destination / "deploydesk").exists())
-
-    def test_var_lock_alias_rejects_unsafe_target_mode_owner_and_link_count(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "var").mkdir()
-            (root / "run" / "lock").mkdir(parents=True)
-            (root / "var" / "lock").symlink_to("../run/lock", target_is_directory=True)
-            os.chmod(root / "run", 0o777)
-            with self.i.TrustedInstallerWalker(root, os.getuid()) as walker:
-                with self.assertRaisesRegex(
-                    self.i.InstallError,
-                    r"maintenance component is group/world writable: .*/run$",
-                ):
-                    walker.ensure_dir(root / "var" / "lock")
-
-        for field in ("uid", "nlink"):
-            with self.subTest(alias_field=field), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                (root / "var").mkdir()
-                (root / "run" / "lock").mkdir(parents=True)
-                (root / "var" / "lock").symlink_to(
-                    "../run/lock", target_is_directory=True,
-                )
-                original_stat = self.i.os.stat
-
-                def unsafe_alias_stat(path, *args, **kwargs):
-                    info = original_stat(path, *args, **kwargs)
-                    if not kwargs.get("follow_symlinks", True) and stat.S_ISLNK(info.st_mode):
-                        if field == "uid":
-                            return changed_stat(info, uid=os.getuid() + 1)
-                        return changed_stat(info, nlink=2)
-                    return info
-
-                self.i.os.stat = unsafe_alias_stat
-                try:
-                    with self.i.TrustedInstallerWalker(root, os.getuid()) as walker:
-                        with self.assertRaisesRegex(
-                            self.i.InstallError, "system lock alias owner/type mismatch",
-                        ):
-                            walker.ensure_dir(root / "var" / "lock")
-                finally:
-                    self.i.os.stat = original_stat
-
-    def test_var_lock_alias_and_target_replacement_are_detected_on_reattest(self):
-        for replaced in ("alias", "target-directory"):
-            with self.subTest(replaced=replaced), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                (root / "var").mkdir()
-                (root / "run" / "lock").mkdir(parents=True)
-                alias = root / "var" / "lock"
-                alias.symlink_to("../run/lock", target_is_directory=True)
-                with self.i.TrustedInstallerWalker(root, os.getuid()) as walker:
-                    walker.ensure_dir(alias)
-                    if replaced == "alias":
-                        alias.unlink()
-                        alias.symlink_to("../run/lock", target_is_directory=True)
-                        expected = "supported lock alias changed during maintenance"
-                    else:
-                        (root / "run" / "lock").rename(root / "run" / "old-lock")
-                        (root / "run" / "lock").mkdir()
-                        expected = "retained maintenance ancestor was replaced"
-                    with self.assertRaisesRegex(self.i.InstallError, expected):
-                        walker.attest()
-
-    def test_var_lock_alias_or_target_replacement_blocks_descendant_creation(self):
-        for replaced in ("alias", "target-directory"):
-            with self.subTest(replaced=replaced), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                (root / "var").mkdir()
-                (root / "run" / "lock").mkdir(parents=True)
-                alias = root / "var" / "lock"
-                alias.symlink_to("../run/lock", target_is_directory=True)
-                old_target = root / "run" / "old-lock"
-                with self.i.TrustedInstallerWalker(root, os.getuid()) as walker:
-                    walker.ensure_dir(alias)
-                    if replaced == "alias":
-                        alias.unlink()
-                        alias.symlink_to("../run/lock", target_is_directory=True)
-                        expected = "supported lock alias changed during maintenance"
-                    else:
-                        (root / "run" / "lock").rename(old_target)
-                        (root / "run" / "lock").mkdir()
-                        expected = "retained maintenance ancestor was replaced"
-                    with self.assertRaisesRegex(self.i.InstallError, expected):
-                        walker.ensure_dir(alias / "child", create=True)
-                self.assertFalse((root / "run" / "lock" / "child").exists())
-                if old_target.exists():
-                    self.assertFalse((old_target / "child").exists())
-
-    def test_var_lock_target_replacement_during_open_blocks_descendant_creation(self):
-        (self.root / "var").mkdir()
-        (self.root / "run" / "lock").mkdir(parents=True)
-        alias = self.root / "var" / "lock"
-        alias.symlink_to("../run/lock", target_is_directory=True)
-        old_target = self.root / "run" / "old-lock"
-        original_open = self.i.os.open
-        run_descriptors = set()
-        replaced = [False]
-
-        def replace_after_open(path, flags, *args, **kwargs):
-            descriptor = original_open(path, flags, *args, **kwargs)
-            parent_fd = kwargs.get("dir_fd")
-            if path == "run" and parent_fd is not None:
-                run_descriptors.add(descriptor)
-            elif path == "lock" and parent_fd in run_descriptors and not replaced[0]:
-                (self.root / "run" / "lock").rename(old_target)
-                (self.root / "run" / "lock").mkdir()
-                replaced[0] = True
-            return descriptor
-
-        self.i.os.open = replace_after_open
-        try:
-            with self.i.TrustedInstallerWalker(self.root, os.getuid()) as walker:
-                with self.assertRaisesRegex(
-                    self.i.InstallError, "retained maintenance ancestor was replaced",
-                ):
-                    walker.ensure_dir(alias / "child", create=True)
-        finally:
-            self.i.os.open = original_open
-        self.assertTrue(replaced[0])
-        self.assertFalse((self.root / "run" / "lock" / "child").exists())
-        self.assertFalse((old_target / "child").exists())
-
     def test_controller_parent_replacement_during_open_blocks_handoff_mutation(self):
         parent = self.root / "controllers"
         parent.mkdir()
@@ -762,7 +423,7 @@ class FinalWaveInstallerTests(unittest.TestCase):
             self.i.os.fstat = original_fstat
             self.i.os.stat = original_stat
 
-    def test_rejected_root_component_and_alias_opens_close_their_descriptors(self):
+    def test_rejected_root_and_component_opens_close_their_descriptors(self):
         def assert_closed(descriptor, original_fstat, original_close):
             try:
                 original_fstat(descriptor)
@@ -799,54 +460,36 @@ class FinalWaveInstallerTests(unittest.TestCase):
         root_descriptor = opened[-1][1]
         assert_closed(root_descriptor, original_fstat, original_close)
 
-        cases = ("component", "alias-run-target", "alias-lock-target")
-        for case in cases:
-            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                if case == "component":
-                    rejected_path = root / "opt"
-                    rejected_path.mkdir()
-                    request_path = rejected_path
-                    opened_name = "opt"
-                else:
-                    (root / "var").mkdir()
-                    (root / "run" / "lock").mkdir(parents=True)
-                    (root / "var" / "lock").symlink_to(
-                        "../run/lock", target_is_directory=True,
-                    )
-                    rejected_path = (
-                        root / "run"
-                        if case == "alias-run-target"
-                        else root / "run" / "lock"
-                    )
-                    request_path = root / "var" / "lock"
-                    opened_name = "run" if case == "alias-run-target" else "lock"
-                opened = []
-                self.i.os.open = record_open
-                walker = self.i.TrustedInstallerWalker(root, os.getuid())
-                original_instance_check = walker._check_directory
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            rejected_path = root / "opt"
+            rejected_path.mkdir()
+            opened = []
+            self.i.os.open = record_open
+            walker = self.i.TrustedInstallerWalker(root, os.getuid())
+            original_instance_check = walker._check_directory
 
-                def reject_component(info, display):
-                    if Path(display) == rejected_path:
-                        raise self.i.InstallError("injected component rejection")
-                    return original_instance_check(info, display)
+            def reject_component(info, display):
+                if Path(display) == rejected_path:
+                    raise self.i.InstallError("injected component rejection")
+                return original_instance_check(info, display)
 
-                walker._check_directory = reject_component
-                try:
-                    with self.assertRaisesRegex(
-                        self.i.InstallError, "injected component rejection",
-                    ):
-                        walker.ensure_dir(request_path)
-                    rejected_descriptors = [
-                        descriptor for name, descriptor in opened if name == opened_name
-                    ]
-                    self.assertEqual(1, len(rejected_descriptors))
-                    assert_closed(
-                        rejected_descriptors[0], original_fstat, original_close,
-                    )
-                finally:
-                    walker.close()
-                    self.i.os.open = original_open
+            walker._check_directory = reject_component
+            try:
+                with self.assertRaisesRegex(
+                    self.i.InstallError, "injected component rejection",
+                ):
+                    walker.ensure_dir(rejected_path)
+                rejected_descriptors = [
+                    descriptor for name, descriptor in opened if name == "opt"
+                ]
+                self.assertEqual(1, len(rejected_descriptors))
+                assert_closed(
+                    rejected_descriptors[0], original_fstat, original_close,
+                )
+            finally:
+                walker.close()
+                self.i.os.open = original_open
 
     def test_root_provision_hands_off_controller_without_invalidating_walker(self):
         self.bootstrap()

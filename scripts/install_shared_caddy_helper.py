@@ -135,7 +135,7 @@ class Layout:
             Path("/"),
             Path("/opt/infra/caddy"),
             Path("/var/lib/deploydesk/caddy"),
-            Path("/var/lock/deploydesk"),
+            Path("/var/lib/deploydesk/locks"),
             Path("/var/lib/deploydesk/bundles"),
             Path("/usr/local/sbin/deploydesk-caddy-apply"),
         )
@@ -147,7 +147,7 @@ class Layout:
             root,
             root / "opt" / "infra" / "caddy",
             root / "var" / "lib" / "deploydesk" / "caddy",
-            root / "var" / "lock" / "deploydesk",
+            root / "var" / "lib" / "deploydesk" / "locks",
             root / "var" / "lib" / "deploydesk" / "bundles",
             root / "usr" / "local" / "sbin" / "deploydesk-caddy-apply",
         )
@@ -306,18 +306,13 @@ def _read_approved_helper(source, expected_sha256):
 
 
 class _DirectoryHandle:
-    def __init__(
-        self, logical, fd, info, parent=None, name=None, alias_target=None,
-        alias_entry_identity=None,
-    ):
+    def __init__(self, logical, fd, info, parent=None, name=None):
         self.logical = logical
         self.fd = fd
         self.device = info.st_dev
         self.inode = info.st_ino
         self.parent = parent
         self.name = name
-        self.alias_target = alias_target
-        self.alias_entry_identity = alias_entry_identity
 
 
 class TrustedInstallerWalker:
@@ -328,7 +323,6 @@ class TrustedInstallerWalker:
         self.root = Path(root)
         self.owner_uid = owner_uid
         self.handles = {}
-        self._physical = {}
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
         try:
             root_fd = os.open(self.root, flags)
@@ -346,13 +340,12 @@ class TrustedInstallerWalker:
 
     def close(self):
         seen = set()
-        for handle in reversed(list(self._physical.values()) + list(self.handles.values())):
+        for handle in reversed(list(self.handles.values())):
             if handle.fd not in seen:
                 seen.add(handle.fd)
                 with contextlib.suppress(OSError):
                     os.close(handle.fd)
         self.handles.clear()
-        self._physical.clear()
 
     def __enter__(self):
         return self
@@ -418,42 +411,6 @@ class TrustedInstallerWalker:
             raise
         return _DirectoryHandle(logical, descriptor, info, parent, name)
 
-    def _open_alias_target(self, alias_parent, target):
-        if target not in ("/run/lock", "../run/lock"):
-            raise InstallError("only the OS-owned /var/lock -> /run/lock alias is supported")
-        root = self.handles[()]
-        current = root
-        for index, name in enumerate(("run", "lock")):
-            key = ("run",) if index == 0 else ("run", "lock")
-            if key in self._physical:
-                current = self._physical[key]
-                continue
-            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            try:
-                descriptor = os.open(name, flags, dir_fd=current.fd)
-            except OSError as exc:
-                raise InstallError("supported /var/lock alias target is absent or unsafe") from exc
-            try:
-                info = os.fstat(descriptor)
-                self._check_directory(info, self.root.joinpath(*key))
-            except BaseException:
-                with contextlib.suppress(OSError):
-                    os.close(descriptor)
-                raise
-            handle = _DirectoryHandle(key, descriptor, info, current, name)
-            self._physical[key] = handle
-            current = handle
-        alias_info = self._lstat(alias_parent, "lock")
-        if (
-            not stat.S_ISLNK(alias_info.st_mode) or alias_info.st_uid != self.owner_uid
-            or alias_info.st_nlink != 1 or alias_info.st_dev != alias_parent.device
-        ):
-            raise InstallError("system lock alias owner/type mismatch")
-        return _DirectoryHandle(
-            ("var", "lock"), current.fd, os.fstat(current.fd), alias_parent, "lock", target,
-            (alias_info.st_dev, alias_info.st_ino),
-        )
-
     def ensure_dir(self, path, mode=0o755, create=False):
         parts = self._relative(path)
         self.attest()
@@ -465,21 +422,7 @@ class TrustedInstallerWalker:
             logical = parts[: index + 1]
             if logical in self.handles:
                 current = self.handles[logical]
-                if current.alias_target is not None:
-                    anchor = current.device
                 continue
-            if logical == ("var", "lock"):
-                try:
-                    info = self._lstat(current, name)
-                except FileNotFoundError:
-                    info = None
-                if info is not None and stat.S_ISLNK(info.st_mode):
-                    target = os.readlink(name, dir_fd=current.fd)
-                    handle = self._open_alias_target(current, target)
-                    self.handles[logical] = handle
-                    current = handle
-                    anchor = handle.device
-                    continue
             if create:
                 self.attest()
             handle = self._open_component(
@@ -495,25 +438,12 @@ class TrustedInstallerWalker:
         return current
 
     def attest(self):
-        for handle in list(self._physical.values()) + list(self.handles.values()):
+        for handle in list(self.handles.values()):
             info = os.fstat(handle.fd)
             self._check_directory(info, self.root.joinpath(*handle.logical))
             if (info.st_dev, info.st_ino) != (handle.device, handle.inode):
                 raise InstallError("retained maintenance directory changed")
             if handle.parent is None:
-                continue
-            if handle.alias_target is not None:
-                try:
-                    entry = self._lstat(handle.parent, handle.name)
-                    target = os.readlink(handle.name, dir_fd=handle.parent.fd)
-                except OSError as exc:
-                    raise InstallError("supported lock alias changed during maintenance") from exc
-                if (
-                    not stat.S_ISLNK(entry.st_mode) or entry.st_uid != self.owner_uid
-                    or entry.st_nlink != 1 or target != handle.alias_target
-                    or (entry.st_dev, entry.st_ino) != handle.alias_entry_identity
-                ):
-                    raise InstallError("supported lock alias changed during maintenance")
                 continue
             try:
                 entry = self._lstat(handle.parent, handle.name)
@@ -800,9 +730,7 @@ class TrustedInstallerWalker:
             key=len, reverse=True,
         ):
             removed.append(self.handles.pop(logical).fd)
-        retained = {item.fd for item in self.handles.values()} | {
-            item.fd for item in self._physical.values()
-        }
+        retained = {item.fd for item in self.handles.values()}
         for descriptor in set(removed) - retained:
             os.close(descriptor)
 

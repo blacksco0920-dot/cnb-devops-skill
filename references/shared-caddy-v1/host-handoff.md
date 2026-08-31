@@ -9,7 +9,8 @@ server.
 - Approved helper file, its independent SHA-256, helper version, and contract
   version.
 - Fixed release identity and group, Caddy container identity, host/container
-  config mount, local-filesystem semantics, and the complete live Caddy config.
+  config mount, persistent `/var/lib/deploydesk/locks` local-filesystem
+  semantics, and the complete live Caddy config.
 - Every live hostname, route behavior, owning deployment, project,
   environment, normalized source repository, and smoke check.
 - Confirmed maintenance window and proof that every old Caddy writer is
@@ -75,9 +76,12 @@ all release/provision/install actions for administrator repair.
 
 Run `--maintenance-action provision-deployment` separately with the complete
 approved deployment list and fixed release UID/GID. It creates project and
-release lock files once and never deletes or replaces their inodes. The release
-lock is root-owned and group-readable so the release identity can open it
-read-only and hold `flock`; it is not group-writable.
+release lock files once under `/var/lib/deploydesk/locks/{projects,releases}`
+and never deletes or replaces their inodes. The shared lock is a sibling at
+`/var/lib/deploydesk/locks/shared-caddy.lock`. The release lock is root-owned
+and group-readable so the release identity can open it read-only and hold
+`flock`; it is not group-writable. The complete lock tree is persistent across
+reboot and must never be placed under `/var/lock` or `/run/lock`.
 After the lock manifest is durable, provisioning opens each project controller
 directory with `O_NOFOLLOW`, hands that exact directory FD to the fixed release
 UID/GID as private mode `0700`, and verifies the final entry and FD identity.
@@ -92,9 +96,8 @@ never regenerate evidence around a replacement inode.
 All actions retain trusted directory descriptors throughout the operation,
 reattest parent entry identity before descriptor-relative reads and mutations,
 and reject symlinks, hardlinks, group/world-writable ancestors, replacements,
-and device crossings. The one explicit compatibility case is the OS-owned
-`/var/lock` alias to root-owned `/run/lock`; the resolved target becomes the
-device anchor for controlled descendants.
+and device crossings. The persistent lock tree has no symlink exception and
+stays on the trusted `/var/lib/deploydesk` local filesystem.
 
 Validate the sudoers example with `visudo`. The regex permits exactly the two
 normal-release arguments; avoid wildcard argument rules that also match spaces
@@ -127,5 +130,9 @@ Record only non-secret evidence:
 - validate, reload, and per-host smoke results;
 - current/previous generation and recovery-marker absence;
 - administrator, maintenance window, and rollback owner.
+
+Per-host helper smoke is only the generic, non-redirecting `HEAD /` check
+(original HTTP status below 500); exact application paths and health semantics
+remain outer release acceptance evidence owned by the application controller.
 
 Normal application releases remain blocked until this record is accepted.

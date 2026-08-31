@@ -41,6 +41,48 @@ class SharedCaddyInstallerTests(unittest.TestCase):
             owner_uid=os.getuid(),
         )
 
+    def test_host_and_test_layout_use_the_persistent_deploydesk_lock_root(self):
+        expected_host_root = Path("/var/lib/deploydesk/locks")
+        self.assertEqual(expected_host_root, self.helper.Layout.for_host().lock_root)
+        self.assertEqual(expected_host_root, self.installer.Layout.for_host().lock_root)
+        self.assertEqual(
+            self.layout.root / "var" / "lib" / "deploydesk" / "locks",
+            self.layout.lock_root,
+        )
+
+    def test_bootstrap_ignores_volatile_group_writable_ubuntu_var_lock_alias(self):
+        (self.layout.root / "var").mkdir()
+        (self.layout.root / "run" / "lock").mkdir(parents=True)
+        os.chmod(self.layout.root / "run" / "lock", 0o775)
+        (self.layout.root / "var" / "lock").symlink_to(
+            "../run/lock", target_is_directory=True,
+        )
+
+        self.bootstrap()
+
+        self.assertTrue(self.layout.shared_lock.is_file())
+        self.assertTrue(
+            (self.layout.root / "var" / "lib" / "deploydesk" / "locks" / "shared-caddy.lock").is_file()
+        )
+        self.assertFalse(
+            (self.layout.root / "run" / "lock" / "deploydesk" / "shared-caddy.lock").exists()
+        )
+
+    def test_installer_walker_treats_the_old_var_lock_alias_as_untrusted(self):
+        root = self.layout.root
+        (root / "var").mkdir()
+        (root / "run" / "lock").mkdir(parents=True)
+        (root / "var" / "lock").symlink_to(
+            "../run/lock", target_is_directory=True,
+        )
+
+        with self.installer.TrustedInstallerWalker(root, os.getuid()) as walker:
+            with self.assertRaisesRegex(
+                self.installer.InstallError,
+                "unexpected symlink or non-directory",
+            ):
+                walker.ensure_dir(root / "var" / "lock")
+
     def test_install_creates_fixed_layout_attestation_and_immutable_locks(self):
         self.bootstrap()
         self.install()

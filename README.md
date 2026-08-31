@@ -29,7 +29,7 @@ and promote the exact OCI images already verified in staging.
 - [CNB OpenAPI](references/cnb-openapi.md) — current CNB-specific facts and
   mutation boundaries.
 - [Shared Caddy contract v1](references/shared-caddy-v1/contract.md) — schemas,
-  canonical routes, host locks, generation transactions, and recovery.
+  canonical routes, persistent host locks, generation transactions, and recovery.
 - [Shared Caddy host handoff](references/shared-caddy-v1/host-handoff.md) —
   separately authorized bootstrap, provisioning, baseline, ownership, and
   crash-recoverable helper maintenance.

@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -108,7 +109,7 @@ class Layout:
             Path("/"),
             Path("/opt/infra/caddy"),
             Path("/var/lib/deploydesk/caddy"),
-            Path("/var/lock/deploydesk"),
+            Path("/var/lib/deploydesk/locks"),
             Path("/var/lib/deploydesk/bundles"),
             Path("/usr/local/sbin/deploydesk-caddy-apply"),
         )
@@ -120,7 +121,7 @@ class Layout:
             root,
             root / "opt" / "infra" / "caddy",
             root / "var" / "lib" / "deploydesk" / "caddy",
-            root / "var" / "lock" / "deploydesk",
+            root / "var" / "lib" / "deploydesk" / "locks",
             root / "var" / "lib" / "deploydesk" / "bundles",
             root / "usr" / "local" / "sbin" / "deploydesk-caddy-apply",
         )
@@ -834,54 +835,17 @@ def _verify_trusted_chain(path, root, trust, final_kind):
     except ValueError as exc:
         raise SecurityError("trusted path escapes configured root") from exc
     current = root
-    logical = root
     anchor_device = None
-    previous_info = None
     if current == Path("/"):
         _verify_trusted(current, trust, "directory")
     for index, component in enumerate(relative.parts):
-        logical = logical / component
         current = current / component
         kind = final_kind if index == len(relative.parts) - 1 else "directory"
-        link_info = os.lstat(current)
-        if index == 1 and relative.parts[:2] == ("var", "lock") and stat.S_ISLNK(link_info.st_mode):
-            try:
-                alias_target = os.readlink(current)
-            except OSError as exc:
-                raise SecurityError("supported /var/lock alias target is absent or unsafe") from exc
-            if alias_target not in ("/run/lock", "../run/lock"):
-                raise SecurityError("only the OS-owned /var/lock -> /run/lock alias is supported")
-            if (
-                previous_info is None or link_info.st_uid != trust.owner_uid
-                or link_info.st_nlink != 1 or link_info.st_dev != previous_info.st_dev
-            ):
-                raise SecurityError("system lock alias owner/type mismatch")
-            alias_identity = (link_info.st_dev, link_info.st_ino)
-            target_root = root / "run"
-            target_lock = target_root / "lock"
-            try:
-                _verify_trusted(target_root, trust, "directory")
-                info = _verify_trusted(target_lock, trust, "directory")
-                after = os.lstat(current)
-                after_target = os.readlink(current)
-            except (OSError, RuntimeError, SecurityError) as exc:
-                raise SecurityError("supported /var/lock alias target is absent or unsafe") from exc
-            if (
-                not stat.S_ISLNK(after.st_mode) or after.st_uid != trust.owner_uid
-                or after.st_nlink != 1 or after_target != alias_target
-                or (after.st_dev, after.st_ino) != alias_identity
-            ):
-                raise SecurityError("supported lock alias changed during inspection")
-            current = target_lock
-            anchor_device = info.st_dev
-            previous_info = info
-            continue
         info = _verify_trusted(current, trust, kind)
         if anchor_device is None:
             anchor_device = info.st_dev
         elif info.st_dev != anchor_device:
             raise SecurityError("trusted path crosses a device boundary: " + str(current))
-        previous_info = info
     return current
 
 
@@ -994,6 +958,11 @@ def _snapshot_file(anchor, relative, destination):
     if sha256_file(destination) != digest.hexdigest():
         raise SecurityError("root-owned intake snapshot recheck failed")
     return digest.hexdigest()
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        return None
 
 
 class DockerRuntime:
@@ -1157,12 +1126,19 @@ class DockerRuntime:
         ])
 
     def smoke(self, hosts):
+        opener = urllib.request.build_opener(_NoRedirectHandler())
         for host in hosts:
             request = urllib.request.Request("https://" + host + "/", method="HEAD")
             try:
-                with urllib.request.urlopen(request, timeout=10) as response:
+                with opener.open(request, timeout=10) as response:
                     if response.status >= 500:
                         raise TransactionError("public smoke returned server error")
+            except urllib.error.HTTPError as exc:
+                try:
+                    if exc.code >= 500:
+                        raise TransactionError("public smoke returned server error") from exc
+                finally:
+                    exc.close()
             except Exception as exc:
                 raise TransactionError("public smoke failed for " + host) from exc
 

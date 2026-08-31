@@ -71,6 +71,10 @@ previous configuration and release evidence until the new transaction is fully
 accepted. Read [shared Caddy v1](shared-caddy-v1/contract.md) for the fixed
 normal interface and durable phase rules.
 
+All three lock classes use the persistent, root-owned
+`/var/lib/deploydesk/locks` tree. Never place inode-pinned release coordination
+under volatile `/var/lock` or `/run/lock` state.
+
 Host bootstrap, helper/contract installation or recovery, and project lock
 provisioning are separate maintenance authorities. A helper install requires a
 completed bootstrap attestation, changes only the helper/contract pair under a

@@ -47,9 +47,9 @@ Caddy container, but projects never choose it:
 /var/lib/deploydesk/caddy/lock-inodes.json
 /var/lib/deploydesk/caddy/maintenance/
 /var/lib/deploydesk/caddy/{maintenance-transaction.json,maintenance-recovery-required}
-/var/lock/deploydesk/releases/<deployment-id>.release.lock
-/var/lock/deploydesk/projects/<deployment-id>.caddy.lock
-/var/lock/deploydesk/shared-caddy.lock
+/var/lib/deploydesk/locks/releases/<deployment-id>.release.lock
+/var/lib/deploydesk/locks/projects/<deployment-id>.caddy.lock
+/var/lib/deploydesk/locks/shared-caddy.lock
 ```
 
 All trusted anchors, lock files, state, completed generations, the helper, and
@@ -58,10 +58,12 @@ Every trusted component is checked with `lstat`; unexpected symlinks,
 hardlinks, writable parents, owner drift, mount crossing, and replaced lock
 inodes fail closed. The root-owned lock manifest pins device/inode pairs for
 the shared, project, and release locks across invocations and maintenance may
-only append a genuinely new, explicitly provisioned deployment. The deliberate
-OS-owned `/var/lock` alias is resolved to a trusted root-owned target;
-the complete `/run/lock` target becomes the device anchor even when `/run` is a
-separate tmpfs, and every controlled descendant must stay on that device.
+only append a genuinely new, explicitly provisioned deployment. All three lock
+classes live under the persistent, root-owned
+`/var/lib/deploydesk/locks` tree on the same trusted local filesystem as the
+other `/var/lib/deploydesk` state. `/var/lock` and `/run/lock` are deliberately
+not used: on common Ubuntu hosts they resolve to volatile tmpfs state, so their
+inodes do not survive reboot. No lock-path symlink is accepted.
 `managed/current`
 is the sole expected symlink and may name
 only a real child of `managed/generations`.
@@ -155,6 +157,11 @@ generation and manifest with new Git/bundle provenance, then validates,
 reloads, smokes, and issues a new receipt. An old receipt cannot evidence a
 new candidate.
 
+The helper smoke is a generic, non-redirecting `HEAD /` reachability check:
+any original HTTP status below 500 is accepted, while the application release
+controller must validate its exact public paths and application-specific health
+evidence outside the helper before accepting the release.
+
 ## Durable transaction and recovery
 
 Under the shared lock the helper first resolves any retained transaction, then:
@@ -217,8 +224,8 @@ malformed or irreconcilable evidence writes
 descriptors for the whole action and reattests ancestor entry identity before
 descriptor-relative reads, writes, renames, owner/mode changes, and fsyncs. It
 rejects group/world-writable ancestors, links, replacements, and device
-crossings. The only deliberate alias is the OS-owned `/var/lock` link to the
-root-owned `/run/lock` target, which becomes the controlled device anchor.
+crossings. The persistent `/var/lib/deploydesk/locks` tree follows the same
+no-symlink and single-local-filesystem rules as all other trusted state.
 The helper and server contract are fixed at modes `0755` and `0644`. An
 ordinary v1 helper upgrade may replace their approved bytes and hash only at
 the same schema-fixed `helper_version`; changing that version is a separate
