@@ -68,6 +68,14 @@ wrapper. The only privileged boundaries are the exact preflight and exact apply
 rules for that deployment; apply repeats attestation and ownership checks under
 the same lock order immediately before its Caddy mutation.
 
+For a deployment's actual two-rule sudo boundary, read the
+[per-deployment host handoff](host-handoff.md#per-deployment-sudo-boundary) and
+use its linked [exact sudoers example](examples/deploydesk-caddy-apply.sudoers).
+That handoff identifies `render_deployment_sudoers(deployment_id,
+release_identity, alias)` as the pure generator; it renders only the fixed
+preflight and apply commands for one already-provisioned deployment and never
+creates a wrapper or writes a sudoers file.
+
 ## Fixed server layout
 
 The v1 reference implementation derives inputs and outputs from these trusted

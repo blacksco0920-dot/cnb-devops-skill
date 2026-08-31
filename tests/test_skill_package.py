@@ -125,12 +125,29 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(method_name, methods, test_id)
 
     def test_shared_caddy_preflight_guidance_requires_the_exact_safe_boundary(self):
-        contract = self.text("references/shared-caddy-v1/contract.md")
-        handoff = self.text("references/shared-caddy-v1/host-handoff.md")
-        scenarios = self.text("tests/skill-scenarios.md")
-        sudoers = self.text(
-            "references/shared-caddy-v1/examples/deploydesk-caddy-apply.sudoers",
+        skill = self.text("SKILL.md")
+        skill_routes = re.findall(r"\[[^]]+\]\(([^)]+)\)", skill)
+        contract_route = "references/shared-caddy-v1/contract.md"
+        self.assertIn(contract_route, skill_routes)
+        contract_path = (ROOT / contract_route).resolve()
+        contract = contract_path.read_text(encoding="utf-8")
+        contract_routes = re.findall(r"\[[^]]+\]\(([^)]+)\)", contract)
+        handoff_route = "host-handoff.md#per-deployment-sudo-boundary"
+        sudoers_route = "examples/deploydesk-caddy-apply.sudoers"
+        self.assertIn(handoff_route, contract_routes)
+        self.assertIn(sudoers_route, contract_routes)
+        handoff_path = (contract_path.parent / handoff_route.split("#", 1)[0]).resolve()
+        sudoers_path = (contract_path.parent / sudoers_route).resolve()
+        self.assertTrue(handoff_path.is_file())
+        self.assertTrue(sudoers_path.is_file())
+        handoff = handoff_path.read_text(encoding="utf-8")
+        handoff_routes = re.findall(r"\[[^]]+\]\(([^)]+)\)", handoff)
+        self.assertIn(sudoers_route, handoff_routes)
+        self.assertEqual(
+            sudoers_path,
+            (handoff_path.parent / sudoers_route).resolve(),
         )
+        sudoers = sudoers_path.read_text(encoding="utf-8")
         for phrase in (
             "immutable bundle publication",
             "exact sudo bundle preflight",
@@ -143,7 +160,7 @@ class SkillPackageTests(unittest.TestCase):
             "before live mutation",
             "third privileged artifact",
         ):
-            self.assertIn(phrase, contract + handoff + scenarios)
+            self.assertIn(phrase, contract)
         self.assertIn(
             "Cmnd_Alias ECAT_CADDY_PREFLIGHT = /usr/local/sbin/deploydesk-caddy-apply "
             "^--preflight --deployment-id ecat-energy--test --bundle-id [0-9a-f]{64}$",
