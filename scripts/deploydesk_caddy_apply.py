@@ -1039,6 +1039,47 @@ class DockerRuntime:
         finally:
             temporary.unlink(missing_ok=True)
 
+    def validate_candidate(self, current, intake, manifest):
+        candidate = None
+        temporary = None
+        try:
+            candidate = Path(tempfile.mkdtemp(
+                prefix=".preflight-sites-", dir=self.layout.infra_root,
+            ))
+            os.chmod(candidate, 0o700)
+            deployment_id = manifest["deployment_id"]
+            target_name = deployment_id + ".caddy"
+            for source in sorted((Path(current) / "sites").glob("*.caddy")):
+                if source.name == target_name:
+                    continue
+                destination = candidate / source.name
+                shutil.copyfile(source, destination)
+                os.chmod(destination, 0o600)
+            incoming = candidate / target_name
+            shutil.copyfile(Path(intake) / "caddy" / "site.caddy", incoming)
+            os.chmod(incoming, 0o600)
+
+            temporary = self.layout.infra_root / (
+                ".preflight-" + uuid.uuid4().hex + ".Caddyfile"
+            )
+            content = (
+                f"import {self.config_root}/server-options.caddy\n"
+                f"import {self.config_root}/{candidate.name}/*.caddy\n"
+            )
+            _atomic_write(temporary, content.encode(), 0o600)
+            self._run([
+                "/usr/bin/docker", "exec", self.container, "caddy", "validate",
+                "--config", self.config_root + "/" + temporary.name,
+                "--adapter", "caddyfile",
+            ])
+        finally:
+            try:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+            finally:
+                if candidate is not None and candidate.exists():
+                    shutil.rmtree(candidate)
+
     def ensure_network(self, network, upstream, deployment_id, persist_intent):
         if not SAFE_RUNTIME_NAME_RE.fullmatch(network) or not SAFE_RUNTIME_NAME_RE.fullmatch(upstream):
             raise ContractError("unsafe derived Docker network identity")
@@ -1683,6 +1724,13 @@ class SharedCaddyHelper:
         ):
             raise RecoveryRequired("helper maintenance state blocks normal releases")
 
+    def _assert_no_preflight_recovery_state(self):
+        if (
+            _lexists(self.layout.transaction_path)
+            or _lexists(self.layout.recovery_marker)
+        ):
+            raise RecoveryRequired("retained recovery state blocks shared-Caddy preflight")
+
     def _discard_pretransaction_artifacts(self, intake=None, staged=None):
         """Remove uncommitted derived state before any durable transaction exists."""
         try:
@@ -1997,6 +2045,57 @@ class SharedCaddyHelper:
                     staged = None
                 raise
 
+    def preflight(
+        self, deployment_id: str, bundle_id: str,
+    ) -> dict[str, object]:
+        validate_deployment_id(deployment_id)
+        validate_bundle_id(bundle_id)
+        self._assert_no_maintenance_state()
+        self._assert_no_preflight_recovery_state()
+        self.last_lock_order = []
+        contract, helper_hash = self._attest_server()
+        self._attest_lock_inodes(deployment_id)
+        intake = None
+        try:
+            with _locked(self.layout.project_lock(deployment_id), self.trust):
+                self.last_lock_order.append("project")
+                _require_lock_held_elsewhere(
+                    self.layout.release_lock(deployment_id), self.trust,
+                )
+                intake, hashes = self._snapshot(
+                    deployment_id, bundle_id, "preflight-" + uuid.uuid4().hex,
+                )
+                _declaration, manifest, _provenance = self._load_snapshot(
+                    intake, hashes, deployment_id, bundle_id, helper_hash,
+                )
+                with _locked(self.layout.shared_lock, self.trust):
+                    self.last_lock_order.append("shared")
+                    self._assert_no_maintenance_state()
+                    self._assert_no_preflight_recovery_state()
+                    self._attest_lock_inodes(deployment_id)
+                    current_contract, current_helper_hash = self._attest_server()
+                    if (
+                        current_contract != contract
+                        or current_helper_hash != helper_hash
+                    ):
+                        raise AttestationError("helper/contract changed during preflight")
+                    current = self._current_generation()
+                    self._verify_generation_tree(current)
+                    self._scan_ownership(current, deployment_id, manifest)
+                    self.runtime.validate_candidate(current, intake, manifest)
+                    return {
+                        "schema_version": "shared-caddy-preflight/v1",
+                        "status": "passed",
+                        "contract_version": contract["contract_version"],
+                        "helper_version": contract["helper_version"],
+                        "helper_sha256": helper_hash,
+                        "deployment_id": deployment_id,
+                        "bundle_id": bundle_id,
+                        "generation_id": current.name,
+                    }
+        finally:
+            self._discard_pretransaction_artifacts(intake=intake)
+
 
 def _deployment_argument(value):
     try:
@@ -2014,17 +2113,31 @@ def _bundle_argument(value):
 
 def build_parser():
     parser = argparse.ArgumentParser(prog="deploydesk-caddy-apply", allow_abbrev=False)
+    parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--deployment-id", required=True, type=_deployment_argument)
-    parser.add_argument("--bundle-id", required=True, type=_bundle_argument)
+    parser.add_argument("--bundle-id", type=_bundle_argument)
     return parser
 
 
 def main(argv=None):
     arguments = build_parser().parse_args(argv)
     if os.geteuid() != 0:
-        raise SecurityError("normal-release helper must run as root through the fixed sudo rule")
-    receipt = SharedCaddyHelper(Layout.for_host()).apply(arguments.deployment_id, arguments.bundle_id)
-    print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
+        raise SecurityError("shared-Caddy helper must run as root through a fixed sudo rule")
+    if arguments.preflight:
+        if arguments.bundle_id is None:
+            raise ContractError("bundle-aware preflight requires --bundle-id")
+        value = SharedCaddyHelper(Layout.for_host()).preflight(
+            arguments.deployment_id, arguments.bundle_id,
+        )
+    else:
+        if arguments.bundle_id is None:
+            raise ContractError("normal apply requires --bundle-id")
+        value = SharedCaddyHelper(Layout.for_host()).apply(
+            arguments.deployment_id, arguments.bundle_id,
+        )
+    print(json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ))
     return 0
 
 

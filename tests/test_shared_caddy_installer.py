@@ -343,7 +343,7 @@ class SharedCaddyInstallerTests(unittest.TestCase):
         helper_parser = self.helper.build_parser()
         installer_parser = self.installer.build_parser()
         self.assertEqual(
-            {"deployment_id", "bundle_id"},
+            {"preflight", "deployment_id", "bundle_id"},
             {action.dest for action in helper_parser._actions if action.dest != "help"},
         )
         self.assertIn("maintenance_action", {action.dest for action in installer_parser._actions})
