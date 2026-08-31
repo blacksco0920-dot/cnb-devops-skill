@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/shared-caddy/v1/internal-provenance.schema.json",
+  "title": "Shared Caddy v1 archive-internal provenance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "contract_version", "helper_version", "helper_sha256", "project_id", "environment", "deployment_id", "source_repo", "hosts", "git_sha", "declaration_sha256", "fragment_sha256", "compose_sha256", "helper_requirement_sha256", "source"],
+  "properties": {
+    "schema_version": {"const": "shared-caddy-bundle-provenance/v1"},
+    "contract_version": {"const": "shared-caddy-contract/v1"},
+    "helper_version": {"const": "1.0.0"},
+    "helper_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "project_id": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"},
+    "environment": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"},
+    "deployment_id": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?--[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"},
+    "source_repo": {"type": "string", "pattern": "^https://(?=[^/]{1,253}/)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?:/[A-Za-z0-9._~-]+)+$"},
+    "hosts": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"}},
+    "git_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "declaration_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "fragment_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "compose_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "helper_requirement_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source": {"type": "object", "additionalProperties": false, "required": ["kind"], "properties": {"kind": {"const": "bundle"}}}
+  }
+}

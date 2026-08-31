@@ -15,6 +15,9 @@ and promote the exact OCI images already verified in staging.
 - Explicit production approval without a production rebuild.
 - Clear ordinary-repository, Secret-repository, and target-host boundaries.
 - Role-owned setup and recovery information that survives a change of AI tool.
+- A versioned shared-Caddy declaration, internal/external provenance chain,
+  ownership and release transaction, plus separately authorized bootstrap,
+  helper-pair maintenance, and project provisioning for multi-project hosts.
 
 ## Package map
 
@@ -25,6 +28,11 @@ and promote the exact OCI images already verified in staging.
   and one-time console work.
 - [CNB OpenAPI](references/cnb-openapi.md) — current CNB-specific facts and
   mutation boundaries.
+- [Shared Caddy contract v1](references/shared-caddy-v1/contract.md) — schemas,
+  canonical routes, host locks, generation transactions, and recovery.
+- [Shared Caddy host handoff](references/shared-caddy-v1/host-handoff.md) —
+  separately authorized bootstrap, provisioning, baseline, ownership, and
+  crash-recoverable helper maintenance.
 
 ## Data boundary
 
@@ -42,6 +50,8 @@ adapters; the release contract itself remains provider-neutral.
 
 Repository CI runs the deterministic public-package test suite. Behavioral
 pressure scenarios are recorded in [tests/skill-scenarios.md](tests/skill-scenarios.md).
+The reference helper and installer are security-oriented examples that require
+host filesystem and runtime-adapter review before maintenance installation.
 
 ## License
 

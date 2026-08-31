@@ -35,6 +35,42 @@ full Git SHA → CNB build identity → complete TCR digest map
 Each handoff is either accepted, rejected with one precise correction, or still
 blocked. Do not silently convert missing information into a default.
 
+## Shared Caddy host administrator
+
+### When
+
+Before the first managed release on a multi-project host, when separately
+bootstrapping the host, installing/recovering the controlled helper pair, or
+provisioning project locks, and for hostname deletion, ownership transfer,
+legacy takeover, or recovery-marker repair.
+
+### Deliver
+
+- A complete live-host inventory and owner mapping, proof old writers are
+  stopped, the approved helper version/hash, fixed release identity, root-owned
+  lock inode evidence, current/previous generation, and per-host smoke results.
+- A separately approved maintenance action. Ordinary staging or production
+  release approval does not authorize baseline, ownership, or helper changes.
+- One explicit maintenance authority: `bootstrap-host`, `install-helper`,
+  `recover-helper-maintenance`, or `provision-deployment`; never combine them.
+- A value-free acceptance record following the
+  [shared Caddy host handoff](shared-caddy-v1/host-handoff.md).
+
+### Acceptance
+
+Every live host has one owner, full-tree validation/reload/smoke passed, helper
+self-attestation matches the server contract and bootstrap attestation, the
+Git/archive/internal-provenance/manifest/transaction/receipt chain agrees,
+completed generations are read-only, and no application or helper-maintenance
+recovery marker exists. `legacy_opaque` content remains
+byte/hash identical until a separately approved takeover.
+
+### Never deliver
+
+An arbitrary helper path or command, a wildcard sudo rule, permission for a
+normal release to rewrite the root config or another project, or a claim that
+taking the new lock stopped an uncooperative legacy writer.
+
 ## Application owner
 
 ### When

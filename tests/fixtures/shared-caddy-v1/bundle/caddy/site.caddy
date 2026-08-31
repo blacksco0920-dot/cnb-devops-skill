@@ -1,0 +1,18 @@
+app.example.test {
+    encode zstd gzip
+    reverse_proxy sample-app-staging-web:8080
+}
+
+legacy.example.test {
+    encode zstd gzip
+    reverse_proxy https://app.example.test {
+        header_up Host app.example.test
+        transport http {
+            tls_server_name app.example.test
+        }
+    }
+}
+
+go.example.test {
+    redir https://app.example.test{uri} 308
+}

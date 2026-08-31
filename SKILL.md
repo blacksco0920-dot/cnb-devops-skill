@@ -38,3 +38,5 @@ Missing commit, digest, staging evidence, approval, or a required human delivera
 - Candidate, failure, recovery, audit, or retention: [release safety](references/release-safety.md).
 - Human setup or missing information: [human handoffs](references/human-handoffs.md).
 - CNB API, token, Secret repository, or deployment UI behavior: [CNB OpenAPI](references/cnb-openapi.md).
+- Multiple projects sharing one host Caddy, route ownership, helper attestation,
+  or recovery: [shared Caddy v1](references/shared-caddy-v1/contract.md).

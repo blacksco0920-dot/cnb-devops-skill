@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/shared-caddy/v1/server-manifest.schema.json",
+  "title": "Shared Caddy v1 server ownership manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "contract_version", "helper_version", "helper_sha256", "project_id", "environment", "deployment_id", "source_repo", "hosts", "git_sha", "deploy_bundle_sha256", "declaration_sha256", "fragment_sha256", "compose_sha256", "helper_requirement_sha256", "internal_provenance_sha256", "source"],
+  "properties": {
+    "schema_version": {"const": "shared-caddy-server-manifest/v1"},
+    "contract_version": {"const": "shared-caddy-contract/v1"},
+    "helper_version": {"const": "1.0.0"},
+    "helper_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "project_id": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"},
+    "environment": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"},
+    "deployment_id": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?--[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"},
+    "source_repo": {"type": "string", "pattern": "^https://(?=[^/]{1,253}/)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?:/[A-Za-z0-9._~-]+)+$"},
+    "hosts": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"}},
+    "git_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "deploy_bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "declaration_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "fragment_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "compose_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "helper_requirement_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "internal_provenance_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["kind"], "properties": {"kind": {"enum": ["bundle", "baseline_import"]}}},
+        {"type": "object", "additionalProperties": false, "required": ["kind", "legacy_fragment_sha256"], "properties": {"kind": {"const": "legacy_opaque"}, "legacy_fragment_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}
+      ]
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "contract_version": "shared-caddy-contract/v1",
+  "project_id": "sample-app",
+  "environment": "staging",
+  "deployment_id": "sample-app--staging",
+  "source_repo": "https://code.example/teams/sample-app",
+  "compose_path": "runtime/compose.json",
+  "routes": [
+    {"type": "docker_proxy", "host": "app.example.test", "service": "web", "upstream": "sample-app-staging-web", "port": 8080, "network": "shared-edge"},
+    {"type": "https_proxy", "host": "legacy.example.test", "target_host": "app.example.test"},
+    {"type": "redirect", "host": "go.example.test", "target_host": "app.example.test", "preserve_uri": true, "redirect_code": 308}
+  ]
+}

@@ -62,10 +62,21 @@ log, ordinary repository, handoff manifest, or example value.
 
 ## Host transaction
 
-Hold a host-wide lock across controller checkout, Compose changes, proxy
-changes, validation, and activation. A project lock may be nested inside the
-host lock, but it cannot replace it. Preserve the previous configuration and
-release evidence until the new transaction is fully accepted.
+The application caller holds its pre-created release lock across runtime and
+proxy changes. For shared Caddy, the controlled helper then takes the
+root-owned project Caddy lock before the root-owned shared Caddy lock and holds
+the shared lock across recovery, full-tree validation, activation, reload,
+smoke, receipt, and rollback. Never invert or omit that order. Preserve the
+previous configuration and release evidence until the new transaction is fully
+accepted. Read [shared Caddy v1](shared-caddy-v1/contract.md) for the fixed
+normal interface and durable phase rules.
+
+Host bootstrap, helper/contract installation or recovery, and project lock
+provisioning are separate maintenance authorities. A helper install requires a
+completed bootstrap attestation, changes only the helper/contract pair under a
+durable maintenance transaction, and cannot create application state. Any
+application or helper-maintenance transaction/recovery marker blocks new normal
+release mutation until the exact retained evidence is resolved.
 
 ## Failure boundary
 

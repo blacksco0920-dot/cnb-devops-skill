@@ -1,0 +1,15 @@
+{
+  "services": {
+    "web": {
+      "container_name": "sample-app-staging-web",
+      "labels": {"com.deploydesk.deployment-id": "sample-app--staging"},
+      "expose": ["8080"],
+      "networks": {
+        "shared-edge": {"aliases": ["sample-app-staging-web"]}
+      }
+    }
+  },
+  "networks": {
+    "shared-edge": {"external": true}
+  }
+}

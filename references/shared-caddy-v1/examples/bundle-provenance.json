@@ -1,0 +1,17 @@
+{
+  "schema_version": "shared-caddy-bundle-provenance/v1",
+  "contract_version": "shared-caddy-contract/v1",
+  "helper_version": "1.0.0",
+  "helper_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "project_id": "sample-app",
+  "environment": "staging",
+  "deployment_id": "sample-app--staging",
+  "source_repo": "https://code.example/teams/sample-app",
+  "hosts": ["app.example.test"],
+  "git_sha": "1111111111111111111111111111111111111111",
+  "declaration_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "fragment_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "compose_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "helper_requirement_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "source": {"kind": "bundle"}
+}

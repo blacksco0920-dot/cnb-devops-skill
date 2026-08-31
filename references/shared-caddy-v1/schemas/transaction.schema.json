@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/shared-caddy/v1/transaction.schema.json",
+  "title": "Shared Caddy v1 durable transaction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "phase", "contract_version", "helper_version", "helper_sha256", "transaction_id", "project_id", "environment", "deployment_id", "source_repo", "bundle_id", "git_sha", "declaration_sha256", "fragment_sha256", "compose_sha256", "helper_requirement_sha256", "internal_provenance_sha256", "old_generation", "new_generation", "hosts", "network_attachment_intents"],
+  "properties": {
+    "schema_version": {"const": "shared-caddy-transaction/v1"},
+    "phase": {"enum": ["prepared", "current-switched", "reloaded", "verified", "committed"]},
+    "contract_version": {"const": "shared-caddy-contract/v1"},
+    "helper_version": {"const": "1.0.0"},
+    "helper_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "transaction_id": {"type": "string", "pattern": "^tx-[0-9a-f]{32}$"},
+    "project_id": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"},
+    "environment": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"},
+    "deployment_id": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?--[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"},
+    "source_repo": {"type": "string", "pattern": "^https://(?=[^/]{1,253}/)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?:/[A-Za-z0-9._~-]+)+$"},
+    "bundle_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "git_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "declaration_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "fragment_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "compose_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "helper_requirement_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "internal_provenance_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "old_generation": {"type": "string", "pattern": "^gen-[0-9a-f]{32}$"},
+    "new_generation": {"type": "string", "pattern": "^gen-[0-9a-f]{32}$"},
+    "hosts": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"}},
+    "network_attachment_intents": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["network", "pre_transaction_state"],
+        "properties": {
+          "network": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$"},
+          "pre_transaction_state": {"const": "absent"}
+        }
+      }
+    }
+  }
+}

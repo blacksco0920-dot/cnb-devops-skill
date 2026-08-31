@@ -1,0 +1,23 @@
+{
+  "schema_version": "shared-caddy-transaction/v1",
+  "phase": "prepared",
+  "contract_version": "shared-caddy-contract/v1",
+  "helper_version": "1.0.0",
+  "helper_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "transaction_id": "tx-11111111111111111111111111111111",
+  "project_id": "sample-app",
+  "environment": "staging",
+  "deployment_id": "sample-app--staging",
+  "source_repo": "https://code.example/teams/sample-app",
+  "bundle_id": "2222222222222222222222222222222222222222222222222222222222222222",
+  "git_sha": "3333333333333333333333333333333333333333",
+  "declaration_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+  "fragment_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+  "compose_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+  "helper_requirement_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+  "internal_provenance_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+  "old_generation": "gen-99999999999999999999999999999999",
+  "new_generation": "gen-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "hosts": ["app.example.test"],
+  "network_attachment_intents": []
+}

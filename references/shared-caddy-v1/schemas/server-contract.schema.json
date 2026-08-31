@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/shared-caddy/v1/server-contract.schema.json",
+  "title": "Shared Caddy v1 server helper attestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "helper_version", "helper_sha256", "caddy_container", "container_config_root"],
+  "properties": {
+    "contract_version": {"const": "shared-caddy-contract/v1"},
+    "helper_version": {"const": "1.0.0"},
+    "helper_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "caddy_container": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$"},
+    "container_config_root": {"type": "string", "pattern": "^/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"}
+  }
+}

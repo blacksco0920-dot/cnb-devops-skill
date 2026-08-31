@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 import re
 import unittest
@@ -18,6 +19,7 @@ class SkillPackageTests(unittest.TestCase):
             "references/release-safety.md",
             "references/human-handoffs.md",
             "references/cnb-openapi.md",
+            "references/shared-caddy-v1/contract.md",
         ):
             self.assertIn(f"]({reference})", skill)
 
@@ -99,11 +101,34 @@ class SkillPackageTests(unittest.TestCase):
         for relative in forbidden:
             self.assertFalse((ROOT / relative).exists(), relative)
 
+    def test_shared_caddy_pressure_scenarios_map_to_real_behavior_tests(self):
+        scenarios = self.text("tests/skill-scenarios.md")
+        mappings = re.findall(
+            r"(?m)^\| `[A-Z_]+` \| `([^`]+)` \| (?:PASS|FAIL) \|$",
+            scenarios,
+        )
+        self.assertEqual(12, len(mappings))
+        self.assertEqual(len(mappings), len(set(mappings)))
+        for test_id in mappings:
+            module_name, class_name, method_name = test_id.rsplit(".", 2)
+            source = ROOT / (module_name.replace(".", "/") + ".py")
+            self.assertTrue(source.is_file(), test_id)
+            tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+            classes = {
+                node.name: node for node in tree.body if isinstance(node, ast.ClassDef)
+            }
+            self.assertIn(class_name, classes, test_id)
+            methods = {
+                node.name for node in classes[class_name].body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            self.assertIn(method_name, methods, test_id)
+
     def test_markdown_local_links_resolve(self):
         markdown_files = [
             ROOT / "SKILL.md",
             ROOT / "README.md",
-            *sorted((ROOT / "references").glob("*.md")),
+            *sorted((ROOT / "references").rglob("*.md")),
         ]
         for source in markdown_files:
             for target in re.findall(

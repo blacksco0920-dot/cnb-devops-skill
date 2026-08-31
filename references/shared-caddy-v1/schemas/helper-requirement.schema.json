@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/shared-caddy/v1/helper-requirement.schema.json",
+  "title": "Shared Caddy v1 bundle helper requirement",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "helper_version", "helper_sha256"],
+  "properties": {
+    "contract_version": {"const": "shared-caddy-contract/v1"},
+    "helper_version": {"const": "1.0.0"},
+    "helper_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

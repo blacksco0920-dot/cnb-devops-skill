@@ -1,0 +1,3 @@
+# Install only after visudo validation. Replace deploydesk-release with the fixed release identity.
+Cmnd_Alias DEPLOYDESK_CADDY_APPLY = /usr/local/sbin/deploydesk-caddy-apply ^--deployment-id [a-z0-9][a-z0-9-]*--[a-z0-9][a-z0-9-]* --bundle-id [0-9a-f]{64}$
+deploydesk-release ALL=(root) NOPASSWD: DEPLOYDESK_CADDY_APPLY
