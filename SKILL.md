@@ -1,6 +1,6 @@
 ---
 name: cnb-devops-skill
-description: Use when work involves CNB/cnb.cool pipelines, Secret repositories, TCR or OCI images, Tencent Cloud TAT, staging deployment, production promotion, or CNB release failures.
+description: Use when work involves CNB/cnb.cool pipelines, Secret repositories, TCR or OCI images, Tencent Cloud TAT, Docker host migration, shared Caddy, backup or recovery, staging deployment, production promotion, or CNB release failures.
 ---
 
 # CNB DevOps
@@ -25,6 +25,24 @@ Treat a release as promotion of tested evidence, not as a sequence of remembered
 7. Record the result atomically. If migration may have started, require recovery review instead of guessing a database rollback.
 
 Missing commit, digest, staging evidence, approval, or a required human deliverable blocks the affected release step.
+
+## Legacy shared-host takeover
+
+For a multi-container Docker host with opaque Caddy, legacy HTTPS routes, or a
+first managed project, use [Shared Caddy v1](references/shared-caddy-v1/contract.md) and its [host handoff](references/shared-caddy-v1/host-handoff.md). Keep this order:
+
+```text
+route inventory → external backup/snapshot → root bootstrap → helper-pair maintenance → baseline import/recovery → provision → ordinary release
+```
+
+Only the root host administrator performs bootstrap, helper maintenance,
+baseline import/recovery, and provisioning; ordinary release uses only the
+exact preflight/apply boundary, never a direct Caddy change. Inventory counts
+each filesystem device once and preserves every named/anonymous volume and bind
+source. Snapshot/restore and credential-rotation receipts are hard gates before
+destructive/live work. Keep compatibility ownership separate from the incoming
+project declaration; never merge opaque Caddy or delegate baseline/import
+authority through an application release or its sudo boundary.
 
 ## Data boundaries
 

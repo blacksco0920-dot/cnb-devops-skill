@@ -29,6 +29,23 @@ approved SHA-256. It cannot create deployments or mutate the root Caddyfile,
 server options, bootstrap attestation, generations, or `managed/current`.
 Normal release bundles cannot perform any of these maintenance actions.
 
+## Legacy-host takeover gates
+
+Before root maintenance, produce a non-secret route inventory that maps every
+live hostname and Caddy writer, container, named and anonymous volume, and bind
+source to an owner. Capacity is one pool for each distinct `st_dev`; do not add
+free space from `/`, `/opt`, and `/var/lib` when they are the same device. The
+inventory is preservation evidence, never authorization to delete or prune a
+volume, bind source, or opaque Caddy content.
+
+An externally stored, restore-verified snapshot receipt and a value-free
+credential-rotation receipt are hard gates before destructive or live release
+work. A local copy is not a snapshot. The compatibility owner mapping belongs
+to the takeover inventory; it is not the new project's declaration, and an
+opaque legacy route remains byte/hash-bound until the separate baseline action.
+The detailed deliverables, fixed baseline input layout, and root-only action
+contracts are in the [host handoff](host-handoff.md#baseline-import-and-recovery).
+
 ## Bundle preflight before live mutation
 
 The release identity must not read a root-owned generation or relax its

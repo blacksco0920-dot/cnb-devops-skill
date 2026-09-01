@@ -46,14 +46,23 @@ legacy takeover, or recovery-marker repair.
 
 ### Deliver
 
-- A complete live-host inventory and owner mapping, proof old writers are
-  stopped, the approved helper version/hash, fixed release identity, root-owned
-  persistent `/var/lib/deploydesk/locks` device/inode/ctime evidence, current/previous
-  generation, and per-host smoke results.
+- A complete live-host inventory and owner mapping: Caddy writers/routes,
+  containers, named and anonymous volumes, bind sources, listeners, and
+  capacity/inodes grouped once per `st_dev`; proof old writers are stopped; the
+  approved helper version/hash; fixed release identity; root-owned persistent
+  `/var/lib/deploydesk/locks` device/inode/ctime evidence; current/previous
+  generation; and per-host smoke results.
+- An externally stored, restore-verified snapshot receipt covering Caddy state
+  and persistent application data, plus value-free credential-rotation receipts
+  for takeover/release credentials. Record storage boundary, owner, integrity,
+  restore result, and dates—not snapshot identifiers, values, addresses, or
+  payloads. A local copy does not qualify.
 - A separately approved maintenance action. Ordinary staging or production
   release approval does not authorize baseline, ownership, or helper changes.
-- One explicit maintenance authority: `bootstrap-host`, `install-helper`,
-  `recover-helper-maintenance`, or `provision-deployment`; never combine them.
+- One explicit maintenance authority. Baseline takeover uses only
+  `import-baseline` (with its one archive ID) or `recover-baseline-maintenance`
+  (with no mutation arguments); neither is an application-release or sudoers
+  authority. Provision only after accepted baseline recovery/receipt.
 - A value-free acceptance record following the
   [shared Caddy host handoff](shared-caddy-v1/host-handoff.md).
 
@@ -64,13 +73,16 @@ self-attestation matches the server contract and bootstrap attestation, the
 Git/archive/internal-provenance/manifest/transaction/receipt chain agrees,
 completed generations are read-only, and no application or helper-maintenance
 recovery marker exists. `legacy_opaque` content remains
-byte/hash identical until a separately approved takeover.
+byte/hash identical until a separately approved takeover. Snapshot restore and
+credential-rotation receipts are accepted before destructive or live release
+work; no volume/bind deletion or capacity double-count supplied the evidence.
 
 ### Never deliver
 
 An arbitrary helper path or command, a wildcard sudo rule, permission for a
-normal release to rewrite the root config or another project, or a claim that
-taking the new lock stopped an uncooperative legacy writer.
+normal release to rewrite the root config or another project, a volume prune or
+bind-source deletion, or a claim that taking the new lock stopped an
+uncooperative legacy writer.
 
 ## Application owner
 

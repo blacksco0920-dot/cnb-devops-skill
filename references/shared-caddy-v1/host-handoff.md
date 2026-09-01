@@ -4,6 +4,31 @@ This handoff belongs to a host infrastructure administrator. It is separate
 from application release approval and must be completed independently for each
 server.
 
+## Inventory, snapshot, and credential gates
+
+The administrator hands over durable records, not a newly invented command
+list. Before root bootstrap, helper maintenance, baseline import/recovery,
+provisioning, or a live application release, accept all of these non-secret
+deliverables:
+
+- A route inventory: active Caddy writer/configuration and each hostname's
+  compatibility owner; all containers, named and anonymous volumes, bind
+  sources, published listeners, and the current/required proxy behavior.
+  Group capacity and inodes by `st_dev` and count each device once. An opaque
+  fragment remains `legacy_opaque`, byte/hash-bound, and unmerged.
+- An external snapshot receipt: independent storage boundary, covered Caddy
+  state/certificates and persistent application data, integrity/restore
+  verification, retention, and recovery owner. It records no snapshot ID,
+  address, credential, or payload. A same-host copy is insufficient.
+- A credential-rotation receipt for every credential exposed to the takeover or
+  new release: name/class, storage boundary, owner, rotation completion/date,
+  expiry, and validation result—never its value.
+
+These are hard gates. Do not use `docker volume rm`, any volume prune, or bind
+source deletion to create capacity. Compatibility ownership is separate from a
+new project's declaration, and neither baseline authority nor these gates may
+be delegated through an application release or its sudoers entry.
+
 ## Inputs
 
 - Approved helper file, its independent SHA-256, helper version, and contract
@@ -20,31 +45,54 @@ server.
 Never put credentials, customer instance identifiers, private addresses, or
 complete environment files in this handoff.
 
-## Bootstrap and baseline maintenance
+## Bootstrap
 
 Run `--maintenance-action bootstrap-host` only on a host whose complete live
 configuration and old writers are controlled by this maintenance window. It
 creates the fixed layout, canonical root/server-options files, shared lock and
 lock manifest, immutable empty initial generation, `managed/current`, and a
-hash- and lock-identity-bound bootstrap attestation. It must not install a helper or
-provision a project. Keep its fsynced attestation as the authority prerequisite
-for the later, separate actions below.
+hash- and lock-identity-bound bootstrap attestation. Bootstrap stops there: it
+must not install a helper, import a baseline, assign a hostname, provision a
+project, or reload the live Caddy service. Keep its fsynced attestation as the
+authority prerequisite for the later, separate actions below.
 
-1. Stop old writers and confirm no active release transaction.
-2. Under the root-owned shared lock, re-read and hash the live root config.
-3. Account for every normalized live host. Refuse duplicate or unowned hosts.
-4. Create one manifest per owner. A route not yet expressible by v1 may be
-   `legacy_opaque` only after conflict review and byte-hash binding.
-5. Create the initial generation without changing route bytes. Validate the
-   complete candidate configuration.
-6. Use a durable baseline transaction to switch the root config and `current`,
-   reload, and smoke every live host. Preserve the old root config and prior
-   generation through the observation window.
-7. If any switch/reload/smoke or recovery step fails, restore the old root and
-   generation; write the recovery marker when restoration cannot be proven.
+## Baseline import and recovery
 
-Do not let an application release perform baseline import, assign an unowned
-host, or replace a legacy manifest.
+After the accepted gates and bootstrap attestation, separately install and
+attest the helper pair before baseline import. Bootstrapping alone never
+authorizes import. Only then may the root host administrator choose one of
+these two baseline maintenance CLI surfaces:
+
+```text
+install-shared-caddy-helper --maintenance-action import-baseline --baseline-bundle-id <64-lowercase-hex>
+install-shared-caddy-helper --maintenance-action recover-baseline-maintenance
+```
+
+`import-baseline` requires exactly one `--baseline-bundle-id`; recovery accepts
+no bundle ID or other mutation argument. The archive ID selects this fixed,
+root-owned, mode-`0700` input directory with exactly two regular files:
+
+```text
+/var/lib/deploydesk/caddy/maintenance/baseline-input/<64-lowercase-hex>/
+  deploy-bundle.tar.gz
+  server-manifest.json
+```
+
+The archive SHA-256 must equal the ID and the manifest is canonical; callers do
+not select paths, hosts, containers, or commands. These actions are not normal
+release sudo interfaces. The root order is fixed, not a menu:
+
+```text
+bootstrap-host → install-helper → import-baseline or recover-baseline-maintenance → provision-deployment
+```
+
+Baseline import maps every inventoried live host to a compatibility owner,
+keeps unexpressible content `legacy_opaque` and byte/hash-bound, validates the
+complete candidate, then durably switches/reloads/smokes every live host while
+retaining the old root config and generation for observation. A retained
+baseline transaction is recovered only by the second action: it proves and
+finishes the committed state or restores the old generation; ambiguous evidence
+leaves the recovery marker and blocks provisioning and ordinary release.
 
 ## Helper installation or upgrade
 

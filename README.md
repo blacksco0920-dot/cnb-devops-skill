@@ -18,6 +18,9 @@ and promote the exact OCI images already verified in staging.
 - A versioned shared-Caddy declaration, internal/external provenance chain,
   ownership and release transaction, plus separately authorized bootstrap,
   helper-pair maintenance, and project provisioning for multi-project hosts.
+- A recoverable legacy-host takeover: one filesystem-capacity inventory, an
+  externally verified snapshot and credential-rotation gate, then root-only
+  baseline maintenance before project provisioning and ordinary release.
 
 ## Package map
 
@@ -31,7 +34,8 @@ and promote the exact OCI images already verified in staging.
 - [Shared Caddy contract v1](references/shared-caddy-v1/contract.md) — schemas,
   canonical routes, persistent host locks, generation transactions, and recovery.
 - [Shared Caddy host handoff](references/shared-caddy-v1/host-handoff.md) —
-  separately authorized bootstrap, provisioning, baseline, ownership, and
+  non-secret inventory/snapshot/rotation deliverables, separately authorized
+  bootstrap, baseline import/recovery, provisioning, ownership, and
   crash-recoverable helper maintenance.
 
 ## Data boundary
