@@ -61,7 +61,10 @@ def _safe_absolute_path(value: str, label: str) -> str:
     pure = Path(value)
     if ".." in pure.parts or "\x00" in value:
         raise InventoryError(f"unsafe {label}")
-    return str(pure)
+    normalized = str(pure)
+    if value != normalized:
+        raise InventoryError(f"unsafe {label}")
+    return normalized
 
 
 @dataclasses.dataclass(frozen=True)

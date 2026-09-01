@@ -344,6 +344,7 @@ class DockerHostInventoryTests(unittest.TestCase):
             lambda item: item.__setitem__("expected_caddy_paths", ["/etc/caddy/B", "/etc/caddy/A"]),
             lambda item: item.__setitem__("expected_caddy_paths", ["/etc/caddy/A", "/etc/caddy/A"]),
             lambda item: item.__setitem__("expected_caddy_paths", ["/etc/caddy/../private"]),
+            lambda item: item.__setitem__("expected_caddy_paths", ["/etc/caddy//Caddyfile"]),
         ):
             invalid = copy.deepcopy(value)
             mutation(invalid)
