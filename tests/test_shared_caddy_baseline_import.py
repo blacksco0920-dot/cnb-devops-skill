@@ -1,4 +1,5 @@
 import copy
+import contextlib
 import gzip
 import hashlib
 import importlib.util
@@ -6,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import tarfile
 import tempfile
@@ -112,7 +114,7 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
             ],
         }
 
-    def artifacts(self, helper_sha256="a" * 64):
+    def artifacts(self, helper_sha256="a" * 64, git_sha="1" * 40):
         declaration = self.declaration()
         declaration_bytes = canonical_bytes(declaration)
         compose_facts = {"services": {}, "networks": {}}
@@ -133,7 +135,7 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
             "deployment_id": declaration["deployment_id"],
             "source_repo": declaration["source_repo"],
             "hosts": [source for source, _ in COMPATIBILITY_PAIRS],
-            "git_sha": "1" * 40,
+            "git_sha": git_sha,
             "declaration_sha256": digest(declaration_bytes),
             "fragment_sha256": digest(EXACT_FRAGMENT),
             "compose_facts": compose_facts,
@@ -954,6 +956,512 @@ class BaselineImportMaintenanceTests(unittest.TestCase):
                     self._assert_initial_current()
                     self.assertFalse(self.layout.maintenance_recovery_marker.exists())
                     self.assertFalse(self.layout.maintenance_transaction_path.exists())
+
+    def test_rollback_is_resumable_after_every_mutation(self):
+        for fault in (
+            "pointer-restored", "reloaded", "smoked", "candidate-removed",
+            "transaction-removed", "marker-removed", "receipt-written", "ledger-removed",
+        ):
+            with self.subTest(fault=fault):
+                self.tearDown()
+                self.setUp()
+
+                def crash_smoked(phase, transaction):
+                    if phase == "smoked":
+                        raise Crash()
+
+                with self.assertRaises(Crash):
+                    self._import(phase_hook=crash_smoked)
+                transaction = json.loads(self.layout.maintenance_transaction_path.read_text())
+
+                if fault == "marker-removed":
+                    with self.assertRaises(self.installer.InstallError):
+                        self._recover(runtime=BaselineRuntime(
+                            fail_validate=True, fail_reload=True,
+                        ))
+                    self.assertTrue(self.layout.maintenance_recovery_marker.is_file())
+
+                injected = [False]
+                patches = []
+                runtime = BaselineRuntime(fail_validate=True)
+                if fault == "pointer-restored":
+                    original = self.installer.TrustedInstallerWalker.replace_symlink
+
+                    def crash_after_pointer(walker, path, target):
+                        result = original(walker, path, target)
+                        if Path(path) == self.layout.current_link and not injected[0]:
+                            injected[0] = True
+                            raise Crash()
+                        return result
+
+                    patches.append(mock.patch.object(
+                        self.installer.TrustedInstallerWalker,
+                        "replace_symlink", crash_after_pointer,
+                    ))
+                elif fault in ("reloaded", "smoked"):
+                    base_runtime = runtime
+
+                    class CrashAfterRuntimeMutation(BaselineRuntime):
+                        def validate(inner_self, generation):
+                            base_runtime.validate(generation)
+
+                        def reload(inner_self):
+                            base_runtime.reload()
+                            if fault == "reloaded" and not injected[0]:
+                                injected[0] = True
+                                raise Crash()
+
+                        def smoke(inner_self, hosts):
+                            base_runtime.smoke(hosts)
+                            if fault == "smoked" and not injected[0]:
+                                injected[0] = True
+                                raise Crash()
+
+                    runtime = CrashAfterRuntimeMutation()
+                elif fault == "candidate-removed":
+                    original = self.installer._thaw_and_remove_baseline_generation
+
+                    def crash_after_candidate(walker, generation):
+                        result = original(walker, generation)
+                        if not injected[0]:
+                            injected[0] = True
+                            raise Crash()
+                        return result
+
+                    patches.append(mock.patch.object(
+                        self.installer, "_thaw_and_remove_baseline_generation",
+                        crash_after_candidate,
+                    ))
+                elif fault == "receipt-written":
+                    original = self.installer.TrustedInstallerWalker.write_json
+
+                    def crash_after_receipt(walker, path, value, mode=0o600):
+                        result = original(walker, path, value, mode)
+                        if (
+                            Path(path) == self.layout.baseline_rollback_receipt_path
+                            and not injected[0]
+                        ):
+                            injected[0] = True
+                            raise Crash()
+                        return result
+
+                    patches.append(mock.patch.object(
+                        self.installer.TrustedInstallerWalker,
+                        "write_json", crash_after_receipt,
+                    ))
+                else:
+                    original = self.installer.TrustedInstallerWalker.remove_file
+                    targets = {
+                        "transaction-removed": self.layout.maintenance_transaction_path,
+                        "marker-removed": self.layout.maintenance_recovery_marker,
+                        "ledger-removed": self.layout.baseline_rollback_path,
+                    }
+                    target = targets[fault]
+
+                    def crash_after_file_removal(walker, path, missing_ok=False):
+                        result = original(walker, path, missing_ok=missing_ok)
+                        if Path(path) == target and not injected[0]:
+                            injected[0] = True
+                            raise Crash()
+                        return result
+
+                    patches.append(mock.patch.object(
+                        self.installer.TrustedInstallerWalker,
+                        "remove_file", crash_after_file_removal,
+                    ))
+
+                with contextlib.ExitStack() as stack:
+                    for patcher in patches:
+                        stack.enter_context(patcher)
+                    with self.assertRaises(Crash):
+                        self._recover(runtime=runtime)
+                self.assertTrue(injected[0])
+
+                if fault == "ledger-removed":
+                    rollback_receipt = self.layout.baseline_rollback_receipt_path
+                    self.assertTrue(rollback_receipt.is_file())
+                    receipt_value = json.loads(rollback_receipt.read_bytes())
+                    self.assertEqual(canonical_bytes(receipt_value), rollback_receipt.read_bytes())
+                    self.assertEqual(0o600, stat.S_IMODE(rollback_receipt.stat().st_mode))
+                    unrelated = self.layout.generations_root / ("gen-" + "9" * 32)
+                    (unrelated / "sites").mkdir(parents=True)
+                    (unrelated / "manifests").mkdir()
+                    os.chmod(unrelated / "sites", 0o500)
+                    os.chmod(unrelated / "manifests", 0o500)
+                    os.chmod(unrelated, 0o500)
+
+                result = self._recover()
+                self.assertEqual("rolled-back", result["status"])
+                self.assertEqual(transaction["transaction_id"], result["transaction_id"])
+                self._assert_initial_current()
+                self.assertFalse(self.layout.maintenance_transaction_path.exists())
+                self.assertFalse(self.layout.maintenance_recovery_marker.exists())
+                self.assertFalse(self.layout.baseline_rollback_path.exists())
+                rollback_receipt = self.layout.baseline_rollback_receipt_path
+                receipt_value = json.loads(rollback_receipt.read_bytes())
+                self.assertEqual(
+                    {
+                        "schema_version": "shared-caddy-baseline-rollback-receipt/v1",
+                        "status": "rolled-back",
+                        "transaction_id": transaction["transaction_id"],
+                        "archive_id": transaction["archive_id"],
+                        "old_generation": transaction["old_generation"],
+                        "new_generation": transaction["new_generation"],
+                    },
+                    receipt_value,
+                )
+                self.assertEqual(canonical_bytes(receipt_value), rollback_receipt.read_bytes())
+                self.assertEqual(0o600, stat.S_IMODE(rollback_receipt.stat().st_mode))
+                self.assertFalse(
+                    (self.layout.generations_root / transaction["new_generation"]).exists()
+                )
+                if fault == "ledger-removed":
+                    os.chmod(unrelated, 0o700)
+                    os.chmod(unrelated / "sites", 0o700)
+                    os.chmod(unrelated / "manifests", 0o700)
+                    shutil.rmtree(unrelated)
+                    committed = self._import()
+                    self.assertEqual("committed", committed["status"])
+                    self.assertFalse(self.layout.baseline_rollback_receipt_path.exists())
+
+    def test_live_rollback_ledger_uses_one_canonical_path_and_blocks_other_authorities(self):
+        def crash_smoked(phase, transaction):
+            if phase == "smoked":
+                raise Crash()
+
+        with self.assertRaises(Crash):
+            self._import(phase_hook=crash_smoked)
+        original = self.installer._phase_baseline_rollback
+
+        def crash_after_pointer_phase(walker, layout, rollback, step):
+            result = original(walker, layout, rollback, step)
+            if step == "pointer-restored":
+                raise Crash()
+            return result
+
+        with mock.patch.object(
+            self.installer, "_phase_baseline_rollback", crash_after_pointer_phase,
+        ):
+            with self.assertRaises(Crash):
+                self._recover(runtime=BaselineRuntime(fail_validate=True))
+
+        rollback_path = self.layout.baseline_rollback_path
+        self.assertEqual(rollback_path, self.installer._baseline_rollback_path(self.layout))
+        self.assertTrue(rollback_path.is_file())
+        rollback = json.loads(rollback_path.read_bytes())
+        self.assertEqual(canonical_bytes(rollback), rollback_path.read_bytes())
+        self.assertEqual(0o600, stat.S_IMODE(rollback_path.stat().st_mode))
+
+        self.layout.maintenance_transaction_path.unlink()
+        self.layout.maintenance_recovery_marker.unlink()
+        with self.assertRaises(self.installer.InstallError):
+            self._import()
+        with self.assertRaises(self.installer.InstallError):
+            self.installer.install_helper(
+                self.layout, HELPER_PATH, self.approved_hash, owner_uid=os.getuid(),
+            )
+        with self.assertRaises(self.installer.InstallError):
+            self.installer.provision_deployments(
+                self.layout, ["sample-app--staging"], owner_uid=os.getuid(),
+                release_uid=os.getuid(), release_gid=os.getgid(),
+            )
+        with self.assertRaises(self.installer.CrossedMaintenanceRecovery):
+            self.installer.recover_helper_maintenance(
+                self.layout, owner_uid=os.getuid(),
+            )
+
+    def test_matching_baseline_marker_allows_repair_but_crossed_recovery_stays_blocked(self):
+        def crash_current_switched(phase, transaction):
+            if phase == "current-switched":
+                raise Crash()
+
+        with self.assertRaises(Crash):
+            self._import(phase_hook=crash_current_switched)
+        transaction = json.loads(self.layout.maintenance_transaction_path.read_text())
+        old_sites = self.layout.generations_root / transaction["old_generation"] / "sites"
+        os.chmod(old_sites, 0o700)
+        with self.assertRaises(self.installer.InstallError):
+            self._recover()
+        marker_bytes = self.layout.maintenance_recovery_marker.read_bytes()
+        marker = json.loads(marker_bytes)
+        self.assertEqual(transaction["transaction_id"], marker["transaction_id"])
+
+        mismatched = dict(marker, transaction_id="tx-" + "f" * 32)
+        self.layout.maintenance_recovery_marker.write_bytes(canonical_bytes(mismatched))
+        with self.assertRaises(self.installer.InstallError):
+            self._recover()
+        self.assertTrue(self.layout.maintenance_transaction_path.is_file())
+        self.layout.maintenance_recovery_marker.write_bytes(marker_bytes)
+
+        with self.assertRaises(self.installer.InstallError):
+            self.installer.recover_helper_maintenance(self.layout, owner_uid=os.getuid())
+        self.assertEqual(marker_bytes, self.layout.maintenance_recovery_marker.read_bytes())
+        self.assertTrue(self.layout.maintenance_transaction_path.is_file())
+
+        os.chmod(old_sites, 0o500)
+
+        class MarkerObservingRuntime(BaselineRuntime):
+            def reload(inner_self):
+                self.assertTrue(self.layout.maintenance_recovery_marker.is_file())
+                super().reload()
+
+            def smoke(inner_self, hosts):
+                self.assertTrue(self.layout.maintenance_recovery_marker.is_file())
+                super().smoke(hosts)
+
+        result = self._recover(runtime=MarkerObservingRuntime())
+        self.assertEqual("rolled-back", result["status"])
+        self.assertFalse(self.layout.maintenance_recovery_marker.exists())
+        self.assertFalse(self.layout.maintenance_transaction_path.exists())
+
+    def test_automatic_recovery_returns_a_forward_committed_receipt(self):
+        runtime = BaselineRuntime()
+
+        def ordinary_failure_after_smoked(phase, transaction):
+            if phase == "smoked":
+                raise RuntimeError("ordinary post-smoke failure")
+
+        receipt = self._import(runtime=runtime, phase_hook=ordinary_failure_after_smoked)
+        self.assertEqual("committed", receipt["status"])
+        self.assertEqual(receipt, json.loads(self.layout.baseline_receipt_path.read_text()))
+        self.assertEqual(receipt["generation_id"], self.layout.current_generation().name)
+        self.assertFalse(self.layout.maintenance_transaction_path.exists())
+        self.assertFalse(self.layout.maintenance_recovery_marker.exists())
+        self.assertEqual(2, len(runtime.smokes))
+
+    def test_input_bytes_are_bound_to_entries_and_member_set_through_retained_directory_fd(self):
+        for attack in ("aba", "member-churn"):
+            with self.subTest(attack=attack):
+                self.tearDown()
+                self.setUp()
+                real_open = self.installer.os.open
+                input_identity = (
+                    self.input_dir.stat().st_dev, self.input_dir.stat().st_ino,
+                )
+                archive = self.input_dir / "deploy-bundle.tar.gz"
+                manifest = self.input_dir / "server-manifest.json"
+                injected = [False]
+                replacement = self.root / "aba-replacement"
+                backup = self.input_dir / ".aba-original"
+                if attack == "aba":
+                    replacement.write_bytes(archive.read_bytes())
+                    os.chmod(replacement, 0o600)
+
+                real_lstat = self.installer.TrustedInstallerWalker._lstat
+                aba_info = [None]
+
+                def attacked_lstat(walker, parent, name):
+                    is_input = (parent.device, parent.inode) == input_identity
+                    if attack == "aba" and is_input and name == archive.name:
+                        if not injected[0]:
+                            info = real_lstat(walker, parent, name)
+                            aba_info[0] = info
+                            archive.rename(backup)
+                            replacement.rename(archive)
+                            injected[0] = True
+                            return info
+                        if backup.exists():
+                            archive.unlink()
+                            backup.rename(archive)
+                            return aba_info[0]
+                    return real_lstat(walker, parent, name)
+
+                def attacked_open(path, flags, mode=0o777, *, dir_fd=None):
+                    is_input = False
+                    if dir_fd is not None:
+                        info = os.fstat(dir_fd)
+                        is_input = (info.st_dev, info.st_ino) == input_identity
+                    descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+                    if attack == "member-churn" and is_input:
+                        extra = self.input_dir / "unexpected"
+                        if path == archive.name and not extra.exists():
+                            extra.write_bytes(b"churn\n")
+                            os.chmod(extra, 0o600)
+                            injected[0] = True
+                        elif path == manifest.name and extra.exists():
+                            extra.unlink()
+                    return descriptor
+
+                try:
+                    with mock.patch.object(
+                        self.installer.TrustedInstallerWalker, "_lstat", attacked_lstat,
+                    ), mock.patch.object(self.installer.os, "open", attacked_open):
+                        with self.assertRaises(self.installer.InstallError):
+                            self._import()
+                finally:
+                    if backup.exists():
+                        if archive.exists():
+                            archive.unlink()
+                        backup.rename(archive)
+                self.assertTrue(injected[0])
+                self._assert_initial_current()
+                self.assertFalse(self.layout.baseline_receipt_path.exists())
+
+    def test_candidate_validation_rejects_replaced_retained_temp_parent_before_subprocess(self):
+        real_open = self.installer.os.open
+        displaced = self.root / "infra-displaced"
+        injected = [False]
+
+        def replace_parent_after_temp_open(path, flags, mode=0o777, *, dir_fd=None):
+            descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+            if Path(path).name.startswith(".baseline-validate-") and not injected[0]:
+                injected[0] = True
+                self.layout.infra_root.rename(displaced)
+                self.layout.infra_root.mkdir(mode=0o755)
+            return descriptor
+
+        completed = mock.Mock(returncode=0, stdout="")
+        try:
+            with mock.patch.object(self.installer.os, "open", replace_parent_after_temp_open), \
+                    mock.patch.object(self.installer.subprocess, "run", return_value=completed) as run:
+                with self.assertRaises(self.installer.InstallError):
+                    self._root_call(
+                        self.installer.import_baseline, self.layout, self.artifacts["archive_id"],
+                        owner_uid=os.getuid(), runtime=None,
+                    )
+            self.assertTrue(injected[0])
+            self.assertEqual(0, run.call_count)
+        finally:
+            if displaced.exists():
+                shutil.rmtree(self.layout.infra_root)
+                displaced.rename(self.layout.infra_root)
+
+    def test_prepared_orphan_selection_uses_full_evidence_and_never_deletes_collisions(self):
+        for case in (
+            "other-staged-prefix", "unrelated-generation", "corrupt-matching-input",
+            "forced-generation-collision",
+        ):
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                original_phase = self.installer._phase_baseline
+
+                def crash_before_prepared(walker, layout, transaction, phase, phase_hook):
+                    if phase == "prepared":
+                        raise Crash()
+                    return original_phase(walker, layout, transaction, phase, phase_hook)
+
+                with mock.patch.object(
+                    self.installer, "_phase_baseline", crash_before_prepared,
+                ), self.assertRaises(Crash):
+                    self._import()
+                initial_generation = json.loads(
+                    self.layout.bootstrap_attestation_path.read_text()
+                )["initial_generation"]
+                orphan_names = {
+                    path.name for path in self.layout.generations_root.iterdir()
+                    if path.name != initial_generation
+                }
+                self.assertEqual(1, len(orphan_names))
+                orphan_name = orphan_names.pop()
+
+                patcher = contextlib.nullcontext()
+                unrelated = None
+                if case == "other-staged-prefix":
+                    other_id = self.artifacts["archive_id"][:32] + (
+                        "0" if self.artifacts["archive_id"][32] != "0" else "1"
+                    ) + self.artifacts["archive_id"][33:]
+                    other_dir = self.layout.baseline_input_root / other_id
+                    other_dir.mkdir(mode=0o700)
+                    for name in ("deploy-bundle.tar.gz", "server-manifest.json"):
+                        path = other_dir / name
+                        path.write_bytes(b"unselected staged input\n")
+                        os.chmod(path, 0o600)
+                elif case == "unrelated-generation":
+                    unrelated = self.layout.generations_root / ("gen-" + "e" * 32)
+                    (unrelated / "sites").mkdir(parents=True)
+                    (unrelated / "manifests").mkdir()
+                    os.chmod(unrelated / "sites", 0o500)
+                    os.chmod(unrelated / "manifests", 0o500)
+                    os.chmod(unrelated, 0o500)
+                elif case == "corrupt-matching-input":
+                    archive = self.input_dir / "deploy-bundle.tar.gz"
+                    archive.write_bytes(archive.read_bytes() + b"corrupt")
+                    os.chmod(archive, 0o600)
+                else:
+                    second = self.artifact_factory.artifacts(
+                        self.approved_hash, git_sha="2" * 40,
+                    )
+                    self._write_input(second)
+                    patcher = mock.patch.object(
+                        self.installer, "_baseline_generation_id",
+                        return_value=orphan_name,
+                    )
+
+                with patcher:
+                    if case in ("corrupt-matching-input", "forced-generation-collision"):
+                        with self.assertRaises(self.installer.InstallError):
+                            self._recover()
+                        self.assertTrue(
+                            (self.layout.generations_root / orphan_name).is_dir()
+                        )
+                        self.assertTrue(self.layout.maintenance_recovery_marker.is_file())
+                    else:
+                        result = self._recover()
+                        self.assertEqual("rolled-back", result["status"])
+                        self.assertFalse(
+                            (self.layout.generations_root / orphan_name).exists()
+                        )
+                        self.assertFalse(self.layout.maintenance_recovery_marker.exists())
+                        if unrelated is not None:
+                            self.assertTrue(unrelated.is_dir())
+
+    def test_baseline_docker_validate_and_reload_timeouts_are_bounded_install_errors(self):
+        for action in ("validate", "reload"):
+            with self.subTest(action=action):
+                self.tearDown()
+                self.setUp()
+                contract = json.loads(self.layout.contract_path.read_text())
+                expired = self.installer.subprocess.TimeoutExpired(
+                    cmd=["/usr/bin/docker"], timeout=30,
+                )
+                with mock.patch.object(
+                    self.installer.subprocess, "run", side_effect=expired,
+                ) as run:
+                    if action == "validate":
+                        with self.assertRaises(self.installer.InstallError):
+                            self._root_call(
+                                self.installer.import_baseline, self.layout,
+                                self.artifacts["archive_id"], owner_uid=os.getuid(), runtime=None,
+                            )
+                    else:
+                        runtime = self.installer.BaselineDockerRuntime(contract, self.layout)
+                        with self.assertRaises(self.installer.InstallError):
+                            runtime.reload()
+                self.assertEqual(1, run.call_count)
+                arguments, keywords = run.call_args
+                self.assertEqual(
+                    {
+                        "check": False,
+                        "text": True,
+                        "timeout": 30,
+                        "stdout": self.installer.subprocess.PIPE,
+                        "stderr": self.installer.subprocess.STDOUT,
+                    },
+                    keywords,
+                )
+                command = arguments[0]
+                if action == "validate":
+                    self.assertEqual(
+                        [
+                            "/usr/bin/docker", "exec", "shared-caddy", "caddy", "validate",
+                            "--config",
+                        ],
+                        command[:6],
+                    )
+                    self.assertRegex(
+                        command[6],
+                        r"^/etc/caddy/\.baseline-validate-[0-9a-f]{32}\.Caddyfile$",
+                    )
+                    self.assertEqual(["--adapter", "caddyfile"], command[7:])
+                else:
+                    self.assertEqual(
+                        [
+                            "/usr/bin/docker", "exec", "shared-caddy", "caddy", "reload",
+                            "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile",
+                        ],
+                        command,
+                    )
 
 
 if __name__ == "__main__":

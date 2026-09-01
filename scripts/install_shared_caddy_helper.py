@@ -659,6 +659,14 @@ class Layout:
         return self.maintenance_root / "baseline-receipt.json"
 
     @property
+    def baseline_rollback_path(self):
+        return self.maintenance_root / "baseline-rollback.json"
+
+    @property
+    def baseline_rollback_receipt_path(self):
+        return self.maintenance_root / "baseline-rollback-receipt.json"
+
+    @property
     def intake_root(self):
         return self.state_root / "intake"
 
@@ -1311,10 +1319,27 @@ def _open_shared_lock(walker, layout, manifest):
     return descriptor
 
 
+def _baseline_rollback_path(layout):
+    return getattr(
+        layout, "baseline_rollback_path", layout.maintenance_root / "baseline-rollback.json",
+    )
+
+
+def _baseline_rollback_receipt_path(layout):
+    return getattr(
+        layout, "baseline_rollback_receipt_path",
+        layout.maintenance_root / "baseline-rollback-receipt.json",
+    )
+
+
 def _blocked_state(layout, include_maintenance=True):
     paths = [layout.transaction_path, layout.recovery_marker]
     if include_maintenance:
-        paths.extend((layout.maintenance_transaction_path, layout.maintenance_recovery_marker))
+        paths.extend((
+            layout.maintenance_transaction_path,
+            layout.maintenance_recovery_marker,
+            _baseline_rollback_path(layout),
+        ))
     return paths
 
 
@@ -1571,6 +1596,10 @@ def recover_helper_maintenance(layout, owner_uid=0):
             _assert_recorded_locks(walker, layout, lock_manifest)
             if walker.exists(layout.maintenance_recovery_marker):
                 raise InstallError("maintenance recovery marker requires administrator repair")
+            if walker.exists(_baseline_rollback_path(layout)):
+                raise CrossedMaintenanceRecovery(
+                    "baseline rollback requires the baseline recovery action"
+                )
             if walker.exists(layout.transaction_path) or walker.exists(layout.recovery_marker):
                 raise InstallError("application/Caddy state blocks helper maintenance recovery")
             try:
@@ -1668,20 +1697,27 @@ class _NoBaselineRedirectHandler(urllib.request.HTTPRedirectHandler):
         return None
 
 
+BASELINE_DOCKER_TIMEOUT_SECONDS = 30
+
+
 class BaselineDockerRuntime:
     """Fixed Caddy operations derived only from the attested server contract."""
 
-    def __init__(self, contract, layout):
+    def __init__(self, contract, layout, walker=None):
         validate_server_contract(contract)
         self.container = contract["caddy_container"]
         self.config_root = contract["container_config_root"].rstrip("/")
         self.layout = layout
+        self.walker = walker
 
     def _run(self, arguments):
-        result = subprocess.run(
-            arguments, check=False, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        )
+        try:
+            result = subprocess.run(
+                arguments, check=False, text=True, timeout=BASELINE_DOCKER_TIMEOUT_SECONDS,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise InstallError("fixed baseline Caddy operation timed out") from exc
         if result.returncode:
             raise InstallError("fixed baseline Caddy operation failed: " + result.stdout[-1000:])
 
@@ -1689,34 +1725,63 @@ class BaselineDockerRuntime:
         generation_id = Path(generation).name
         if not re.fullmatch(r"gen-[0-9a-f]{32}", generation_id):
             raise InstallError("invalid baseline generation identity")
-        temporary = self.layout.infra_root / (".baseline-validate-" + uuid.uuid4().hex + ".Caddyfile")
+        if self.walker is None:
+            raise InstallError("baseline candidate validation requires the retained trusted walker")
+        self.walker.attest()
+        parent = self.walker.ensure_dir(self.layout.infra_root)
+        temporary_name = ".baseline-validate-" + uuid.uuid4().hex + ".Caddyfile"
+        temporary = self.layout.infra_root / temporary_name
         payload = (
             f"import {self.config_root}/server-options.caddy\n"
             f"import {self.config_root}/managed/generations/{generation_id}/sites/*.caddy\n"
         ).encode()
         descriptor = os.open(
-            temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+            temporary_name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600, dir_fd=parent.fd,
         )
+        created = os.fstat(descriptor)
         try:
+            self.walker._check_file(created, temporary, parent.device)
+            if stat.S_IMODE(created.st_mode) != 0o600:
+                raise InstallError("baseline candidate temporary mode drift")
+            entry = self.walker._lstat(parent, temporary_name)
+            if (entry.st_dev, entry.st_ino) != (created.st_dev, created.st_ino):
+                raise InstallError("baseline candidate temporary entry changed during create")
             offset = 0
             while offset < len(payload):
                 offset += os.write(descriptor, payload[offset:])
             _fsync_descriptor(descriptor, temporary)
-        finally:
-            os.close(descriptor)
-        try:
+            stable = os.fstat(descriptor)
+            fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+            if any(getattr(created, field) != getattr(stable, field) for field in fields[:2]):
+                raise InstallError("baseline candidate temporary descriptor changed")
+            self.walker.attest()
+            entry = self.walker._lstat(parent, temporary_name)
+            if (entry.st_dev, entry.st_ino) != (stable.st_dev, stable.st_ino):
+                raise InstallError("baseline candidate temporary entry changed before validation")
             self._run([
                 "/usr/bin/docker", "exec", self.container, "caddy", "validate",
-                "--config", self.config_root + "/" + temporary.name,
+                "--config", self.config_root + "/" + temporary_name,
                 "--adapter", "caddyfile",
             ])
+            self.walker.attest()
+            after = os.fstat(descriptor)
+            entry = self.walker._lstat(parent, temporary_name)
+            if (
+                (after.st_dev, after.st_ino) != (stable.st_dev, stable.st_ino)
+                or (entry.st_dev, entry.st_ino) != (stable.st_dev, stable.st_ino)
+            ):
+                raise InstallError("baseline candidate temporary entry changed during validation")
         finally:
-            temporary.unlink(missing_ok=True)
-            parent = os.open(self.layout.infra_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             try:
-                _fsync_descriptor(parent, self.layout.infra_root)
+                entry = self.walker._lstat(parent, temporary_name)
+                if (entry.st_dev, entry.st_ino) == (created.st_dev, created.st_ino):
+                    os.unlink(temporary_name, dir_fd=parent.fd)
+                    _fsync_descriptor(parent.fd, self.layout.infra_root)
+            except FileNotFoundError:
+                pass
             finally:
-                os.close(parent)
+                os.close(descriptor)
 
     def reload(self):
         self._run([
@@ -1770,6 +1835,66 @@ def _baseline_current_target(walker, layout):
     return target
 
 
+def _baseline_generation_id(bundle_id):
+    try:
+        validate_bundle_id(bundle_id)
+    except ContractError as exc:
+        raise InstallError(str(exc)) from exc
+    identity = sha256_bytes(
+        b"shared-caddy-baseline-generation/v1\0" + bundle_id.encode("ascii")
+    )
+    return "gen-" + identity[:32]
+
+
+def _baseline_input_members(input_dir):
+    try:
+        return set(os.listdir(input_dir.fd))
+    except OSError as exc:
+        raise InstallError("baseline input directory failed stable listing") from exc
+
+
+def _read_baseline_input_member(walker, input_dir, input_dir_path, name, expected_names):
+    if _baseline_input_members(input_dir) != expected_names:
+        raise InstallError("baseline input directory file set is not exact")
+    path = input_dir_path / name
+    try:
+        entry_before = walker._lstat(input_dir, name)
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=input_dir.fd)
+    except OSError as exc:
+        raise InstallError("baseline input member failed descriptor-relative no-follow open") from exc
+    try:
+        before = os.fstat(descriptor)
+        if (entry_before.st_dev, entry_before.st_ino) != (before.st_dev, before.st_ino):
+            raise InstallError("baseline input entry changed while opening")
+        if (
+            not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+            or before.st_uid != walker.owner_uid or stat.S_IMODE(before.st_mode) != 0o600
+            or before.st_dev != input_dir.device
+        ):
+            raise InstallError(
+                "baseline input files must be same-filesystem root-owned mode 0600 single-link files"
+            )
+        chunks = []
+        while True:
+            block = os.read(descriptor, 1024 * 1024)
+            if not block:
+                break
+            chunks.append(block)
+        after = os.fstat(descriptor)
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        fingerprint = tuple(getattr(before, field) for field in fields)
+        if fingerprint != tuple(getattr(after, field) for field in fields):
+            raise InstallError("baseline input changed during descriptor-bound stable read")
+        entry_after = walker._lstat(input_dir, name)
+        if fingerprint != tuple(getattr(entry_after, field) for field in fields):
+            raise InstallError("baseline input directory entry changed during stable read")
+        if _baseline_input_members(input_dir) != expected_names:
+            raise InstallError("baseline input directory member set changed during stable read")
+        return b"".join(chunks), fingerprint
+    finally:
+        os.close(descriptor)
+
+
 def _baseline_input_snapshot(walker, layout, bundle_id):
     try:
         validate_bundle_id(bundle_id)
@@ -1782,28 +1907,18 @@ def _baseline_input_snapshot(walker, layout, bundle_id):
         info = os.fstat(handle.fd)
         if stat.S_IMODE(info.st_mode) != 0o700 or info.st_uid != walker.owner_uid:
             raise InstallError("baseline input directories must be root-owned mode 0700: " + str(display))
-    names = set(os.listdir(input_dir.fd))
     expected_names = {"deploy-bundle.tar.gz", "server-manifest.json"}
-    if names != expected_names:
+    if _baseline_input_members(input_dir) != expected_names:
         raise InstallError("baseline input directory file set is not exact")
     values = {}
     fingerprints = {}
     for name in sorted(expected_names):
-        path = input_dir_path / name
-        before = walker.lstat(path)
-        if (
-            not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
-            or before.st_uid != walker.owner_uid or stat.S_IMODE(before.st_mode) != 0o600
-            or before.st_dev != input_dir.device
-        ):
-            raise InstallError("baseline input files must be same-filesystem root-owned mode 0600 single-link files")
-        values[name] = walker.read_file(path)
-        after = walker.lstat(path)
-        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
-        fingerprint = tuple(getattr(before, field) for field in fields)
-        if fingerprint != tuple(getattr(after, field) for field in fields):
-            raise InstallError("baseline input changed during stable read")
-        fingerprints[name] = fingerprint
+        values[name], fingerprints[name] = _read_baseline_input_member(
+            walker, input_dir, input_dir_path, name, expected_names,
+        )
+    walker.attest()
+    if _baseline_input_members(input_dir) != expected_names:
+        raise InstallError("baseline input directory member set changed after stable read")
     if sha256_bytes(values["deploy-bundle.tar.gz"]) != bundle_id:
         raise InstallError("baseline archive bytes differ from baseline-bundle-id")
     manifest = _parse_json(values["server-manifest.json"], "baseline server manifest")
@@ -2026,12 +2141,199 @@ def _thaw_and_remove_baseline_generation(walker, generation):
     walker.remove_tree(generation)
 
 
-def _mark_baseline_recovery(walker, layout, message):
-    if not walker.exists(layout.maintenance_recovery_marker):
-        walker.write_file(
-            layout.maintenance_recovery_marker,
-            ("baseline maintenance recovery required: " + message + "\n").encode(), 0o600,
-        )
+BASELINE_ROLLBACK_STEPS = (
+    "intent", "pointer-restored", "reloaded", "smoked", "candidate-removed",
+    "transaction-removed", "marker-removed",
+)
+BASELINE_RECOVERY_REASONS = {
+    "automatic-recovery-result-ambiguous",
+    "automatic-rollback-ambiguous",
+    "pre-prepared-orphan-ambiguous",
+    "pre-transaction-cleanup-ambiguous",
+    "retained-state-unproven",
+    "rollback-in-progress",
+    "runtime-or-evidence-unproven",
+}
+
+
+def _baseline_recovery_binding(value):
+    if value is None:
+        return {
+            "transaction_id": None, "archive_id": None,
+            "old_generation": None, "new_generation": None,
+        }
+    return {
+        "transaction_id": value["transaction_id"],
+        "archive_id": value["archive_id"],
+        "old_generation": value["old_generation"],
+        "new_generation": value["new_generation"],
+    }
+
+
+def _baseline_rollback_from_transaction(transaction, step="intent"):
+    return {
+        "schema_version": "shared-caddy-baseline-rollback/v1",
+        "step": step,
+        **_baseline_recovery_binding(transaction),
+    }
+
+
+def _validate_baseline_rollback(value, transaction=None):
+    _ensure_exact_keys(
+        value,
+        (
+            "schema_version", "step", "transaction_id", "archive_id",
+            "old_generation", "new_generation",
+        ),
+        "baseline rollback",
+    )
+    if value["schema_version"] != "shared-caddy-baseline-rollback/v1":
+        raise InstallError("unknown baseline rollback schema")
+    if value["step"] not in BASELINE_ROLLBACK_STEPS:
+        raise InstallError("unknown baseline rollback step")
+    if not re.fullmatch(r"tx-[0-9a-f]{32}", str(value["transaction_id"])):
+        raise InstallError("invalid baseline rollback transaction identity")
+    if not SHA256_RE.fullmatch(str(value["archive_id"])):
+        raise InstallError("invalid baseline rollback archive identity")
+    for field in ("old_generation", "new_generation"):
+        if not re.fullmatch(r"gen-[0-9a-f]{32}", str(value[field])):
+            raise InstallError("invalid baseline rollback generation identity")
+    if value["old_generation"] == value["new_generation"]:
+        raise InstallError("baseline rollback generations must differ")
+    if transaction is not None and _baseline_recovery_binding(value) != _baseline_recovery_binding(transaction):
+        raise InstallError("baseline rollback does not match retained transaction")
+    return value
+
+
+def _baseline_rollback_receipt_from_rollback(rollback):
+    _validate_baseline_rollback(rollback)
+    return {
+        "schema_version": "shared-caddy-baseline-rollback-receipt/v1",
+        "status": "rolled-back",
+        **_baseline_recovery_binding(rollback),
+    }
+
+
+def _validate_baseline_rollback_receipt(value, rollback=None):
+    _ensure_exact_keys(
+        value,
+        (
+            "schema_version", "status", "transaction_id", "archive_id",
+            "old_generation", "new_generation",
+        ),
+        "baseline rollback receipt",
+    )
+    if value["schema_version"] != "shared-caddy-baseline-rollback-receipt/v1":
+        raise InstallError("unknown baseline rollback receipt schema")
+    if value["status"] != "rolled-back":
+        raise InstallError("invalid baseline rollback receipt status")
+    _validate_baseline_rollback({
+        "schema_version": "shared-caddy-baseline-rollback/v1",
+        "step": "marker-removed",
+        **_baseline_recovery_binding(value),
+    })
+    if rollback is not None and _baseline_recovery_binding(value) != _baseline_recovery_binding(rollback):
+        raise InstallError("baseline rollback receipt does not match live rollback")
+    return value
+
+
+def _load_baseline_rollback_receipt(walker, layout, rollback=None):
+    raw = walker.read_file(_baseline_rollback_receipt_path(layout))
+    value = _parse_json(raw, "baseline rollback receipt")
+    if raw != _canonical_json(value):
+        raise InstallError("baseline rollback receipt is not canonical JSON")
+    return _validate_baseline_rollback_receipt(value, rollback)
+
+
+def _load_baseline_rollback(walker, layout):
+    raw = walker.read_file(_baseline_rollback_path(layout))
+    value = _parse_json(raw, "baseline rollback")
+    if raw != _canonical_json(value):
+        raise InstallError("baseline rollback is not canonical JSON")
+    return _validate_baseline_rollback(value)
+
+
+def _phase_baseline_rollback(walker, layout, rollback, step):
+    rollback["step"] = step
+    _validate_baseline_rollback(rollback)
+    walker.write_json(_baseline_rollback_path(layout), rollback, 0o600)
+
+
+def _baseline_marker_value(reason, binding=None):
+    return {
+        "schema_version": "shared-caddy-baseline-recovery-required/v1",
+        "reason": reason,
+        **_baseline_recovery_binding(binding),
+    }
+
+
+def _validate_baseline_recovery_marker(value, binding=None):
+    _ensure_exact_keys(
+        value,
+        (
+            "schema_version", "reason", "transaction_id", "archive_id",
+            "old_generation", "new_generation",
+        ),
+        "baseline recovery marker",
+    )
+    if value["schema_version"] != "shared-caddy-baseline-recovery-required/v1":
+        raise InstallError("maintenance recovery marker is not baseline recovery state")
+    if value["reason"] not in BASELINE_RECOVERY_REASONS:
+        raise InstallError("invalid baseline recovery marker reason")
+    fields = ("transaction_id", "archive_id", "old_generation", "new_generation")
+    populated = [value[field] is not None for field in fields]
+    if any(populated) and not all(populated):
+        raise InstallError("baseline recovery marker binding is partial")
+    if all(populated):
+        _validate_baseline_rollback({
+            "schema_version": "shared-caddy-baseline-rollback/v1",
+            "step": "intent",
+            **{field: value[field] for field in fields},
+        })
+    if binding is not None:
+        if not all(populated):
+            raise InstallError("baseline recovery marker is not bound to retained state")
+        if _baseline_recovery_binding(value) != _baseline_recovery_binding(binding):
+            raise InstallError("baseline recovery marker does not match retained state")
+    return value
+
+
+def _load_baseline_recovery_marker(walker, layout, binding=None):
+    raw = walker.read_file(layout.maintenance_recovery_marker)
+    value = _parse_json(raw, "baseline recovery marker")
+    if raw != _canonical_json(value):
+        raise InstallError("baseline recovery marker is not canonical JSON")
+    return _validate_baseline_recovery_marker(value, binding)
+
+
+def _mark_baseline_recovery(walker, layout, reason, binding=None):
+    if walker.exists(layout.maintenance_recovery_marker):
+        existing = _load_baseline_recovery_marker(walker, layout)
+        if binding is not None and existing["transaction_id"] is None:
+            marker = _baseline_marker_value(existing["reason"], binding)
+            _validate_baseline_recovery_marker(marker, binding)
+            walker.write_json(layout.maintenance_recovery_marker, marker, 0o600)
+            return marker
+        return _validate_baseline_recovery_marker(existing, binding)
+    marker = _baseline_marker_value(reason, binding)
+    _validate_baseline_recovery_marker(marker, binding)
+    walker.write_json(layout.maintenance_recovery_marker, marker, 0o600)
+    return marker
+
+
+def _baseline_binding_from_retained_state(walker, layout):
+    if walker.exists(_baseline_rollback_path(layout)):
+        with contextlib.suppress(InstallError, ContractError, KeyError, TypeError):
+            return _load_baseline_rollback(walker, layout)
+    if walker.exists(layout.maintenance_transaction_path):
+        with contextlib.suppress(InstallError, ContractError, KeyError, TypeError):
+            transaction = _parse_json(
+                walker.read_file(layout.maintenance_transaction_path),
+                "baseline maintenance transaction",
+            )
+            validate_baseline_transaction(transaction)
+            return transaction
+    return None
 
 
 def _finish_baseline_commit(walker, layout, transaction, snapshot, artifacts):
@@ -2051,18 +2353,86 @@ def _finish_baseline_commit(walker, layout, transaction, snapshot, artifacts):
     else:
         walker.write_json(layout.baseline_receipt_path, receipt, 0o600)
     walker.remove_file(layout.maintenance_transaction_path, missing_ok=True)
+    if walker.exists(layout.maintenance_recovery_marker):
+        _load_baseline_recovery_marker(walker, layout, transaction)
+        walker.remove_file(layout.maintenance_recovery_marker)
+    if walker.exists(_baseline_rollback_receipt_path(layout)):
+        _load_baseline_rollback_receipt(walker, layout)
+        walker.remove_file(_baseline_rollback_receipt_path(layout))
     return receipt
 
 
 def _rollback_baseline(walker, layout, transaction, runtime):
-    walker.replace_symlink(layout.current_link, "generations/" + transaction["old_generation"])
-    runtime.reload()
-    runtime.smoke(())
-    _thaw_and_remove_baseline_generation(
-        walker, layout.generations_root / transaction["new_generation"],
-    )
-    walker.remove_file(layout.maintenance_transaction_path, missing_ok=True)
-    return {"status": "rolled-back", "transaction_id": transaction["transaction_id"]}
+    if walker.exists(_baseline_rollback_path(layout)):
+        rollback = _load_baseline_rollback(walker, layout)
+        _validate_baseline_rollback(rollback, transaction)
+    else:
+        _mark_baseline_recovery(walker, layout, "rollback-in-progress", transaction)
+        rollback = _baseline_rollback_from_transaction(transaction)
+        walker.write_json(_baseline_rollback_path(layout), rollback, 0o600)
+    return _resume_baseline_rollback(walker, layout, rollback, runtime)
+
+
+def _resume_baseline_rollback(walker, layout, rollback, runtime):
+    _validate_baseline_rollback(rollback)
+    old_target = "generations/" + rollback["old_generation"]
+    new_target = "generations/" + rollback["new_generation"]
+    step = rollback["step"]
+    if step != "intent" and _baseline_current_target(walker, layout) != old_target:
+        raise InstallError("durable baseline rollback disagrees with current pointer")
+    if step == "intent":
+        target = _baseline_current_target(walker, layout)
+        if target == new_target:
+            walker.replace_symlink(layout.current_link, old_target)
+        elif target != old_target:
+            raise InstallError("baseline rollback pointer state is ambiguous")
+        _phase_baseline_rollback(walker, layout, rollback, "pointer-restored")
+        step = rollback["step"]
+    if step == "pointer-restored":
+        runtime.reload()
+        _phase_baseline_rollback(walker, layout, rollback, "reloaded")
+        step = rollback["step"]
+    if step == "reloaded":
+        runtime.smoke(())
+        _phase_baseline_rollback(walker, layout, rollback, "smoked")
+        step = rollback["step"]
+    if step == "smoked":
+        _thaw_and_remove_baseline_generation(
+            walker, layout.generations_root / rollback["new_generation"],
+        )
+        _phase_baseline_rollback(walker, layout, rollback, "candidate-removed")
+        step = rollback["step"]
+    if step == "candidate-removed":
+        if walker.exists(layout.maintenance_transaction_path):
+            retained = _parse_json(
+                walker.read_file(layout.maintenance_transaction_path),
+                "baseline maintenance transaction",
+            )
+            try:
+                validate_baseline_transaction(retained)
+            except ContractError as exc:
+                raise InstallError(str(exc)) from exc
+            _validate_baseline_rollback(rollback, retained)
+            walker.remove_file(layout.maintenance_transaction_path)
+        _phase_baseline_rollback(walker, layout, rollback, "transaction-removed")
+        step = rollback["step"]
+    if step == "transaction-removed":
+        if walker.exists(layout.maintenance_recovery_marker):
+            _load_baseline_recovery_marker(walker, layout, rollback)
+            walker.remove_file(layout.maintenance_recovery_marker)
+        _phase_baseline_rollback(walker, layout, rollback, "marker-removed")
+        step = rollback["step"]
+    if step != "marker-removed":
+        raise InstallError("baseline rollback could not reach its terminal step")
+    receipt = _baseline_rollback_receipt_from_rollback(rollback)
+    if walker.exists(_baseline_rollback_receipt_path(layout)):
+        retained_receipt = _load_baseline_rollback_receipt(walker, layout, rollback)
+        if retained_receipt != receipt:
+            raise InstallError("existing baseline rollback receipt differs from live rollback")
+    else:
+        walker.write_json(_baseline_rollback_receipt_path(layout), receipt, 0o600)
+    walker.remove_file(_baseline_rollback_path(layout))
+    return {"status": "rolled-back", "transaction_id": rollback["transaction_id"]}
 
 
 def _load_retained_baseline(walker, layout, transaction, helper_hash):
@@ -2080,6 +2450,24 @@ def _load_retained_baseline(walker, layout, transaction, helper_hash):
     return snapshot, artifacts
 
 
+def _finish_terminal_baseline_rollback(walker, layout, bootstrap):
+    receipt = _load_baseline_rollback_receipt(walker, layout)
+    if receipt["old_generation"] != bootstrap["initial_generation"]:
+        raise InstallError("baseline rollback receipt initial-generation evidence drift")
+    if receipt["new_generation"] != _baseline_generation_id(receipt["archive_id"]):
+        raise InstallError("baseline rollback receipt generation identity drift")
+    if walker.exists(layout.maintenance_recovery_marker):
+        raise InstallError("baseline rollback receipt coexists with a recovery marker")
+    _verify_empty_initial_generation(walker, layout, bootstrap)
+    if _baseline_current_target(walker, layout) != "generations/" + receipt["old_generation"]:
+        raise InstallError("baseline rollback receipt current pointer mismatch")
+    if walker.exists(layout.generations_root / receipt["new_generation"]):
+        raise InstallError("baseline rollback receipt candidate still exists")
+    snapshot = _baseline_input_snapshot(walker, layout, receipt["archive_id"])
+    _baseline_archive_artifacts(snapshot)
+    return {"status": "rolled-back", "transaction_id": receipt["transaction_id"]}
+
+
 def _recover_prepared_baseline_orphan(walker, layout, bootstrap, helper_hash, runtime):
     generations = walker.ensure_dir(layout.generations_root)
     generation_names = set(os.listdir(generations.fd))
@@ -2088,14 +2476,24 @@ def _recover_prepared_baseline_orphan(walker, layout, bootstrap, helper_hash, ru
         raise InstallError("no baseline maintenance transaction exists")
     try:
         input_root = walker.ensure_dir(layout.baseline_input_root)
-        bundle_ids = os.listdir(input_root.fd)
-        if len(bundle_ids) != 1:
-            raise InstallError("pre-prepared baseline orphan has ambiguous retained input")
-        bundle_id = bundle_ids[0]
-        validate_bundle_id(bundle_id)
-        new_generation = "gen-" + bundle_id[:32]
-        if extras != {new_generation} or new_generation == bootstrap["initial_generation"]:
-            raise InstallError("pre-prepared baseline orphan identity is ambiguous")
+        candidates = {}
+        for bundle_id in os.listdir(input_root.fd):
+            if not SHA256_RE.fullmatch(str(bundle_id)):
+                continue
+            generation_id = _baseline_generation_id(bundle_id)
+            if generation_id in extras:
+                candidates.setdefault(generation_id, []).append(bundle_id)
+        if any(len(bundle_ids) != 1 for bundle_ids in candidates.values()):
+            raise InstallError("pre-prepared baseline orphan generation key collides")
+        matches = [
+            (generation_id, bundle_ids[0])
+            for generation_id, bundle_ids in candidates.items()
+        ]
+        if len(matches) != 1:
+            raise InstallError("pre-prepared baseline orphan full-evidence match is ambiguous")
+        new_generation, bundle_id = matches[0]
+        if new_generation == bootstrap["initial_generation"]:
+            raise InstallError("pre-prepared baseline orphan identity collides with initial state")
         lock_manifest = _load_lock_manifest(walker, layout)
         if lock_manifest["deployments"]:
             raise InstallError("pre-prepared baseline orphan coexists with provisioned deployments")
@@ -2106,26 +2504,59 @@ def _recover_prepared_baseline_orphan(walker, layout, bootstrap, helper_hash, ru
         artifacts = _baseline_archive_artifacts(snapshot)
         if artifacts["helper_requirement"]["helper_sha256"] != helper_hash:
             raise InstallError("pre-prepared baseline orphan helper evidence drift")
+        transaction_id = "tx-" + sha256_bytes(
+            b"shared-caddy-baseline-orphan-recovery/v1\0" + bundle_id.encode("ascii")
+        )[:32]
         hypothetical = _baseline_transaction_from_artifacts(
-            artifacts, snapshot, "tx-" + "0" * 32,
+            artifacts, snapshot, transaction_id,
             bootstrap["initial_generation"], new_generation,
         )
         _validate_baseline_snapshot_chain(artifacts, snapshot, hypothetical)
-        walker.replace_symlink(layout.current_link, bootstrap["initial_current_target"])
-        runtime.reload()
-        runtime.smoke(())
-        _thaw_and_remove_baseline_generation(
-            walker, layout.generations_root / new_generation,
-        )
-        return {"status": "rolled-back", "transaction_id": None}
+        _verify_baseline_generation(walker, layout, hypothetical, snapshot, artifacts)
+        _mark_baseline_recovery(walker, layout, "rollback-in-progress", hypothetical)
+        walker.write_json(layout.maintenance_transaction_path, hypothetical, 0o600)
+        return _rollback_baseline(walker, layout, hypothetical, runtime)
     except Exception:
-        _mark_baseline_recovery(walker, layout, "pre-prepared baseline orphan is ambiguous")
+        _mark_baseline_recovery(walker, layout, "pre-prepared-orphan-ambiguous")
         raise
 
 
 def _recover_baseline_locked(walker, layout, bootstrap, contract, helper_hash,
                              runtime, phase_hook):
+    if walker.exists(_baseline_rollback_path(layout)):
+        rollback = _load_baseline_rollback(walker, layout)
+        if rollback["old_generation"] != bootstrap["initial_generation"]:
+            raise InstallError("baseline rollback initial-generation evidence drift")
+        _verify_empty_initial_generation(walker, layout, bootstrap)
+        if walker.exists(layout.maintenance_recovery_marker):
+            _load_baseline_recovery_marker(walker, layout, rollback)
+        if walker.exists(layout.maintenance_transaction_path):
+            transaction = _parse_json(
+                walker.read_file(layout.maintenance_transaction_path),
+                "baseline maintenance transaction",
+            )
+            try:
+                validate_baseline_transaction(transaction)
+            except ContractError as exc:
+                raise InstallError(str(exc)) from exc
+            if (
+                transaction["contract_version"] != contract["contract_version"]
+                or transaction["helper_version"] != contract["helper_version"]
+                or transaction["helper_sha256"] != helper_hash
+            ):
+                raise InstallError("baseline rollback controller evidence drift")
+            _validate_baseline_rollback(rollback, transaction)
+            _load_retained_baseline(walker, layout, transaction, helper_hash)
+        elif rollback["step"] not in ("candidate-removed", "transaction-removed", "marker-removed"):
+            raise InstallError("baseline rollback lost its retained transaction too early")
+        return _resume_baseline_rollback(walker, layout, rollback, runtime)
+
     if not walker.exists(layout.maintenance_transaction_path):
+        if (
+            not walker.exists(layout.baseline_receipt_path)
+            and walker.exists(_baseline_rollback_receipt_path(layout))
+        ):
+            return _finish_terminal_baseline_rollback(walker, layout, bootstrap)
         if not walker.exists(layout.baseline_receipt_path):
             return _recover_prepared_baseline_orphan(
                 walker, layout, bootstrap, helper_hash, runtime,
@@ -2140,13 +2571,15 @@ def _recover_baseline_locked(walker, layout, bootstrap, contract, helper_hash,
         transaction["schema_version"] = "shared-caddy-baseline-transaction/v1"
         transaction["phase"] = "committed"
         transaction["new_generation"] = transaction.pop("generation_id")
+        if walker.exists(layout.maintenance_recovery_marker):
+            _load_baseline_recovery_marker(walker, layout, transaction)
         snapshot, artifacts = _load_retained_baseline(
             walker, layout, transaction, helper_hash,
         )
         if _baseline_current_target(walker, layout) != "generations/" + transaction["new_generation"]:
             raise InstallError("committed baseline receipt current pointer mismatch")
         _verify_baseline_generation(walker, layout, transaction, snapshot, artifacts)
-        return receipt
+        return _finish_baseline_commit(walker, layout, transaction, snapshot, artifacts)
 
     transaction = _parse_json(
         walker.read_file(layout.maintenance_transaction_path), "baseline maintenance transaction",
@@ -2166,6 +2599,8 @@ def _recover_baseline_locked(walker, layout, bootstrap, contract, helper_hash,
         or transaction["old_generation"] != bootstrap["initial_generation"]
     ):
         raise InstallError("baseline transaction controller or initial-generation evidence drift")
+    if walker.exists(layout.maintenance_recovery_marker):
+        _load_baseline_recovery_marker(walker, layout, transaction)
     _verify_empty_initial_generation(walker, layout, bootstrap)
     snapshot, artifacts = _load_retained_baseline(walker, layout, transaction, helper_hash)
     target = _baseline_current_target(walker, layout)
@@ -2247,11 +2682,14 @@ def import_baseline(layout, bundle_id, owner_uid=0, runtime=None, phase_hook=Non
             if artifacts["helper_requirement"]["helper_sha256"] != helper_hash:
                 raise InstallError("baseline helper requirement differs from installed helper")
             transaction_id = "tx-" + uuid.uuid4().hex
-            new_generation = "gen-" + bundle_id[:32]
+            new_generation = _baseline_generation_id(bundle_id)
             transaction = _baseline_transaction_from_artifacts(
                 artifacts, snapshot, transaction_id, old_generation, new_generation,
             )
             _validate_baseline_snapshot_chain(artifacts, snapshot, transaction)
+            if walker.exists(_baseline_rollback_receipt_path(layout)):
+                _load_baseline_rollback_receipt(walker, layout)
+                walker.remove_file(_baseline_rollback_receipt_path(layout))
             generation = layout.generations_root / new_generation
             transaction_durable = False
             try:
@@ -2267,7 +2705,7 @@ def import_baseline(layout, bundle_id, owner_uid=0, runtime=None, phase_hook=Non
                     _canonical_json(snapshot["manifest"]), 0o600,
                 )
                 _freeze_baseline_generation(walker, generation)
-                runtime = runtime or BaselineDockerRuntime(locked_contract, layout)
+                runtime = runtime or BaselineDockerRuntime(locked_contract, layout, walker)
                 runtime.validate(generation)
                 _verify_baseline_generation(walker, layout, transaction, snapshot, artifacts)
                 _phase_baseline(walker, layout, transaction, "prepared", phase_hook)
@@ -2287,18 +2725,29 @@ def import_baseline(layout, bundle_id, owner_uid=0, runtime=None, phase_hook=Non
             except Exception as exc:
                 if transaction_durable:
                     try:
-                        _recover_baseline_locked(
+                        recovery = _recover_baseline_locked(
                             walker, layout, locked_bootstrap, locked_contract, helper_hash,
                             runtime, None,
                         )
                     except Exception as recovery_exc:
-                        _mark_baseline_recovery(walker, layout, "automatic rollback was ambiguous")
+                        _mark_baseline_recovery(
+                            walker, layout, "automatic-rollback-ambiguous", transaction,
+                        )
                         raise InstallError("baseline import requires maintenance recovery") from recovery_exc
+                    if recovery.get("status") == "committed":
+                        return recovery
+                    if recovery.get("status") != "rolled-back":
+                        _mark_baseline_recovery(
+                            walker, layout, "automatic-recovery-result-ambiguous", transaction,
+                        )
+                        raise InstallError("baseline import recovery returned ambiguous state")
                     raise InstallError("baseline import failed and was rolled back") from exc
                 try:
                     _thaw_and_remove_baseline_generation(walker, generation)
                 except Exception as cleanup_exc:
-                    _mark_baseline_recovery(walker, layout, "pre-transaction cleanup was ambiguous")
+                    _mark_baseline_recovery(
+                        walker, layout, "pre-transaction-cleanup-ambiguous",
+                    )
                     raise InstallError("baseline staging cleanup requires maintenance recovery") from cleanup_exc
                 raise
         finally:
@@ -2318,15 +2767,13 @@ def recover_baseline_maintenance(layout, owner_uid=0, runtime=None, phase_hook=N
             walker.attest()
             bootstrap, lock_manifest = _attest_bootstrap(walker, layout)
             _assert_recorded_locks(walker, layout, lock_manifest)
-            if walker.exists(layout.maintenance_recovery_marker):
-                raise InstallError("maintenance-recovery-required blocks baseline recovery")
             if walker.exists(layout.transaction_path) or walker.exists(layout.recovery_marker):
                 raise InstallError("application/Caddy recovery state blocks baseline maintenance")
             try:
                 helper_data, contract_data, contract = _attest_baseline_controller(
                     walker, layout, bootstrap,
                 )
-                runtime = runtime or BaselineDockerRuntime(contract, layout)
+                runtime = runtime or BaselineDockerRuntime(contract, layout, walker)
                 return _recover_baseline_locked(
                     walker, layout, bootstrap, contract, sha256_bytes(helper_data),
                     runtime, phase_hook,
@@ -2334,12 +2781,26 @@ def recover_baseline_maintenance(layout, owner_uid=0, runtime=None, phase_hook=N
             except CrossedMaintenanceRecovery:
                 raise
             except InstallError:
-                if walker.exists(layout.maintenance_transaction_path):
-                    _mark_baseline_recovery(walker, layout, "retained state could not be proven")
+                if (
+                    walker.exists(layout.maintenance_transaction_path)
+                    or walker.exists(_baseline_rollback_path(layout))
+                    or walker.exists(layout.maintenance_recovery_marker)
+                ):
+                    _mark_baseline_recovery(
+                        walker, layout, "retained-state-unproven",
+                        _baseline_binding_from_retained_state(walker, layout),
+                    )
                 raise
             except Exception as exc:
-                if walker.exists(layout.maintenance_transaction_path):
-                    _mark_baseline_recovery(walker, layout, "runtime or evidence could not be proven")
+                if (
+                    walker.exists(layout.maintenance_transaction_path)
+                    or walker.exists(_baseline_rollback_path(layout))
+                    or walker.exists(layout.maintenance_recovery_marker)
+                ):
+                    _mark_baseline_recovery(
+                        walker, layout, "runtime-or-evidence-unproven",
+                        _baseline_binding_from_retained_state(walker, layout),
+                    )
                 raise InstallError("baseline maintenance recovery failed closed") from exc
         finally:
             with contextlib.suppress(OSError):
