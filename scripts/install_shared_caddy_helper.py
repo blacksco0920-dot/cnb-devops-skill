@@ -2143,7 +2143,7 @@ def _thaw_and_remove_baseline_generation(walker, generation):
 
 BASELINE_ROLLBACK_STEPS = (
     "intent", "pointer-restored", "reloaded", "smoked", "candidate-removed",
-    "transaction-removed", "marker-removed",
+    "transaction-removed", "receipt-written",
 )
 BASELINE_RECOVERY_REASONS = {
     "automatic-recovery-result-ambiguous",
@@ -2229,7 +2229,7 @@ def _validate_baseline_rollback_receipt(value, rollback=None):
         raise InstallError("invalid baseline rollback receipt status")
     _validate_baseline_rollback({
         "schema_version": "shared-caddy-baseline-rollback/v1",
-        "step": "marker-removed",
+        "step": "receipt-written",
         **_baseline_recovery_binding(value),
     })
     if rollback is not None and _baseline_recovery_binding(value) != _baseline_recovery_binding(rollback):
@@ -2362,7 +2362,7 @@ def _finish_baseline_commit(walker, layout, transaction, snapshot, artifacts):
     return receipt
 
 
-def _rollback_baseline(walker, layout, transaction, runtime):
+def _rollback_baseline(walker, layout, transaction, runtime, bootstrap):
     if walker.exists(_baseline_rollback_path(layout)):
         rollback = _load_baseline_rollback(walker, layout)
         _validate_baseline_rollback(rollback, transaction)
@@ -2370,11 +2370,14 @@ def _rollback_baseline(walker, layout, transaction, runtime):
         _mark_baseline_recovery(walker, layout, "rollback-in-progress", transaction)
         rollback = _baseline_rollback_from_transaction(transaction)
         walker.write_json(_baseline_rollback_path(layout), rollback, 0o600)
-    return _resume_baseline_rollback(walker, layout, rollback, runtime)
+    return _resume_baseline_rollback(walker, layout, rollback, runtime, bootstrap)
 
 
-def _resume_baseline_rollback(walker, layout, rollback, runtime):
+def _resume_baseline_rollback(walker, layout, rollback, runtime, bootstrap):
     _validate_baseline_rollback(rollback)
+    if not walker.exists(layout.maintenance_recovery_marker):
+        raise InstallError("live baseline rollback lost its recovery marker")
+    _load_baseline_recovery_marker(walker, layout, rollback)
     old_target = "generations/" + rollback["old_generation"]
     new_target = "generations/" + rollback["new_generation"]
     step = rollback["step"]
@@ -2417,22 +2420,20 @@ def _resume_baseline_rollback(walker, layout, rollback, runtime):
         _phase_baseline_rollback(walker, layout, rollback, "transaction-removed")
         step = rollback["step"]
     if step == "transaction-removed":
-        if walker.exists(layout.maintenance_recovery_marker):
-            _load_baseline_recovery_marker(walker, layout, rollback)
-            walker.remove_file(layout.maintenance_recovery_marker)
-        _phase_baseline_rollback(walker, layout, rollback, "marker-removed")
+        receipt = _baseline_rollback_receipt_from_rollback(rollback)
+        if walker.exists(_baseline_rollback_receipt_path(layout)):
+            retained_receipt = _load_baseline_rollback_receipt(walker, layout, rollback)
+            if retained_receipt != receipt:
+                raise InstallError("existing baseline rollback receipt differs from live rollback")
+        else:
+            walker.write_json(_baseline_rollback_receipt_path(layout), receipt, 0o600)
+        _phase_baseline_rollback(walker, layout, rollback, "receipt-written")
         step = rollback["step"]
-    if step != "marker-removed":
-        raise InstallError("baseline rollback could not reach its terminal step")
-    receipt = _baseline_rollback_receipt_from_rollback(rollback)
-    if walker.exists(_baseline_rollback_receipt_path(layout)):
-        retained_receipt = _load_baseline_rollback_receipt(walker, layout, rollback)
-        if retained_receipt != receipt:
-            raise InstallError("existing baseline rollback receipt differs from live rollback")
-    else:
-        walker.write_json(_baseline_rollback_receipt_path(layout), receipt, 0o600)
+    if step != "receipt-written":
+        raise InstallError("baseline rollback could not reach its terminal evidence step")
+    _load_baseline_rollback_receipt(walker, layout, rollback)
     walker.remove_file(_baseline_rollback_path(layout))
-    return {"status": "rolled-back", "transaction_id": rollback["transaction_id"]}
+    return _finish_terminal_baseline_rollback(walker, layout, bootstrap)
 
 
 def _load_retained_baseline(walker, layout, transaction, helper_hash):
@@ -2451,13 +2452,15 @@ def _load_retained_baseline(walker, layout, transaction, helper_hash):
 
 
 def _finish_terminal_baseline_rollback(walker, layout, bootstrap):
+    if walker.exists(_baseline_rollback_path(layout)):
+        raise InstallError("terminal baseline rollback still has a live rollback ledger")
     receipt = _load_baseline_rollback_receipt(walker, layout)
     if receipt["old_generation"] != bootstrap["initial_generation"]:
         raise InstallError("baseline rollback receipt initial-generation evidence drift")
     if receipt["new_generation"] != _baseline_generation_id(receipt["archive_id"]):
         raise InstallError("baseline rollback receipt generation identity drift")
     if walker.exists(layout.maintenance_recovery_marker):
-        raise InstallError("baseline rollback receipt coexists with a recovery marker")
+        _load_baseline_recovery_marker(walker, layout, receipt)
     _verify_empty_initial_generation(walker, layout, bootstrap)
     if _baseline_current_target(walker, layout) != "generations/" + receipt["old_generation"]:
         raise InstallError("baseline rollback receipt current pointer mismatch")
@@ -2465,6 +2468,9 @@ def _finish_terminal_baseline_rollback(walker, layout, bootstrap):
         raise InstallError("baseline rollback receipt candidate still exists")
     snapshot = _baseline_input_snapshot(walker, layout, receipt["archive_id"])
     _baseline_archive_artifacts(snapshot)
+    if walker.exists(layout.maintenance_recovery_marker):
+        _load_baseline_recovery_marker(walker, layout, receipt)
+        walker.remove_file(layout.maintenance_recovery_marker)
     return {"status": "rolled-back", "transaction_id": receipt["transaction_id"]}
 
 
@@ -2515,7 +2521,7 @@ def _recover_prepared_baseline_orphan(walker, layout, bootstrap, helper_hash, ru
         _verify_baseline_generation(walker, layout, hypothetical, snapshot, artifacts)
         _mark_baseline_recovery(walker, layout, "rollback-in-progress", hypothetical)
         walker.write_json(layout.maintenance_transaction_path, hypothetical, 0o600)
-        return _rollback_baseline(walker, layout, hypothetical, runtime)
+        return _rollback_baseline(walker, layout, hypothetical, runtime, bootstrap)
     except Exception:
         _mark_baseline_recovery(walker, layout, "pre-prepared-orphan-ambiguous")
         raise
@@ -2547,9 +2553,11 @@ def _recover_baseline_locked(walker, layout, bootstrap, contract, helper_hash,
                 raise InstallError("baseline rollback controller evidence drift")
             _validate_baseline_rollback(rollback, transaction)
             _load_retained_baseline(walker, layout, transaction, helper_hash)
-        elif rollback["step"] not in ("candidate-removed", "transaction-removed", "marker-removed"):
+        elif rollback["step"] not in (
+            "candidate-removed", "transaction-removed", "receipt-written",
+        ):
             raise InstallError("baseline rollback lost its retained transaction too early")
-        return _resume_baseline_rollback(walker, layout, rollback, runtime)
+        return _resume_baseline_rollback(walker, layout, rollback, runtime, bootstrap)
 
     if not walker.exists(layout.maintenance_transaction_path):
         if (
@@ -2609,7 +2617,7 @@ def _recover_baseline_locked(walker, layout, bootstrap, contract, helper_hash,
     if target not in (old_target, new_target):
         raise InstallError("baseline transaction pointer state is ambiguous")
     if transaction["phase"] in ("prepared", "current-switched", "reloaded"):
-        return _rollback_baseline(walker, layout, transaction, runtime)
+        return _rollback_baseline(walker, layout, transaction, runtime, bootstrap)
     if target != new_target:
         raise InstallError("successful baseline evidence disagrees with current pointer")
     try:
@@ -2621,7 +2629,7 @@ def _recover_baseline_locked(walker, layout, bootstrap, contract, helper_hash,
         runtime.smoke(transaction["hosts"])
     except Exception:
         if transaction["phase"] in ("smoked", "verified"):
-            return _rollback_baseline(walker, layout, transaction, runtime)
+            return _rollback_baseline(walker, layout, transaction, runtime, bootstrap)
         raise
     if transaction["phase"] == "smoked":
         _phase_baseline(walker, layout, transaction, "smoked", phase_hook)

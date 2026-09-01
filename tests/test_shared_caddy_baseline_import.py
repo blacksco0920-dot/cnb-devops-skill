@@ -455,6 +455,7 @@ class BaselineImportMaintenanceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.installer = load(INSTALLER_PATH, "baseline_import_maintenance_installer")
+        cls.normal_helper = load(HELPER_PATH, "baseline_import_frozen_normal_helper")
         cls.approved_hash = digest(HELPER_PATH.read_bytes())
 
     def setUp(self):
@@ -510,6 +511,39 @@ class BaselineImportMaintenanceTests(unittest.TestCase):
     def _assert_initial_current(self):
         evidence = json.loads(self.layout.bootstrap_attestation_path.read_text())
         self.assertEqual(evidence["initial_current_target"], os.readlink(self.layout.current_link))
+
+    def _assert_frozen_normal_release_is_blocked(self):
+        before_current = os.readlink(self.layout.current_link)
+        for action in ("preflight", "apply"):
+            subject = self.normal_helper.SharedCaddyHelper(
+                self.layout, runtime=BaselineRuntime(),
+                trust=self.normal_helper.TrustPolicy(owner_uid=os.getuid()),
+                executable_path=self.layout.helper_path,
+            )
+            with self.assertRaises(self.normal_helper.RecoveryRequired):
+                getattr(subject, action)("sample-app--staging", "a" * 64)
+        self.assertEqual(before_current, os.readlink(self.layout.current_link))
+        self.assertFalse(self.layout.transaction_path.exists())
+        self.assertFalse(self.layout.recovery_marker.exists())
+
+    def _assert_terminal_marker_blocks_other_root_authorities(self):
+        marker_bytes = self.layout.maintenance_recovery_marker.read_bytes()
+        with self.assertRaises(self.installer.InstallError):
+            self._import()
+        with self.assertRaises(self.installer.InstallError):
+            self.installer.install_helper(
+                self.layout, HELPER_PATH, self.approved_hash, owner_uid=os.getuid(),
+            )
+        with self.assertRaises(self.installer.InstallError):
+            self.installer.provision_deployments(
+                self.layout, ["sample-app--staging"], owner_uid=os.getuid(),
+                release_uid=os.getuid(), release_gid=os.getgid(),
+            )
+        with self.assertRaises(self.installer.InstallError):
+            self.installer.recover_helper_maintenance(
+                self.layout, owner_uid=os.getuid(),
+            )
+        self.assertEqual(marker_bytes, self.layout.maintenance_recovery_marker.read_bytes())
 
     def test_import_is_root_only_and_cli_accepts_only_the_two_exact_authorities(self):
         with mock.patch.object(self.installer.os, "geteuid", return_value=os.getuid() or 501):
@@ -960,7 +994,8 @@ class BaselineImportMaintenanceTests(unittest.TestCase):
     def test_rollback_is_resumable_after_every_mutation(self):
         for fault in (
             "pointer-restored", "reloaded", "smoked", "candidate-removed",
-            "transaction-removed", "marker-removed", "receipt-written", "ledger-removed",
+            "transaction-removed", "receipt-written", "ledger-removed",
+            "marker-remove-before", "marker-removed",
         ):
             with self.subTest(fault=fault):
                 self.tearDown()
@@ -1053,12 +1088,19 @@ class BaselineImportMaintenanceTests(unittest.TestCase):
                     original = self.installer.TrustedInstallerWalker.remove_file
                     targets = {
                         "transaction-removed": self.layout.maintenance_transaction_path,
+                        "marker-remove-before": self.layout.maintenance_recovery_marker,
                         "marker-removed": self.layout.maintenance_recovery_marker,
                         "ledger-removed": self.layout.baseline_rollback_path,
                     }
                     target = targets[fault]
 
                     def crash_after_file_removal(walker, path, missing_ok=False):
+                        if (
+                            Path(path) == target and fault == "marker-remove-before"
+                            and not injected[0]
+                        ):
+                            injected[0] = True
+                            raise Crash()
                         result = original(walker, path, missing_ok=missing_ok)
                         if Path(path) == target and not injected[0]:
                             injected[0] = True
@@ -1077,12 +1119,29 @@ class BaselineImportMaintenanceTests(unittest.TestCase):
                         self._recover(runtime=runtime)
                 self.assertTrue(injected[0])
 
-                if fault == "ledger-removed":
+                terminal_faults = {
+                    "receipt-written", "ledger-removed",
+                    "marker-remove-before", "marker-removed",
+                }
+                if fault in terminal_faults:
                     rollback_receipt = self.layout.baseline_rollback_receipt_path
                     self.assertTrue(rollback_receipt.is_file())
                     receipt_value = json.loads(rollback_receipt.read_bytes())
                     self.assertEqual(canonical_bytes(receipt_value), rollback_receipt.read_bytes())
                     self.assertEqual(0o600, stat.S_IMODE(rollback_receipt.stat().st_mode))
+                    if fault == "receipt-written":
+                        self.assertTrue(self.layout.baseline_rollback_path.is_file())
+                    else:
+                        self.assertFalse(self.layout.baseline_rollback_path.exists())
+                    if fault == "marker-removed":
+                        self.assertFalse(self.layout.maintenance_recovery_marker.exists())
+                    else:
+                        self.assertTrue(self.layout.maintenance_recovery_marker.is_file())
+                        self._assert_frozen_normal_release_is_blocked()
+                        if fault in {"ledger-removed", "marker-remove-before"}:
+                            self._assert_terminal_marker_blocks_other_root_authorities()
+
+                if fault == "ledger-removed":
                     unrelated = self.layout.generations_root / ("gen-" + "9" * 32)
                     (unrelated / "sites").mkdir(parents=True)
                     (unrelated / "manifests").mkdir()
