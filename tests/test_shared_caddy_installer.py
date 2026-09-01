@@ -348,6 +348,20 @@ class SharedCaddyInstallerTests(unittest.TestCase):
         )
         self.assertIn("maintenance_action", {action.dest for action in installer_parser._actions})
 
+    def test_baseline_maintenance_has_no_application_helper_or_sudo_authority(self):
+        installer_parser = self.installer.build_parser()
+        self.assertIn("baseline_bundle_id", {action.dest for action in installer_parser._actions})
+        self.assertNotIn(
+            "baseline_bundle_id",
+            {action.dest for action in self.helper.build_parser()._actions},
+        )
+        rendered = self.installer.render_deployment_sudoers(
+            "ecat-energy--test", "ubuntu", "ECAT",
+        )
+        self.assertEqual(2, rendered.count("Cmnd_Alias"))
+        self.assertNotIn("baseline", rendered.lower())
+        self.assertNotIn("install-shared-caddy-helper", rendered)
+
     def test_sudoers_rendering_grants_only_one_deployments_preflight_and_apply(self):
         self.assertEqual(
             (

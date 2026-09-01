@@ -4,8 +4,11 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import stat
 import tarfile
+import tempfile
 import unittest
 from unittest import mock
 
@@ -109,7 +112,7 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
             ],
         }
 
-    def artifacts(self):
+    def artifacts(self, helper_sha256="a" * 64):
         declaration = self.declaration()
         declaration_bytes = canonical_bytes(declaration)
         compose_facts = {"services": {}, "networks": {}}
@@ -117,14 +120,14 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
         helper_requirement = {
             "contract_version": "shared-caddy-contract/v1",
             "helper_version": "1.0.0",
-            "helper_sha256": "a" * 64,
+            "helper_sha256": helper_sha256,
         }
         helper_requirement_bytes = canonical_bytes(helper_requirement)
         provenance = {
             "schema_version": "shared-caddy-baseline-provenance/v1",
             "contract_version": "shared-caddy-contract/v1",
             "helper_version": "1.0.0",
-            "helper_sha256": "a" * 64,
+            "helper_sha256": helper_sha256,
             "project_id": declaration["project_id"],
             "environment": declaration["environment"],
             "deployment_id": declaration["deployment_id"],
@@ -154,7 +157,7 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
             "schema_version": "shared-caddy-server-manifest/v1",
             "contract_version": "shared-caddy-contract/v1",
             "helper_version": "1.0.0",
-            "helper_sha256": "a" * 64,
+            "helper_sha256": helper_sha256,
             "project_id": declaration["project_id"],
             "environment": declaration["environment"],
             "deployment_id": declaration["deployment_id"],
@@ -175,7 +178,7 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
             "phase": "committed",
             "contract_version": "shared-caddy-contract/v1",
             "helper_version": "1.0.0",
-            "helper_sha256": "a" * 64,
+            "helper_sha256": helper_sha256,
             "transaction_id": "tx-" + "2" * 32,
             "project_id": declaration["project_id"],
             "environment": declaration["environment"],
@@ -410,6 +413,547 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
         receipt = dict(artifacts["receipt"], status="smoked")
         with self.assertRaises(self.installer.ContractError):
             self.installer.validate_baseline_receipt(receipt)
+
+
+class Crash(BaseException):
+    pass
+
+
+class BaselineRuntime:
+    def __init__(self, *, fail_validate=False, fail_reload=False, fail_smoke=False,
+                 crash_after_smoke=False):
+        self.fail_validate = fail_validate
+        self.fail_reload = fail_reload
+        self.fail_smoke = fail_smoke
+        self.crash_after_smoke = crash_after_smoke
+        self.validations = []
+        self.reloads = 0
+        self.smokes = []
+
+    def validate(self, generation):
+        self.validations.append(Path(generation).name)
+        if self.fail_validate:
+            raise RuntimeError("injected baseline validation failure")
+
+    def reload(self):
+        self.reloads += 1
+        if self.fail_reload:
+            raise RuntimeError("injected baseline reload failure")
+
+    def smoke(self, hosts):
+        self.smokes.append(tuple(hosts))
+        if self.fail_smoke and hosts:
+            raise RuntimeError("injected baseline smoke failure")
+        if self.crash_after_smoke:
+            raise Crash()
+
+
+@unittest.skipUnless(INSTALLER_PATH.is_file() and HELPER_PATH.is_file(), "package not implemented")
+class BaselineImportMaintenanceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.installer = load(INSTALLER_PATH, "baseline_import_maintenance_installer")
+        cls.approved_hash = digest(HELPER_PATH.read_bytes())
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.layout = self.installer.Layout.for_test_root(self.root)
+        self.installer.bootstrap_host(
+            self.layout, owner_uid=os.getuid(), caddy_container="shared-caddy",
+            container_config_root="/etc/caddy",
+        )
+        self.installer.install_helper(
+            self.layout, HELPER_PATH, self.approved_hash, owner_uid=os.getuid(),
+        )
+        self.artifact_factory = LegacyBaselineArtifactTests()
+        self.artifacts = self.artifact_factory.artifacts(self.approved_hash)
+        self.input_dir = self._write_input(self.artifacts)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def _write_input(self, artifacts):
+        input_root = self.layout.maintenance_root / "baseline-input"
+        input_dir = input_root / artifacts["archive_id"]
+        input_dir.mkdir(parents=True, mode=0o700)
+        os.chmod(input_root, 0o700)
+        os.chmod(input_dir, 0o700)
+        archive_path = input_dir / "deploy-bundle.tar.gz"
+        manifest_path = input_dir / "server-manifest.json"
+        archive_path.write_bytes(artifacts["archive"])
+        manifest_path.write_bytes(canonical_bytes(artifacts["manifest"]))
+        os.chmod(archive_path, 0o600)
+        os.chmod(manifest_path, 0o600)
+        return input_dir
+
+    def _root_call(self, function, *args, **kwargs):
+        with mock.patch.object(self.installer.os, "geteuid", return_value=0):
+            return function(*args, **kwargs)
+
+    def _import(self, runtime=None, phase_hook=None, bundle_id=None):
+        return self._root_call(
+            self.installer.import_baseline, self.layout,
+            bundle_id or self.artifacts["archive_id"], owner_uid=os.getuid(),
+            runtime=runtime or BaselineRuntime(), phase_hook=phase_hook,
+        )
+
+    def _recover(self, runtime=None, phase_hook=None):
+        return self._root_call(
+            self.installer.recover_baseline_maintenance, self.layout,
+            owner_uid=os.getuid(), runtime=runtime or BaselineRuntime(),
+            phase_hook=phase_hook,
+        )
+
+    def _assert_initial_current(self):
+        evidence = json.loads(self.layout.bootstrap_attestation_path.read_text())
+        self.assertEqual(evidence["initial_current_target"], os.readlink(self.layout.current_link))
+
+    def test_import_is_root_only_and_cli_accepts_only_the_two_exact_authorities(self):
+        with mock.patch.object(self.installer.os, "geteuid", return_value=os.getuid() or 501):
+            with self.assertRaisesRegex(self.installer.InstallError, "root"):
+                self.installer.import_baseline(
+                    self.layout, self.artifacts["archive_id"], owner_uid=os.getuid(),
+                    runtime=BaselineRuntime(),
+                )
+
+        parser = self.installer.build_parser()
+        imported = parser.parse_args([
+            "--maintenance-action", "import-baseline",
+            "--baseline-bundle-id", self.artifacts["archive_id"],
+        ])
+        self.assertEqual("import-baseline", imported.maintenance_action)
+        self.assertEqual(self.artifacts["archive_id"], imported.baseline_bundle_id)
+        recovered = parser.parse_args([
+            "--maintenance-action", "recover-baseline-maintenance",
+        ])
+        self.assertEqual("recover-baseline-maintenance", recovered.maintenance_action)
+        rejected = (
+            ["--maintenance-act", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"]],
+            ["--maintenance-action", "import-basel", "--baseline-bundle-id", self.artifacts["archive_id"]],
+            ["--maintenance-action", "import-baseline"],
+            ["--maintenance-action", "recover-baseline-maintenance", "--baseline-bundle-id", self.artifacts["archive_id"]],
+            ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
+             "--expected-helper-sha256", self.approved_hash],
+            ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
+             "--deployment-id", "ecat-energy--legacy-edge"],
+            ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
+             "--caddy-container", "other-caddy"],
+            ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
+             "--input-path", "/tmp/input"],
+            ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
+             "--hostname", "ecat.swifteng.com.cn"],
+            ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
+             "--source-repo", "https://example.invalid/repo"],
+            ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
+             "--smoke-url", "https://ecat.swifteng.com.cn/"],
+            ["--maintenance-action", "import-baseline", "--maintenance-action", "import-baseline",
+             "--baseline-bundle-id", self.artifacts["archive_id"]],
+            ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
+             "--baseline-bundle-id", self.artifacts["archive_id"]],
+        )
+        for arguments in rejected:
+            with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
+                parser.parse_args(arguments)
+
+        self.assertEqual(
+            (
+                "Cmnd_Alias ECAT_CADDY_PREFLIGHT = /usr/local/sbin/deploydesk-caddy-apply "
+                "^--preflight --deployment-id ecat-energy--test --bundle-id [0-9a-f]{64}$\n"
+                "Cmnd_Alias ECAT_CADDY_APPLY = /usr/local/sbin/deploydesk-caddy-apply "
+                "^--deployment-id ecat-energy--test --bundle-id [0-9a-f]{64}$\n"
+                "ubuntu ALL=(root) NOPASSWD: ECAT_CADDY_PREFLIGHT, ECAT_CADDY_APPLY\n"
+            ),
+            self.installer.render_deployment_sudoers("ecat-energy--test", "ubuntu", "ECAT"),
+        )
+
+    def test_import_refuses_noninitial_nonempty_provisioned_or_drifted_host_authority(self):
+        cases = (
+            "noninitial", "nonempty", "provisioned", "helper-drift", "contract-drift",
+            "bootstrap-drift", "replaced-shared-lock",
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                if case == "noninitial":
+                    generation = self.layout.generations_root / ("gen-" + "f" * 32)
+                    (generation / "sites").mkdir(parents=True)
+                    (generation / "manifests").mkdir()
+                    os.chmod(generation / "sites", 0o500)
+                    os.chmod(generation / "manifests", 0o500)
+                    os.chmod(generation, 0o500)
+                    self.layout.current_link.unlink()
+                    self.layout.current_link.symlink_to("generations/" + generation.name)
+                elif case == "nonempty":
+                    current = self.layout.current_generation()
+                    os.chmod(current / "sites", 0o700)
+                    (current / "sites" / "unexpected.caddy").write_text("unexpected\n")
+                    os.chmod(current / "sites" / "unexpected.caddy", 0o400)
+                    os.chmod(current / "sites", 0o500)
+                elif case == "provisioned":
+                    self.installer.provision_deployments(
+                        self.layout, ["sample-app--staging"], owner_uid=os.getuid(),
+                        release_uid=os.getuid(), release_gid=os.getgid(),
+                    )
+                elif case == "helper-drift":
+                    self.layout.helper_path.write_bytes(self.layout.helper_path.read_bytes() + b"\n# drift\n")
+                elif case == "contract-drift":
+                    contract = json.loads(self.layout.contract_path.read_text())
+                    contract["caddy_container"] = "other-caddy"
+                    self.layout.contract_path.write_bytes(canonical_bytes(contract))
+                elif case == "bootstrap-drift":
+                    evidence = json.loads(self.layout.bootstrap_attestation_path.read_text())
+                    evidence["root_config_sha256"] = "f" * 64
+                    self.layout.bootstrap_attestation_path.write_bytes(canonical_bytes(evidence))
+                else:
+                    self.layout.shared_lock.unlink()
+                    self.layout.shared_lock.write_bytes(b"")
+                    os.chmod(self.layout.shared_lock, 0o600)
+                before_current = os.readlink(self.layout.current_link)
+                with self.assertRaises(self.installer.InstallError):
+                    self._import()
+                self.assertEqual(before_current, os.readlink(self.layout.current_link))
+                self.assertFalse(self.layout.baseline_receipt_path.exists())
+
+    def test_import_refuses_every_existing_transaction_marker_and_untrusted_input(self):
+        blocker_names = (
+            "transaction_path", "recovery_marker", "maintenance_transaction_path",
+            "maintenance_recovery_marker",
+        )
+        input_cases = ("ancestor-mode", "extra-file", "symlink", "hardlink", "archive-id")
+        for case in (*blocker_names, *input_cases):
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                if case in blocker_names:
+                    getattr(self.layout, case).write_text("blocked\n")
+                elif case == "ancestor-mode":
+                    os.chmod(self.input_dir.parent, 0o755)
+                elif case == "extra-file":
+                    extra = self.input_dir / "unexpected"
+                    extra.write_text("unexpected\n")
+                    os.chmod(extra, 0o600)
+                elif case == "symlink":
+                    archive = self.input_dir / "deploy-bundle.tar.gz"
+                    retained = self.root / "retained-archive"
+                    archive.rename(retained)
+                    archive.symlink_to(retained)
+                elif case == "hardlink":
+                    os.link(
+                        self.input_dir / "deploy-bundle.tar.gz",
+                        self.root / "outside-hardlink",
+                    )
+                else:
+                    archive = self.input_dir / "deploy-bundle.tar.gz"
+                    archive.write_bytes(archive.read_bytes() + b"drift")
+                    os.chmod(archive, 0o600)
+                with self.assertRaises(self.installer.InstallError):
+                    self._import()
+                self._assert_initial_current()
+                self.assertFalse(self.layout.baseline_receipt_path.exists())
+
+    def test_import_uses_full_artifact_validator_and_rejects_extra_archive_member(self):
+        members = self.installer._read_legacy_baseline_archive(self.artifacts["archive"])
+        members["unexpected.txt"] = b"unexpected\n"
+        raw_archive = archive_bytes(members, (*ARCHIVE_FILES, "unexpected.txt"))
+        archive_id = digest(raw_archive)
+        changed = copy.deepcopy(self.artifacts)
+        changed["archive"] = raw_archive
+        changed["archive_id"] = archive_id
+        changed["manifest"]["deploy_bundle_sha256"] = archive_id
+        input_dir = self.layout.maintenance_root / "baseline-input" / archive_id
+        input_dir.mkdir(mode=0o700)
+        (input_dir / "deploy-bundle.tar.gz").write_bytes(raw_archive)
+        (input_dir / "server-manifest.json").write_bytes(canonical_bytes(changed["manifest"]))
+        for path in input_dir.iterdir():
+            os.chmod(path, 0o600)
+        with self.assertRaises(self.installer.InstallError):
+            self._import(bundle_id=archive_id)
+        self._assert_initial_current()
+
+    def test_shared_lock_wait_re_attests_lock_and_stable_input_before_mutation(self):
+        for case in ("input-replaced", "lock-replaced"):
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                original_flock = self.installer.fcntl.flock
+                injected = [False]
+
+                def replace_while_waiting(descriptor, operation):
+                    result = original_flock(descriptor, operation)
+                    if operation == self.installer.fcntl.LOCK_EX and not injected[0]:
+                        injected[0] = True
+                        if case == "input-replaced":
+                            archive = self.input_dir / "deploy-bundle.tar.gz"
+                            archive.write_bytes(archive.read_bytes() + b"changed while waiting")
+                            os.chmod(archive, 0o600)
+                        else:
+                            self.layout.shared_lock.unlink()
+                            self.layout.shared_lock.write_bytes(b"")
+                            os.chmod(self.layout.shared_lock, 0o600)
+                    return result
+
+                with mock.patch.object(self.installer.fcntl, "flock", replace_while_waiting):
+                    with self.assertRaises(self.installer.InstallError):
+                        self._import()
+                self.assertTrue(injected[0])
+                self._assert_initial_current()
+                self.assertFalse(self.layout.maintenance_transaction_path.exists())
+                self.assertFalse(self.layout.baseline_receipt_path.exists())
+
+    def test_success_is_durable_frozen_canonical_and_one_time_only(self):
+        runtime = BaselineRuntime()
+        phases = []
+        before_input = {
+            path.name: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode), path.stat().st_ino)
+            for path in self.input_dir.iterdir()
+        }
+        receipt = self._import(runtime=runtime, phase_hook=lambda phase, value: phases.append(phase))
+        self.assertEqual(
+            ["prepared", "current-switched", "reloaded", "smoked", "verified", "committed"],
+            phases,
+        )
+        self.assertEqual(1, len(runtime.validations))
+        self.assertEqual(1, runtime.reloads)
+        self.assertEqual([tuple(source for source, _ in COMPATIBILITY_PAIRS)], runtime.smokes)
+        self.assertEqual(receipt, json.loads(self.layout.baseline_receipt_path.read_text()))
+        self.assertEqual(canonical_bytes(receipt), self.layout.baseline_receipt_path.read_bytes())
+        self.assertFalse(self.layout.maintenance_transaction_path.exists())
+        current = self.layout.current_generation()
+        self.assertEqual(receipt["generation_id"], current.name)
+        self.assertEqual(
+            {"sites", "manifests"}, {path.name for path in current.iterdir()},
+        )
+        self.assertEqual(
+            EXACT_FRAGMENT,
+            (current / "sites" / "ecat-energy--legacy-edge.caddy").read_bytes(),
+        )
+        for path in (current, current / "sites", current / "manifests"):
+            self.assertEqual(0o500, stat.S_IMODE(path.stat().st_mode))
+        for path in (current / "sites").iterdir():
+            self.assertEqual(0o400, stat.S_IMODE(path.stat().st_mode))
+        for path in (current / "manifests").iterdir():
+            self.assertEqual(0o400, stat.S_IMODE(path.stat().st_mode))
+        after_input = {
+            path.name: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode), path.stat().st_ino)
+            for path in self.input_dir.iterdir()
+        }
+        self.assertEqual(before_input, after_input)
+        with self.assertRaisesRegex(self.installer.InstallError, "already imported"):
+            self._import()
+
+    def test_every_durable_phase_has_deterministic_recovery(self):
+        rollback_phases = {"prepared", "current-switched", "reloaded"}
+        for crash_phase in (
+            "prepared", "current-switched", "reloaded", "smoked", "verified", "committed",
+        ):
+            with self.subTest(phase=crash_phase):
+                self.tearDown()
+                self.setUp()
+                runtime = BaselineRuntime()
+
+                def crash(phase, transaction):
+                    if phase == crash_phase:
+                        raise Crash()
+
+                with self.assertRaises(Crash):
+                    self._import(runtime=runtime, phase_hook=crash)
+                transaction = json.loads(self.layout.maintenance_transaction_path.read_text())
+                self.assertEqual(crash_phase, transaction["phase"])
+                recovered_runtime = BaselineRuntime()
+                result = self._recover(runtime=recovered_runtime)
+                self.assertFalse(self.layout.maintenance_transaction_path.exists())
+                self.assertFalse(self.layout.maintenance_recovery_marker.exists())
+                if crash_phase in rollback_phases:
+                    self.assertEqual("rolled-back", result["status"])
+                    self._assert_initial_current()
+                    self.assertFalse(self.layout.baseline_receipt_path.exists())
+                    self.assertFalse(
+                        (self.layout.generations_root / transaction["new_generation"]).exists()
+                    )
+                    self.assertEqual([()], recovered_runtime.smokes)
+                else:
+                    self.assertEqual("committed", result["status"])
+                    self.assertTrue(self.layout.baseline_receipt_path.is_file())
+                    self.assertEqual(transaction["new_generation"], self.layout.current_generation().name)
+                    self.assertEqual(
+                        [tuple(source for source, _ in COMPATIBILITY_PAIRS)],
+                        recovered_runtime.smokes,
+                    )
+
+    def test_pointer_one_write_ahead_and_unrecorded_successful_smoke_roll_back(self):
+        for case in ("pointer-ahead", "smoke-before-smoked"):
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                runtime = BaselineRuntime(crash_after_smoke=(case == "smoke-before-smoked"))
+                if case == "pointer-ahead":
+                    original = self.installer.TrustedInstallerWalker.replace_symlink
+
+                    def crash_after_switch(walker, path, target):
+                        result = original(walker, path, target)
+                        if Path(path) == self.layout.current_link:
+                            raise Crash()
+                        return result
+
+                    with mock.patch.object(
+                        self.installer.TrustedInstallerWalker, "replace_symlink", crash_after_switch,
+                    ), self.assertRaises(Crash):
+                        self._import(runtime=runtime)
+                else:
+                    with self.assertRaises(Crash):
+                        self._import(runtime=runtime)
+                transaction = json.loads(self.layout.maintenance_transaction_path.read_text())
+                self.assertEqual("prepared" if case == "pointer-ahead" else "reloaded", transaction["phase"])
+                recovered_runtime = BaselineRuntime()
+                result = self._recover(runtime=recovered_runtime)
+                self.assertEqual("rolled-back", result["status"])
+                self._assert_initial_current()
+                self.assertEqual([()], recovered_runtime.smokes)
+
+    def test_process_death_before_prepared_is_discoverable_and_recoverable(self):
+        original_phase = self.installer._phase_baseline
+
+        def crash_before_prepared(walker, layout, transaction, phase, phase_hook):
+            if phase == "prepared":
+                raise Crash()
+            return original_phase(walker, layout, transaction, phase, phase_hook)
+
+        with mock.patch.object(
+            self.installer, "_phase_baseline", crash_before_prepared,
+        ), self.assertRaises(Crash):
+            self._import()
+        self.assertFalse(self.layout.maintenance_transaction_path.exists())
+        self.assertEqual(2, len(tuple(self.layout.generations_root.iterdir())))
+        result = self._recover()
+        self.assertEqual("rolled-back", result["status"])
+        self._assert_initial_current()
+        self.assertEqual(1, len(tuple(self.layout.generations_root.iterdir())))
+        self.assertFalse(self.layout.maintenance_recovery_marker.exists())
+
+    def test_crossed_recovery_action_does_not_poison_a_valid_transaction(self):
+        def crash_prepared(phase, transaction):
+            if phase == "prepared":
+                raise Crash()
+
+        with self.assertRaises(Crash):
+            self._import(phase_hook=crash_prepared)
+        with self.assertRaisesRegex(self.installer.InstallError, "baseline recovery action"):
+            self.installer.recover_helper_maintenance(self.layout, owner_uid=os.getuid())
+        self.assertFalse(self.layout.maintenance_recovery_marker.exists())
+        self.assertEqual("rolled-back", self._recover()["status"])
+
+        self.tearDown()
+        self.setUp()
+
+        def crash_staged(phase, transaction):
+            if phase == "staged":
+                raise Crash()
+
+        with self.assertRaises(Crash):
+            self.installer.install_helper(
+                self.layout, HELPER_PATH, self.approved_hash,
+                owner_uid=os.getuid(), phase_hook=crash_staged,
+            )
+        with self.assertRaisesRegex(self.installer.InstallError, "helper recovery action"):
+            self._recover()
+        self.assertFalse(self.layout.maintenance_recovery_marker.exists())
+        self.installer.recover_helper_maintenance(self.layout, owner_uid=os.getuid())
+        self.assertFalse(self.layout.maintenance_transaction_path.exists())
+
+    def test_smoke_failure_rolls_back_without_commit_or_recovery_marker(self):
+        runtime = BaselineRuntime(fail_smoke=True)
+        with self.assertRaises(self.installer.InstallError):
+            self._import(runtime=runtime)
+        self._assert_initial_current()
+        self.assertFalse(self.layout.maintenance_transaction_path.exists())
+        self.assertFalse(self.layout.maintenance_recovery_marker.exists())
+        self.assertFalse(self.layout.baseline_receipt_path.exists())
+        self.assertEqual(
+            [tuple(source for source, _ in COMPATIBILITY_PAIRS), ()], runtime.smokes,
+        )
+
+    def test_committed_receipt_recovery_is_idempotent_and_canonical(self):
+        def crash(phase, transaction):
+            if phase == "committed":
+                raise Crash()
+
+        with self.assertRaises(Crash):
+            self._import(phase_hook=crash)
+        receipt = self._recover()
+        before = self.layout.baseline_receipt_path.read_bytes()
+        repeated = self._recover()
+        self.assertEqual(receipt, repeated)
+        self.assertEqual(before, self.layout.baseline_receipt_path.read_bytes())
+        self.assertEqual(canonical_bytes(receipt), before)
+
+    def test_recovery_rolls_back_provable_failures_and_marks_ambiguous_state(self):
+        for case in (
+            "pointer", "runtime", "runtime-smoke", "evidence",
+            "old-nonempty", "old-mode", "old-missing",
+        ):
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+
+                def crash(phase, transaction):
+                    target = "current-switched" if case.startswith("old-") or case == "pointer" else "smoked"
+                    if phase == target:
+                        raise Crash()
+
+                with self.assertRaises(Crash):
+                    self._import(phase_hook=crash)
+                transaction = json.loads(self.layout.maintenance_transaction_path.read_text())
+                runtime = BaselineRuntime(
+                    fail_validate=(case == "runtime"),
+                    fail_smoke=(case == "runtime-smoke"),
+                )
+                if case == "pointer":
+                    generation = self.layout.generations_root / ("gen-" + "e" * 32)
+                    (generation / "sites").mkdir(parents=True)
+                    (generation / "manifests").mkdir()
+                    os.chmod(generation / "sites", 0o500)
+                    os.chmod(generation / "manifests", 0o500)
+                    os.chmod(generation, 0o500)
+                    self.layout.current_link.unlink()
+                    self.layout.current_link.symlink_to("generations/" + generation.name)
+                elif case == "evidence":
+                    fragment = (
+                        self.layout.generations_root / transaction["new_generation"] / "sites" /
+                        "ecat-energy--legacy-edge.caddy"
+                    )
+                    os.chmod(fragment, 0o600)
+                    fragment.write_text("tampered\n")
+                    os.chmod(fragment, 0o400)
+                elif case.startswith("old-"):
+                    old_sites = (
+                        self.layout.generations_root / transaction["old_generation"] / "sites"
+                    )
+                    if case == "old-nonempty":
+                        os.chmod(old_sites, 0o700)
+                        unexpected = old_sites / "unexpected.caddy"
+                        unexpected.write_text("tampered old generation\n")
+                        os.chmod(unexpected, 0o400)
+                        os.chmod(old_sites, 0o500)
+                    elif case == "old-mode":
+                        os.chmod(old_sites, 0o700)
+                    else:
+                        old_generation = old_sites.parent
+                        os.chmod(old_generation, 0o700)
+                        old_sites.rmdir()
+                        os.chmod(old_generation, 0o500)
+                if case in ("pointer", "old-nonempty", "old-mode", "old-missing"):
+                    with self.assertRaises(self.installer.InstallError):
+                        self._recover(runtime=runtime)
+                    self.assertTrue(self.layout.maintenance_recovery_marker.is_file())
+                    self.assertTrue(self.layout.maintenance_transaction_path.is_file())
+                else:
+                    result = self._recover(runtime=runtime)
+                    self.assertEqual("rolled-back", result["status"])
+                    self._assert_initial_current()
+                    self.assertFalse(self.layout.maintenance_recovery_marker.exists())
+                    self.assertFalse(self.layout.maintenance_transaction_path.exists())
 
 
 if __name__ == "__main__":

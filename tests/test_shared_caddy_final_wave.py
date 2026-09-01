@@ -327,6 +327,31 @@ class FinalWaveInstallerTests(unittest.TestCase):
                 self.assertFalse(layout.helper_path.exists())
                 self.assertFalse(layout.contract_path.exists())
 
+    def test_baseline_transaction_and_marker_block_installer_and_provisioning(self):
+        for blocker_name in ("maintenance_transaction_path", "maintenance_recovery_marker"):
+            with self.subTest(blocker=blocker_name), tempfile.TemporaryDirectory() as temporary:
+                layout = self.h.Layout.for_test_root(Path(temporary))
+                self.i.bootstrap_host(
+                    layout, owner_uid=os.getuid(), caddy_container="shared-caddy",
+                    container_config_root="/etc/caddy",
+                )
+                blocker = getattr(layout, blocker_name)
+                blocker.write_text("baseline maintenance blocks ordinary authority\n")
+                with self.assertRaises(self.i.InstallError):
+                    self.i.install_helper(
+                        layout, HELPER_PATH, self.approved_hash, owner_uid=os.getuid(),
+                    )
+                blocker.unlink()
+                self.i.install_helper(
+                    layout, HELPER_PATH, self.approved_hash, owner_uid=os.getuid(),
+                )
+                blocker.write_text("baseline maintenance blocks ordinary authority\n")
+                with self.assertRaises(self.i.InstallError):
+                    self.i.provision_deployments(
+                        layout, [DEPLOYMENT_ID], owner_uid=os.getuid(),
+                        release_uid=os.getuid(), release_gid=os.getgid(),
+                    )
+
     def test_bootstrap_fsyncs_generation_tree_pointer_root_and_evidence_in_order(self):
         events = []
         original = self.i._fsync_descriptor
@@ -1404,6 +1429,28 @@ class FinalWaveEvidenceTests(unittest.TestCase):
         ):
             external_field = "deploy_bundle_sha256" if field == "bundle_id" else field
             self.assertEqual(external[external_field], receipt[field])
+
+    def test_baseline_transaction_and_marker_block_normal_preflight_and_apply(self):
+        for blocker_name in ("maintenance_transaction_path", "maintenance_recovery_marker"):
+            for action in ("preflight", "apply"):
+                with self.subTest(blocker=blocker_name, action=action):
+                    self.tearDown()
+                    self.setUp()
+                    getattr(self.layout, blocker_name).write_text("baseline maintenance blocks releases\n")
+                    before_current = os.readlink(self.layout.current_link)
+                    subject = self.h.SharedCaddyHelper(
+                        self.layout, runtime=self.runtime,
+                        trust=self.h.TrustPolicy(owner_uid=os.getuid()),
+                        executable_path=self.layout.helper_path,
+                    )
+                    with self.layout.release_lock(DEPLOYMENT_ID).open("r+") as release_lock:
+                        fcntl.flock(release_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        with self.assertRaises(self.h.RecoveryRequired):
+                            getattr(subject, action)(DEPLOYMENT_ID, self.bundle_id)
+                    self.assertEqual(before_current, os.readlink(self.layout.current_link))
+                    self.assertEqual(0, self.runtime.validations)
+                    self.assertEqual(0, self.runtime.reloads)
+                    self.assertEqual(0, self.runtime.smokes)
 
     def test_external_git_or_source_evidence_cannot_change_while_reusing_archive_id(self):
         original = json.loads(self.external_manifest_path.read_text())
