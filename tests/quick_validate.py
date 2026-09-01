@@ -5,10 +5,9 @@ import re
 import sys
 from pathlib import Path
 
-import yaml
-
-
 def validate_skill(skill_path):
+    import yaml
+
     skill_md = Path(skill_path) / "SKILL.md"
     if not skill_md.exists():
         return False, "SKILL.md not found"
@@ -43,10 +42,25 @@ def validate_skill(skill_path):
     return True, "Skill is valid!"
 
 
+def validate_docker_inventory_script(script_path):
+    """Compile the read-only inventory entrypoint without writing bytecode."""
+    path = Path(script_path)
+    try:
+        if not path.is_file() or path.is_symlink():
+            return False, "Docker inventory script not found or unsafe"
+        compile(path.read_text(encoding="utf-8"), str(path), "exec")
+    except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+        return False, "Invalid Docker inventory script: " + str(exc)
+    return True, "Docker inventory script is valid!"
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python quick_validate.py <skill_directory>")
+    if len(sys.argv) == 2:
+        valid, message = validate_skill(sys.argv[1])
+    elif len(sys.argv) == 3 and sys.argv[1] == "--docker-inventory-script":
+        valid, message = validate_docker_inventory_script(sys.argv[2])
+    else:
+        print("Usage: python quick_validate.py <skill_directory> | --docker-inventory-script <script>")
         raise SystemExit(1)
-    valid, message = validate_skill(sys.argv[1])
     print(message)
     raise SystemExit(0 if valid else 1)
