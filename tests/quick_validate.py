@@ -54,13 +54,23 @@ def validate_docker_inventory_script(script_path):
     return True, "Docker inventory script is valid!"
 
 
+def validate_docker_inventory_v2_script(script_path):
+    """Compile the separate inventory-v2 entrypoint without writing bytecode."""
+    valid, message = validate_docker_inventory_script(script_path)
+    if not valid:
+        return False, message.replace("Docker inventory", "Docker inventory v2", 1)
+    return True, "Docker inventory v2 script is valid!"
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 2:
         valid, message = validate_skill(sys.argv[1])
     elif len(sys.argv) == 3 and sys.argv[1] == "--docker-inventory-script":
         valid, message = validate_docker_inventory_script(sys.argv[2])
+    elif len(sys.argv) == 3 and sys.argv[1] == "--docker-inventory-v2-script":
+        valid, message = validate_docker_inventory_v2_script(sys.argv[2])
     else:
-        print("Usage: python quick_validate.py <skill_directory> | --docker-inventory-script <script>")
+        print("Usage: python quick_validate.py <skill_directory> | --docker-inventory-script <script> | --docker-inventory-v2-script <script>")
         raise SystemExit(1)
     print(message)
     raise SystemExit(0 if valid else 1)

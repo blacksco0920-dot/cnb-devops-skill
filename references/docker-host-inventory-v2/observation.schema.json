@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "observation.schema.json",
+  "title": "Docker host volatile observation v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_identity_projection_sha256", "inventory_target_claim_sha256", "inventory_nonce", "request_policy_sha256", "source_lock_sha256", "collector_sha256", "topology_sha256", "containers", "observed_sources", "persistence", "filesystems", "redis_persistence_member_count", "redis_persistence_members", "redis_persistence_members_sha256"],
+  "properties": {
+    "schema_version": {"const": "deploydesk-docker-host-observation/v2"},
+    "request_identity_projection_sha256": {"$ref": "#/$defs/sha256"},
+    "inventory_target_claim_sha256": {"$ref": "#/$defs/sha256"},
+    "inventory_nonce": {"$ref": "#/$defs/sha256"},
+    "request_policy_sha256": {"$ref": "#/$defs/sha256"},
+    "source_lock_sha256": {"$ref": "#/$defs/sha256"},
+    "collector_sha256": {"$ref": "#/$defs/sha256"},
+    "topology_sha256": {"$ref": "#/$defs/sha256"},
+    "containers": {"type": "array", "maxItems": 70, "uniqueItems": true, "items": {"$ref": "#/$defs/container"}},
+    "observed_sources": {"type": "array", "minItems": 3, "maxItems": 3, "uniqueItems": true, "items": {"$ref": "#/$defs/observed_path"}},
+    "persistence": {"type": "array", "maxItems": 250000, "uniqueItems": true, "items": {"$ref": "#/$defs/observed_path"}},
+    "filesystems": {"type": "array", "maxItems": 250000, "uniqueItems": true, "items": {"$ref": "#/$defs/filesystem"}},
+    "redis_persistence_member_count": {"type": "integer", "minimum": 0, "maximum": 250000},
+    "redis_persistence_members": {"type": "array", "maxItems": 250000, "uniqueItems": true, "items": {"$ref": "#/$defs/redis_member"}},
+    "redis_persistence_members_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "nonnegative": {"type": "integer", "minimum": 0},
+    "container_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "writable_layer": {
+      "type": "object", "additionalProperties": false, "required": ["count", "classification", "operations", "sha256"],
+      "properties": {"count": {"type": "integer", "minimum": 0, "maximum": 250000}, "classification": {"enum": ["empty", "metadata_or_content_changed"]}, "operations": {"type": "array", "maxItems": 3, "uniqueItems": true, "items": {"enum": ["A", "C", "D"]}}, "sha256": {"$ref": "#/$defs/sha256"}},
+      "allOf": [
+        {
+          "if": {"properties": {"count": {"const": 0}}, "required": ["count"]},
+          "then": {"properties": {"classification": {"const": "empty"}, "operations": {"maxItems": 0}, "sha256": {"const": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"}}},
+          "else": {"properties": {"classification": {"const": "metadata_or_content_changed"}, "operations": {"minItems": 1}, "sha256": {"not": {"const": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"}}}}
+        }
+      ]
+    },
+    "container": {
+      "type": "object", "additionalProperties": false, "required": ["id", "running", "health", "writable_layer"],
+      "properties": {"id": {"$ref": "#/$defs/container_id"}, "running": {"type": "boolean"}, "health": {"enum": ["none", "starting", "healthy", "unhealthy"]}, "writable_layer": {"$ref": "#/$defs/writable_layer"}}
+    },
+    "observed_path": {
+      "type": "object", "additionalProperties": false, "required": ["identity_sha256", "role", "path_sha256", "device", "ctime_ns", "apparent_size_bytes", "entry_count", "acl_count", "acl_sha256", "xattr_count", "xattr_sha256", "metadata_bytes"],
+      "properties": {"identity_sha256": {"$ref": "#/$defs/sha256"}, "role": {"enum": ["opt", "postgresql", "redis", "persistence", "tmpfs"]}, "path_sha256": {"$ref": "#/$defs/sha256"}, "device": {"$ref": "#/$defs/nonnegative"}, "ctime_ns": {"$ref": "#/$defs/nonnegative"}, "apparent_size_bytes": {"$ref": "#/$defs/nonnegative"}, "entry_count": {"type": "integer", "minimum": 0, "maximum": 250000}, "acl_count": {"type": "integer", "minimum": 0, "maximum": 256}, "acl_sha256": {"$ref": "#/$defs/sha256"}, "xattr_count": {"type": "integer", "minimum": 0, "maximum": 256}, "xattr_sha256": {"$ref": "#/$defs/sha256"}, "metadata_bytes": {"type": "integer", "minimum": 0, "maximum": 65536}},
+      "allOf": [{"if": {"properties": {"role": {"const": "tmpfs"}}, "required": ["role"]}, "then": {"properties": {"path_sha256": {"const": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed"}, "device": {"const": 0}, "ctime_ns": {"const": 0}, "apparent_size_bytes": {"const": 0}, "entry_count": {"const": 0}, "acl_count": {"const": 0}, "acl_sha256": {"const": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"}, "xattr_count": {"const": 0}, "xattr_sha256": {"const": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"}, "metadata_bytes": {"const": 0}}}}]
+    },
+    "filesystem": {
+      "type": "object", "additionalProperties": false, "required": ["device", "capacity_bytes", "available_bytes"],
+      "properties": {"device": {"$ref": "#/$defs/nonnegative"}, "capacity_bytes": {"$ref": "#/$defs/nonnegative"}, "available_bytes": {"$ref": "#/$defs/nonnegative"}}
+    },
+    "redis_member": {
+      "type": "object", "additionalProperties": false, "required": ["path_sha256", "content_sha256", "size_bytes", "ctime_ns"],
+      "properties": {"path_sha256": {"$ref": "#/$defs/sha256"}, "content_sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 0, "maximum": 8.589934592e9}, "ctime_ns": {"$ref": "#/$defs/nonnegative"}}
+    }
+  }
+}
