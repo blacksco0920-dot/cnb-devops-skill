@@ -7,12 +7,20 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER_PATH = ROOT / "scripts" / "deploydesk_caddy_apply.py"
+INSTALLER_PATH = ROOT / "scripts" / "install_shared_caddy_helper.py"
 SCHEMA_ROOT = ROOT / "references" / "shared-caddy-v1" / "schemas"
 EXAMPLE_ROOT = ROOT / "references" / "shared-caddy-v1" / "examples"
 
 
 def load_helper():
     spec = importlib.util.spec_from_file_location("deploydesk_caddy_apply", HELPER_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_installer():
+    spec = importlib.util.spec_from_file_location("install_shared_caddy_helper", INSTALLER_PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -44,6 +52,9 @@ class SharedCaddyArtifactPresenceTests(unittest.TestCase):
             "internal-provenance.schema.json",
             "transaction.schema.json",
             "receipt.schema.json",
+            "baseline-provenance.schema.json",
+            "baseline-transaction.schema.json",
+            "baseline-receipt.schema.json",
         ))
         self.assertEqual([], [str(path.relative_to(ROOT)) for path in required if not path.is_file()])
 
@@ -53,6 +64,7 @@ class SharedCaddySchemaTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.helper = load_helper()
+        cls.installer = load_installer()
 
     def load_json(self, path: Path):
         return json.loads(path.read_text(encoding="utf-8"))
@@ -73,6 +85,9 @@ class SharedCaddySchemaTests(unittest.TestCase):
             "bundle-provenance.json": "internal-provenance.schema.json",
             "transaction.json": "transaction.schema.json",
             "receipt.json": "receipt.schema.json",
+            "baseline-provenance.json": "baseline-provenance.schema.json",
+            "baseline-transaction.json": "baseline-transaction.schema.json",
+            "baseline-receipt.json": "baseline-receipt.schema.json",
         }
         runtime_validators = {
             "declaration.json": self.helper.validate_declaration,
@@ -82,6 +97,9 @@ class SharedCaddySchemaTests(unittest.TestCase):
             "bundle-provenance.json": self.helper.validate_internal_provenance,
             "transaction.json": self.helper.validate_transaction,
             "receipt.json": self.helper.validate_receipt,
+            "baseline-provenance.json": self.installer.validate_baseline_provenance,
+            "baseline-transaction.json": self.installer.validate_baseline_transaction,
+            "baseline-receipt.json": self.installer.validate_baseline_receipt,
         }
         for example_name, schema_name in pairs.items():
             instance = self.load_json(EXAMPLE_ROOT / example_name)
@@ -106,6 +124,9 @@ class SharedCaddySchemaTests(unittest.TestCase):
             "bundle-provenance.json": "internal-provenance.schema.json",
             "transaction.json": "transaction.schema.json",
             "receipt.json": "receipt.schema.json",
+            "baseline-provenance.json": "baseline-provenance.schema.json",
+            "baseline-transaction.json": "baseline-transaction.schema.json",
+            "baseline-receipt.json": "baseline-receipt.schema.json",
         }
         for example_name, schema_name in pairs.items():
             schema = self.load_json(SCHEMA_ROOT / schema_name)

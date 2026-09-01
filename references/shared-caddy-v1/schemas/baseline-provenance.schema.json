@@ -1,0 +1,36 @@
+{
+  "$id": "https://schemas.example.invalid/shared-caddy/v1/baseline-provenance.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "compose_facts": {
+      "additionalProperties": false,
+      "properties": {"networks": {"additionalProperties": false, "properties": {}, "type": "object"}, "services": {"additionalProperties": false, "properties": {}, "type": "object"}},
+      "required": ["services", "networks"],
+      "type": "object"
+    },
+    "compose_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "contract_version": {"const": "shared-caddy-contract/v1"},
+    "declaration_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "deployment_id": {"const": "ecat-energy--legacy-edge"},
+    "environment": {"const": "legacy-edge"},
+    "fragment_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "git_sha": {"pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$", "type": "string"},
+    "helper_requirement_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "helper_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "helper_version": {"const": "1.0.0"},
+    "hosts": {"maxItems": 3, "minItems": 3, "prefixItems": [{"const": "ecat.swifteng.com.cn"}, {"const": "ecatadmin.swifteng.com.cn"}, {"const": "ecatapi.swifteng.com.cn"}], "type": "array", "uniqueItems": true},
+    "project_id": {"const": "ecat-energy"},
+    "schema_version": {"const": "shared-caddy-baseline-provenance/v1"},
+    "source": {
+      "additionalProperties": false,
+      "properties": {"kind": {"const": "legacy_opaque"}, "legacy_fragment_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}},
+      "required": ["kind", "legacy_fragment_sha256"],
+      "type": "object"
+    },
+    "source_repo": {"const": "https://github.com/blacksco0920-dot/ecat-energy"}
+  },
+  "required": ["schema_version", "contract_version", "helper_version", "helper_sha256", "project_id", "environment", "deployment_id", "source_repo", "hosts", "git_sha", "declaration_sha256", "fragment_sha256", "compose_facts", "compose_sha256", "helper_requirement_sha256", "source"],
+  "title": "Shared Caddy v1 legacy baseline archive provenance",
+  "type": "object"
+}

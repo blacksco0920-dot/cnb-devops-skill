@@ -1,0 +1,18 @@
+{
+  "compose_facts": {"networks": {}, "services": {}},
+  "compose_sha256": "a77bc85df5a9931bb4b145bf9d41ba4c83a0d142dccc66da5d931ee9a6411041",
+  "contract_version": "shared-caddy-contract/v1",
+  "declaration_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "deployment_id": "ecat-energy--legacy-edge",
+  "environment": "legacy-edge",
+  "fragment_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "git_sha": "1111111111111111111111111111111111111111",
+  "helper_requirement_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "helper_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "helper_version": "1.0.0",
+  "hosts": ["ecat.swifteng.com.cn", "ecatadmin.swifteng.com.cn", "ecatapi.swifteng.com.cn"],
+  "project_id": "ecat-energy",
+  "schema_version": "shared-caddy-baseline-provenance/v1",
+  "source": {"kind": "legacy_opaque", "legacy_fragment_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+  "source_repo": "https://github.com/blacksco0920-dot/ecat-energy"
+}

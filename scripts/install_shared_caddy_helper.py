@@ -10,24 +10,54 @@ import argparse
 import contextlib
 import fcntl
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
 import stat
 import sys
+import tarfile
+import urllib.parse
 import uuid
 
 
 CONTRACT_VERSION = "shared-caddy-contract/v1"
 HELPER_VERSION = "1.0.0"
+ID_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+ENVIRONMENT_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?")
 DEPLOYMENT_RE = re.compile(
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?--"
     r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?"
 )
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
+GIT_SHA_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 SAFE_RUNTIME_NAME_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}")
 CONFIG_ROOT_RE = re.compile(r"/(?:[A-Za-z0-9._-]+)(?:/[A-Za-z0-9._-]+)*")
+HOSTNAME_PATTERN = (
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
+)
+SOURCE_REPO_RE = re.compile(
+    r"https://(?=[^/]{1,253}/)" + HOSTNAME_PATTERN + r"(?:/[A-Za-z0-9._~-]+)+"
+)
+LEGACY_BASELINE_PROJECT_ID = "ecat-energy"
+LEGACY_BASELINE_ENVIRONMENT = "legacy-edge"
+LEGACY_BASELINE_DEPLOYMENT_ID = "ecat-energy--legacy-edge"
+LEGACY_BASELINE_SOURCE_REPO = "https://github.com/blacksco0920-dot/ecat-energy"
+LEGACY_BASELINE_COMPATIBILITY_PAIRS = (
+    ("ecat.swifteng.com.cn", "www.dianqimao.vip"),
+    ("ecatadmin.swifteng.com.cn", "admin.dianqimao.vip"),
+    ("ecatapi.swifteng.com.cn", "api.dianqimao.vip"),
+)
+LEGACY_BASELINE_HOSTS = tuple(pair[0] for pair in LEGACY_BASELINE_COMPATIBILITY_PAIRS)
+LEGACY_BASELINE_ARCHIVE_FILES = (
+    "caddy/declaration.json", "caddy/site.caddy", "caddy/helper-requirement.json",
+    "caddy/bundle-provenance.json", "runtime/compose.json",
+)
+LEGACY_BASELINE_MAX_ARCHIVE_MEMBER_SIZE = 8 * 1024 * 1024
+LEGACY_BASELINE_MAX_ARCHIVE_TOTAL_SIZE = 16 * 1024 * 1024
+LEGACY_BASELINE_MAX_ARCHIVE_COMPRESSED_SIZE = 8 * 1024 * 1024
 SUDOERS_IDENTITY_RE = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
 SUDOERS_ALIAS_RE = re.compile(r"[A-Z][A-Z0-9_]{0,62}")
 _REQUIRED_DIR_FD_OPERATIONS = (
@@ -100,6 +130,384 @@ def _lock_identity(info):
 def _ensure_exact_keys(value, expected, name):
     if not isinstance(value, dict) or set(value) != set(expected):
         raise ContractError(name + " has missing or unknown fields")
+
+
+def _normalize_hostname(value):
+    if not isinstance(value, str) or not value or value.startswith("*") or value.startswith(":"):
+        raise ContractError("wildcard, catch-all and bare-listener hosts are forbidden")
+    candidate = value[:-1] if value.endswith(".") else value
+    try:
+        normalized = candidate.encode("idna").decode("ascii").lower()
+    except UnicodeError as exc:
+        raise ContractError("hostname is not valid IDNA") from exc
+    if len(normalized) > 253 or any(
+        not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+        for label in normalized.split(".")
+    ):
+        raise ContractError("invalid hostname")
+    return normalized
+
+
+def _validate_source_repo(value):
+    if not isinstance(value, str) or not SOURCE_REPO_RE.fullmatch(value):
+        raise ContractError("source_repo must be a normalized credential-free HTTPS repository URL")
+    parsed = urllib.parse.urlsplit(value)
+    if (
+        parsed.scheme != "https" or not parsed.hostname or parsed.netloc != parsed.hostname
+        or parsed.query or parsed.fragment or parsed.path.endswith("/")
+        or any(part in ("", ".", "..") for part in parsed.path.split("/")[1:])
+    ):
+        raise ContractError("source_repo must be normalized")
+    return value
+
+
+def _validate_baseline_identity(value, name):
+    if not ID_RE.fullmatch(str(value["project_id"])) or not ENVIRONMENT_RE.fullmatch(str(value["environment"])):
+        raise ContractError(name + " identity is not normalized")
+    if value["deployment_id"] != value["project_id"] + "--" + value["environment"]:
+        raise ContractError(name + " identity fields disagree")
+    validate_deployment_id(value["deployment_id"])
+    _validate_source_repo(value["source_repo"])
+    expected = {
+        "project_id": LEGACY_BASELINE_PROJECT_ID,
+        "environment": LEGACY_BASELINE_ENVIRONMENT,
+        "deployment_id": LEGACY_BASELINE_DEPLOYMENT_ID,
+        "source_repo": LEGACY_BASELINE_SOURCE_REPO,
+    }
+    if {field: value[field] for field in expected} != expected:
+        raise ContractError(name + " identity is not the approved legacy baseline identity")
+
+
+def _validate_baseline_hosts(hosts, name):
+    if not isinstance(hosts, list) or tuple(hosts) != LEGACY_BASELINE_HOSTS:
+        raise ContractError(name + " hosts must be the approved legacy baseline owners")
+    normalized = [_normalize_hostname(host) for host in hosts]
+    if normalized != hosts or len(normalized) != len(set(normalized)):
+        raise ContractError(name + " hosts must be unique and normalized")
+    return normalized
+
+
+def _validate_baseline_hashes(value, fields, name):
+    for field in fields:
+        if not SHA256_RE.fullmatch(str(value[field])):
+            raise ContractError("invalid " + name + " hash: " + field)
+
+
+def validate_legacy_baseline_declaration(value):
+    """Validate the separately authorized, external-HTTPS legacy baseline shape."""
+    expected = (
+        "contract_version", "project_id", "environment", "deployment_id",
+        "source_repo", "compose_path", "routes",
+    )
+    _ensure_exact_keys(value, expected, "legacy baseline declaration")
+    if value["contract_version"] != CONTRACT_VERSION:
+        raise ContractError("unsupported contract version")
+    _validate_baseline_identity(value, "legacy baseline declaration")
+    if value["compose_path"] != "runtime/compose.json":
+        raise ContractError("compose_path is fixed by v1")
+    if not isinstance(value["routes"], list) or len(value["routes"]) != 3:
+        raise ContractError("legacy baseline requires exactly three HTTPS proxy routes")
+    hosts = []
+    targets = []
+    for route in value["routes"]:
+        _ensure_exact_keys(route, ("type", "host", "target_host"), "legacy baseline route")
+        if route["type"] != "https_proxy":
+            raise ContractError("legacy baseline routes must be HTTPS proxies")
+        host = _normalize_hostname(route["host"])
+        target = _normalize_hostname(route["target_host"])
+        if route["host"] != host or route["target_host"] != target:
+            raise ContractError("legacy baseline hosts must already be normalized IDNA ASCII")
+        hosts.append(host)
+        targets.append(target)
+    if len(hosts) != len(set(hosts)):
+        raise ContractError("duplicate normalized hostname")
+    if set(hosts) & set(targets):
+        raise ContractError("legacy baseline HTTPS targets must not be owned on this host")
+    if tuple(zip(hosts, targets)) != LEGACY_BASELINE_COMPATIBILITY_PAIRS:
+        raise ContractError("legacy baseline routes must be the approved ordered compatibility pairs")
+    return value
+
+
+def render_legacy_baseline_fragment(value):
+    """Render only the declaration-derived external HTTPS compatibility fragment."""
+    validate_legacy_baseline_declaration(value)
+    blocks = []
+    for route in value["routes"]:
+        blocks.append(
+            f"{route['host']} {{\n"
+            "    encode zstd gzip\n"
+            f"    reverse_proxy https://{route['target_host']} {{\n"
+            f"        header_up Host {route['target_host']}\n"
+            "        transport http {\n"
+            f"            tls_server_name {route['target_host']}\n"
+            "        }\n"
+            "    }\n"
+            "}"
+        )
+    return ("\n\n".join(blocks) + "\n").encode("utf-8")
+
+
+def reconcile_legacy_baseline_fragment(value, raw):
+    if not isinstance(raw, bytes):
+        raise ContractError("legacy baseline fragment must be bytes")
+    expected = render_legacy_baseline_fragment(value)
+    if raw != expected:
+        raise ContractError("legacy baseline fragment is not the canonical declaration-derived bytes")
+
+
+def validate_baseline_provenance(value):
+    expected = (
+        "schema_version", "contract_version", "helper_version", "helper_sha256",
+        "project_id", "environment", "deployment_id", "source_repo", "hosts", "git_sha",
+        "declaration_sha256", "fragment_sha256", "compose_facts", "compose_sha256",
+        "helper_requirement_sha256", "source",
+    )
+    _ensure_exact_keys(value, expected, "legacy baseline provenance")
+    if value["schema_version"] != "shared-caddy-baseline-provenance/v1":
+        raise ContractError("baseline provenance schema mismatch")
+    if value["contract_version"] != CONTRACT_VERSION or value["helper_version"] != HELPER_VERSION:
+        raise ContractError("baseline provenance controller mismatch")
+    _validate_baseline_identity(value, "baseline provenance")
+    _validate_baseline_hosts(value["hosts"], "baseline provenance")
+    if not GIT_SHA_RE.fullmatch(str(value["git_sha"])):
+        raise ContractError("invalid baseline provenance Git SHA")
+    _validate_baseline_hashes(
+        value,
+        ("helper_sha256", "declaration_sha256", "fragment_sha256", "compose_sha256", "helper_requirement_sha256"),
+        "baseline provenance",
+    )
+    _ensure_exact_keys(value["compose_facts"], ("services", "networks"), "baseline Compose facts")
+    if value["compose_facts"]["services"] != {} or value["compose_facts"]["networks"] != {}:
+        raise ContractError("baseline Compose facts must be empty")
+    if value["compose_sha256"] != sha256_bytes(_canonical_json(value["compose_facts"])):
+        raise ContractError("baseline Compose facts hash mismatch")
+    source = value["source"]
+    _ensure_exact_keys(source, ("kind", "legacy_fragment_sha256"), "baseline manifest source")
+    if source["kind"] != "legacy_opaque" or source["legacy_fragment_sha256"] != value["fragment_sha256"]:
+        raise ContractError("baseline manifest source must bind the rendered legacy fragment")
+    if not SHA256_RE.fullmatch(str(source["legacy_fragment_sha256"])):
+        raise ContractError("invalid baseline legacy fragment hash")
+    return value
+
+
+def validate_baseline_transaction(value):
+    expected = (
+        "schema_version", "phase", "contract_version", "helper_version", "helper_sha256",
+        "transaction_id", "project_id", "environment", "deployment_id", "source_repo",
+        "archive_id", "git_sha", "declaration_sha256", "fragment_sha256", "compose_sha256",
+        "helper_requirement_sha256", "baseline_provenance_sha256", "server_manifest_sha256",
+        "old_generation", "new_generation", "hosts",
+    )
+    _ensure_exact_keys(value, expected, "baseline transaction")
+    if value["schema_version"] != "shared-caddy-baseline-transaction/v1":
+        raise ContractError("unknown baseline transaction schema")
+    if value["phase"] not in ("prepared", "current-switched", "reloaded", "smoked", "verified", "committed"):
+        raise ContractError("unknown baseline transaction phase")
+    if value["contract_version"] != CONTRACT_VERSION or value["helper_version"] != HELPER_VERSION:
+        raise ContractError("baseline transaction controller version drift")
+    if not re.fullmatch(r"tx-[0-9a-f]{32}", str(value["transaction_id"])):
+        raise ContractError("invalid baseline transaction identity")
+    _validate_baseline_identity(value, "baseline transaction")
+    if not GIT_SHA_RE.fullmatch(str(value["git_sha"])):
+        raise ContractError("invalid baseline transaction Git SHA")
+    _validate_baseline_hashes(
+        value,
+        (
+            "helper_sha256", "archive_id", "declaration_sha256", "fragment_sha256", "compose_sha256",
+            "helper_requirement_sha256", "baseline_provenance_sha256", "server_manifest_sha256",
+        ),
+        "baseline transaction evidence",
+    )
+    for field in ("old_generation", "new_generation"):
+        if not re.fullmatch(r"gen-[0-9a-f]{32}", str(value[field])):
+            raise ContractError("invalid baseline transaction generation identity")
+    if value["old_generation"] == value["new_generation"]:
+        raise ContractError("baseline transaction generations must differ")
+    _validate_baseline_hosts(value["hosts"], "baseline transaction")
+    return value
+
+
+def validate_baseline_receipt(value):
+    expected = (
+        "schema_version", "status", "contract_version", "helper_version", "helper_sha256",
+        "transaction_id", "project_id", "environment", "deployment_id", "source_repo",
+        "archive_id", "git_sha", "declaration_sha256", "fragment_sha256", "compose_sha256",
+        "helper_requirement_sha256", "baseline_provenance_sha256", "server_manifest_sha256",
+        "old_generation", "generation_id", "hosts",
+    )
+    _ensure_exact_keys(value, expected, "baseline receipt")
+    if value["schema_version"] != "shared-caddy-baseline-receipt/v1" or value["status"] != "committed":
+        raise ContractError("baseline receipt is not a committed baseline receipt")
+    if value["contract_version"] != CONTRACT_VERSION or value["helper_version"] != HELPER_VERSION:
+        raise ContractError("baseline receipt controller version drift")
+    if not re.fullmatch(r"tx-[0-9a-f]{32}", str(value["transaction_id"])):
+        raise ContractError("invalid baseline receipt transaction identity")
+    _validate_baseline_identity(value, "baseline receipt")
+    if not GIT_SHA_RE.fullmatch(str(value["git_sha"])):
+        raise ContractError("invalid baseline receipt Git SHA")
+    _validate_baseline_hashes(
+        value,
+        (
+            "helper_sha256", "archive_id", "declaration_sha256", "fragment_sha256", "compose_sha256",
+            "helper_requirement_sha256", "baseline_provenance_sha256", "server_manifest_sha256",
+        ),
+        "baseline receipt evidence",
+    )
+    for field in ("old_generation", "generation_id"):
+        if not re.fullmatch(r"gen-[0-9a-f]{32}", str(value[field])):
+            raise ContractError("invalid baseline receipt generation identity")
+    if value["old_generation"] == value["generation_id"]:
+        raise ContractError("baseline receipt generations must differ")
+    _validate_baseline_hosts(value["hosts"], "baseline receipt")
+    return value
+
+
+def _validate_legacy_baseline_requirement(value):
+    _ensure_exact_keys(
+        value, ("contract_version", "helper_version", "helper_sha256"),
+        "legacy baseline helper requirement",
+    )
+    if value["contract_version"] != CONTRACT_VERSION or value["helper_version"] != HELPER_VERSION:
+        raise ContractError("baseline helper requirement controller mismatch")
+    if not SHA256_RE.fullmatch(str(value["helper_sha256"])):
+        raise ContractError("invalid baseline helper requirement hash")
+
+
+def _validate_legacy_baseline_manifest(value):
+    expected = (
+        "schema_version", "contract_version", "helper_version", "helper_sha256",
+        "project_id", "environment", "deployment_id", "source_repo", "hosts", "git_sha",
+        "deploy_bundle_sha256", "declaration_sha256", "fragment_sha256", "compose_sha256",
+        "helper_requirement_sha256", "internal_provenance_sha256", "source",
+    )
+    _ensure_exact_keys(value, expected, "legacy baseline server manifest")
+    if value["schema_version"] != "shared-caddy-server-manifest/v1":
+        raise ContractError("baseline server manifest schema mismatch")
+    if value["contract_version"] != CONTRACT_VERSION or value["helper_version"] != HELPER_VERSION:
+        raise ContractError("baseline server manifest controller mismatch")
+    _validate_baseline_identity(value, "baseline server manifest")
+    _validate_baseline_hosts(value["hosts"], "baseline server manifest")
+    if not GIT_SHA_RE.fullmatch(str(value["git_sha"])):
+        raise ContractError("invalid baseline server manifest Git SHA")
+    _validate_baseline_hashes(
+        value,
+        (
+            "helper_sha256", "deploy_bundle_sha256", "declaration_sha256", "fragment_sha256",
+            "compose_sha256", "helper_requirement_sha256", "internal_provenance_sha256",
+        ),
+        "baseline server manifest",
+    )
+    source = value["source"]
+    _ensure_exact_keys(source, ("kind", "legacy_fragment_sha256"), "baseline server manifest source")
+    if source["kind"] != "legacy_opaque" or source["legacy_fragment_sha256"] != value["fragment_sha256"]:
+        raise ContractError("baseline server manifest source must bind the rendered legacy fragment")
+
+
+def _read_legacy_baseline_archive(raw_archive):
+    if not isinstance(raw_archive, bytes):
+        raise ContractError("legacy baseline archive must be bytes")
+    if len(raw_archive) > LEGACY_BASELINE_MAX_ARCHIVE_COMPRESSED_SIZE:
+        raise ContractError("legacy baseline archive exceeds compressed size limit")
+    try:
+        with tarfile.open(fileobj=io.BytesIO(raw_archive), mode="r:gz") as archive:
+            members = archive.getmembers()
+            if tuple(member.name for member in members) != LEGACY_BASELINE_ARCHIVE_FILES:
+                raise ContractError("legacy baseline archive member set is not exact")
+            result = {}
+            total_size = 0
+            for member in members:
+                if not member.isfile() or member.issym() or member.islnk():
+                    raise ContractError("legacy baseline archive member must be a regular file")
+                if member.size > LEGACY_BASELINE_MAX_ARCHIVE_MEMBER_SIZE:
+                    raise ContractError("legacy baseline archive member exceeds size limit")
+                total_size += member.size
+                if total_size > LEGACY_BASELINE_MAX_ARCHIVE_TOTAL_SIZE:
+                    raise ContractError("legacy baseline archive exceeds total size limit")
+                source = archive.extractfile(member)
+                if source is None:
+                    raise ContractError("legacy baseline archive member cannot be read")
+                result[member.name] = source.read(member.size + 1)
+                if len(result[member.name]) != member.size:
+                    raise ContractError("legacy baseline archive member size changed while reading")
+    except (OSError, tarfile.TarError) as exc:
+        raise ContractError("invalid legacy baseline archive") from exc
+    return result
+
+
+def validate_legacy_baseline_artifact_chain(
+    declaration, raw_fragment, compose_facts, helper_requirement, provenance, manifest,
+    raw_archive, transaction, receipt,
+):
+    """Bind the approved legacy-baseline archive and durable evidence as one chain."""
+    validate_legacy_baseline_declaration(declaration)
+    reconcile_legacy_baseline_fragment(declaration, raw_fragment)
+    _validate_legacy_baseline_requirement(helper_requirement)
+    validate_baseline_provenance(provenance)
+    _validate_legacy_baseline_manifest(manifest)
+    validate_baseline_transaction(transaction)
+    validate_baseline_receipt(receipt)
+    if transaction["phase"] != "committed":
+        raise ContractError("committed baseline receipt requires a committed transaction")
+    if compose_facts != {"services": {}, "networks": {}}:
+        raise ContractError("legacy baseline Compose facts must be empty")
+    expected_members = {
+        "caddy/declaration.json": _canonical_json(declaration),
+        "caddy/site.caddy": raw_fragment,
+        "caddy/helper-requirement.json": _canonical_json(helper_requirement),
+        "caddy/bundle-provenance.json": _canonical_json(provenance),
+        "runtime/compose.json": _canonical_json(compose_facts),
+    }
+    if _read_legacy_baseline_archive(raw_archive) != expected_members:
+        raise ContractError("legacy baseline archive bytes disagree with declared artifacts")
+    archive_id = sha256_bytes(raw_archive)
+    provenance_hash = sha256_bytes(expected_members["caddy/bundle-provenance.json"])
+    manifest_hash = sha256_bytes(_canonical_json(manifest))
+    for field, expected in (
+        ("helper_sha256", helper_requirement["helper_sha256"]),
+        ("declaration_sha256", sha256_bytes(expected_members["caddy/declaration.json"])),
+        ("fragment_sha256", sha256_bytes(raw_fragment)),
+        ("compose_sha256", sha256_bytes(expected_members["runtime/compose.json"])),
+        ("helper_requirement_sha256", sha256_bytes(expected_members["caddy/helper-requirement.json"])),
+    ):
+        if provenance[field] != expected:
+            raise ContractError("legacy baseline provenance hash mismatch: " + field)
+    if provenance["source"] != manifest["source"]:
+        raise ContractError("legacy baseline provenance and manifest source disagree")
+    for field in (
+        "project_id", "environment", "deployment_id", "source_repo", "hosts", "git_sha",
+        "declaration_sha256", "fragment_sha256", "compose_sha256", "helper_requirement_sha256",
+    ):
+        if manifest[field] != provenance[field]:
+            raise ContractError("legacy baseline manifest evidence mismatch: " + field)
+    if manifest["helper_sha256"] != provenance["helper_sha256"]:
+        raise ContractError("legacy baseline manifest helper evidence mismatch")
+    if manifest["deploy_bundle_sha256"] != archive_id or manifest["internal_provenance_sha256"] != provenance_hash:
+        raise ContractError("legacy baseline manifest archive or provenance hash mismatch")
+    for record, generation_field in ((transaction, "new_generation"), (receipt, "generation_id")):
+        for field in (
+            "project_id", "environment", "deployment_id", "source_repo", "hosts", "git_sha",
+            "helper_sha256", "declaration_sha256", "fragment_sha256", "compose_sha256",
+            "helper_requirement_sha256",
+        ):
+            if record[field] != provenance[field]:
+                raise ContractError("legacy baseline durable evidence mismatch: " + field)
+        if (
+            record["archive_id"] != archive_id
+            or record["baseline_provenance_sha256"] != provenance_hash
+            or record["server_manifest_sha256"] != manifest_hash
+        ):
+            raise ContractError("legacy baseline durable archive or manifest evidence mismatch")
+        if record["old_generation"] != transaction["old_generation"]:
+            raise ContractError("legacy baseline durable old generation mismatch")
+        if generation_field == "generation_id" and record[generation_field] != transaction["new_generation"]:
+            raise ContractError("legacy baseline receipt generation mismatch")
+    if receipt["transaction_id"] != transaction["transaction_id"]:
+        raise ContractError("legacy baseline receipt transaction identity mismatch")
+    return {
+        "archive_id": archive_id,
+        "baseline_provenance_sha256": provenance_hash,
+        "server_manifest_sha256": manifest_hash,
+    }
 
 
 def validate_server_contract(value):
