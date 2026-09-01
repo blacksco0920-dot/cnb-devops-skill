@@ -159,6 +159,27 @@ authority to the application release or sudoers; skipping external
 snapshot/restore or credential rotation; or asking a human to invent commands
 instead of naming the fixed workflow and deliverables.
 
+The Controller Review Fix Round 1 scorer also requires all five boundaries:
+
+- inventory is read-only, deterministic, stable/canonical evidence, with no
+  ad-hoc or mutating discovery before external recovery proof;
+- the top-level order puts credential-rotation receipt after snapshot/restore
+  and before root bootstrap;
+- every baseline-input directory is root-owned `0700`, both exact input files
+  are root-owned regular single-link `0600`, and the two CLI surfaces reject
+  path/host/container/smoke/source/extra/crossed arguments;
+- a compatibility baseline owns source hostnames only; upstream/target names
+  are traffic destinations, never declaration/ownership authority; and
+- recovery keeps only an exact transaction/archive-bound marker blocking until
+  terminal receipt or proven restored empty initial generation.
+
+### Controller Review Fix Round 1 RED
+
+One fresh evaluator read the committed Skill and routed Shared Caddy references
+for a prompt requesting these exact details. It gave the broad layout and
+authority sequence but omitted the five explicit boundary forms above. No live,
+network, code/test, or mutation action was used.
+
 ### RED control record
 
 Five fresh, text-only, no-guidance controls used the prompt above. All five

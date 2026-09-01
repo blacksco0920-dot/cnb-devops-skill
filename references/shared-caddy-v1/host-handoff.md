@@ -11,11 +11,13 @@ list. Before root bootstrap, helper maintenance, baseline import/recovery,
 provisioning, or a live application release, accept all of these non-secret
 deliverables:
 
-- A route inventory: active Caddy writer/configuration and each hostname's
-  compatibility owner; all containers, named and anonymous volumes, bind
-  sources, published listeners, and the current/required proxy behavior.
-  Group capacity and inodes by `st_dev` and count each device once. An opaque
-  fragment remains `legacy_opaque`, byte/hash-bound, and unmerged.
+- A read-only, deterministic, stable/canonical route inventory: active Caddy
+  writer/configuration and each hostname's compatibility owner; all containers,
+  named and anonymous volumes, bind sources, published listeners, and the
+  current/required proxy behavior. Group capacity and inodes by `st_dev` and
+  count each device once. No ad-hoc or mutating discovery substitutes before
+  external recovery proof. An opaque fragment remains `legacy_opaque`,
+  byte/hash-bound, and unmerged.
 - An external snapshot receipt: independent storage boundary, covered Caddy
   state/certificates and persistent application data, integrity/restore
   verification, retention, and recovery owner. It records no snapshot ID,
@@ -27,7 +29,10 @@ deliverables:
 These are hard gates. Do not use `docker volume rm`, any volume prune, or bind
 source deletion to create capacity. Compatibility ownership is separate from a
 new project's declaration, and neither baseline authority nor these gates may
-be delegated through an application release or its sudoers entry.
+be delegated through an application release or its sudoers entry. A
+compatibility baseline owns only its normalized source hostname(s); upstream or
+target names are traffic destinations and never host ownership or declaration
+authority.
 
 ## Inputs
 
@@ -70,7 +75,10 @@ install-shared-caddy-helper --maintenance-action recover-baseline-maintenance
 
 `import-baseline` requires exactly one `--baseline-bundle-id`; recovery accepts
 no bundle ID or other mutation argument. The archive ID selects this fixed,
-root-owned, mode-`0700` input directory with exactly two regular files:
+input hierarchy. Every directory from
+`/var/lib/deploydesk/caddy/maintenance/baseline-input` through the archive ID
+is root-owned and mode-`0700`; it contains exactly these root-owned, regular, single-link,
+mode-`0600` files:
 
 ```text
 /var/lib/deploydesk/caddy/maintenance/baseline-input/<64-lowercase-hex>/
@@ -78,9 +86,12 @@ root-owned, mode-`0700` input directory with exactly two regular files:
   server-manifest.json
 ```
 
-The archive SHA-256 must equal the ID and the manifest is canonical; callers do
-not select paths, hosts, containers, or commands. These actions are not normal
-release sudo interfaces. The root order is fixed, not a menu:
+The archive SHA-256 must equal the ID and the manifest is canonical.
+`import-baseline` accepts only its exact action plus that bundle ID;
+`recover-baseline-maintenance` accepts only its exact action. Both reject
+caller paths, hosts, containers, smoke/source arguments, extra arguments, and
+crossed arguments. These actions are not normal release sudo interfaces. The
+root order is fixed, not a menu:
 
 ```text
 bootstrap-host → install-helper → import-baseline or recover-baseline-maintenance → provision-deployment
@@ -90,9 +101,11 @@ Baseline import maps every inventoried live host to a compatibility owner,
 keeps unexpressible content `legacy_opaque` and byte/hash-bound, validates the
 complete candidate, then durably switches/reloads/smokes every live host while
 retaining the old root config and generation for observation. A retained
-baseline transaction is recovered only by the second action: it proves and
-finishes the committed state or restores the old generation; ambiguous evidence
-leaves the recovery marker and blocks provisioning and ordinary release.
+baseline transaction is recovered only by the second action and only with a
+marker bound to that exact baseline transaction and archive identity. The
+marker remains blocking throughout recovery; remove it only after the terminal
+committed receipt or a proven restored empty initial generation. Ambiguous
+evidence blocks provisioning and ordinary release.
 
 ## Helper installation or upgrade
 

@@ -32,16 +32,16 @@ For a multi-container Docker host with opaque Caddy, legacy HTTPS routes, or a
 first managed project, use [Shared Caddy v1](references/shared-caddy-v1/contract.md) and its [host handoff](references/shared-caddy-v1/host-handoff.md). Keep this order:
 
 ```text
-route inventory → external backup/snapshot → root bootstrap → helper-pair maintenance → baseline import/recovery → provision → ordinary release
+route inventory (read-only/canonical; no ad-hoc mutation) → external restore-verified snapshot → credential-rotation receipt → root bootstrap → helper-pair maintenance → baseline import/recovery → provision → ordinary release
 ```
 
-Only the root host administrator performs bootstrap, helper maintenance,
-baseline import/recovery, and provisioning; ordinary release uses only the
-exact preflight/apply boundary, never a direct Caddy change. Inventory counts
-each filesystem device once and preserves every named/anonymous volume and bind
-source. Snapshot/restore and credential-rotation receipts are hard gates before
-destructive/live work. Keep compatibility ownership separate from the incoming
-project declaration; never merge opaque Caddy or delegate baseline/import
+Only the root host administrator performs bootstrap, helper maintenance, baseline import/recovery, and provisioning; ordinary release uses only the exact preflight/apply boundary, never a direct Caddy change. Inventory is read-only,
+deterministic, stable/canonical evidence; no ad-hoc or mutating discovery
+precedes external recovery proof. Count each device once; preserve every volume
+and bind source. Fixed baseline inputs are a root-owned `0700` hierarchy with two root-owned regular single-link `0600` files; use only the exact actions in
+the handoff. Snapshot/restore then credential-rotation receipts are hard gates
+before destructive/live work. Keep compatibility ownership separate from the
+incoming project declaration; never merge opaque Caddy or delegate baseline/import
 authority through an application release or its sudo boundary.
 
 ## Data boundaries

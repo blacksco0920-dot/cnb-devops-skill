@@ -31,20 +31,28 @@ Normal release bundles cannot perform any of these maintenance actions.
 
 ## Legacy-host takeover gates
 
-Before root maintenance, produce a non-secret route inventory that maps every
-live hostname and Caddy writer, container, named and anonymous volume, and bind
-source to an owner. Capacity is one pool for each distinct `st_dev`; do not add
-free space from `/`, `/opt`, and `/var/lib` when they are the same device. The
-inventory is preservation evidence, never authorization to delete or prune a
-volume, bind source, or opaque Caddy content.
+Before root maintenance, produce a read-only, deterministic, stable/canonical
+non-secret route inventory that maps every live hostname and Caddy writer,
+container, named and anonymous volume, and bind source to an owner. Capacity is
+one pool for each distinct `st_dev`; do not add free space from `/`, `/opt`, and
+`/var/lib` when they are the same device. No ad-hoc or mutating discovery may
+substitute before external recovery proof. The inventory is preservation
+evidence, never authorization to delete or prune a volume, bind source, or
+opaque Caddy content.
 
 An externally stored, restore-verified snapshot receipt and a value-free
 credential-rotation receipt are hard gates before destructive or live release
 work. A local copy is not a snapshot. The compatibility owner mapping belongs
 to the takeover inventory; it is not the new project's declaration, and an
 opaque legacy route remains byte/hash-bound until the separate baseline action.
-The detailed deliverables, fixed baseline input layout, and root-only action
-contracts are in the [host handoff](host-handoff.md#baseline-import-and-recovery).
+For a compatibility baseline, only normalized source hostnames are owned;
+upstream/target names are traffic destinations, never host ownership or project
+declaration authority. The detailed deliverables, fixed baseline input layout,
+and root-only action contracts are in the
+[host handoff](host-handoff.md#baseline-import-and-recovery). A baseline marker
+is valid only when bound to the exact retained baseline transaction and archive
+identity; it remains blocking through recovery and is removed only after a
+terminal committed receipt or a proven restored empty initial generation.
 
 ## Bundle preflight before live mutation
 
