@@ -109,6 +109,15 @@ class SharedCaddySchemaTests(unittest.TestCase):
             )
             runtime_validators[example_name](instance)
 
+    def test_baseline_transaction_and_receipt_examples_describe_one_committed_transaction(self):
+        transaction = self.load_json(EXAMPLE_ROOT / "baseline-transaction.json")
+        receipt = self.load_json(EXAMPLE_ROOT / "baseline-receipt.json")
+        self.assertEqual("committed", transaction["phase"])
+        self.assertEqual("committed", receipt["status"])
+        self.assertEqual(transaction["transaction_id"], receipt["transaction_id"])
+        self.assertEqual(transaction["new_generation"], receipt["generation_id"])
+        self.assertEqual(transaction["old_generation"], receipt["old_generation"])
+
     def test_examples_validate_with_full_draft_2020_12_validator(self):
         if importlib.util.find_spec("jsonschema") is None:
             if os.environ.get("REQUIRE_FULL_JSONSCHEMA") == "1":

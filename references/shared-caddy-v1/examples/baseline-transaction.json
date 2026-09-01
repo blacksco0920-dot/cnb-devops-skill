@@ -14,7 +14,7 @@
   "hosts": ["ecat.swifteng.com.cn", "ecatadmin.swifteng.com.cn", "ecatapi.swifteng.com.cn"],
   "new_generation": "gen-44444444444444444444444444444444",
   "old_generation": "gen-33333333333333333333333333333333",
-  "phase": "prepared",
+  "phase": "committed",
   "project_id": "ecat-energy",
   "schema_version": "shared-caddy-baseline-transaction/v1",
   "server_manifest_sha256": "9999999999999999999999999999999999999999999999999999999999999999",

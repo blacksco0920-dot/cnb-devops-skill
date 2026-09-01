@@ -409,13 +409,15 @@ def _read_legacy_baseline_archive(raw_archive):
     if len(raw_archive) > LEGACY_BASELINE_MAX_ARCHIVE_COMPRESSED_SIZE:
         raise ContractError("legacy baseline archive exceeds compressed size limit")
     try:
-        with tarfile.open(fileobj=io.BytesIO(raw_archive), mode="r:gz") as archive:
-            members = archive.getmembers()
-            if tuple(member.name for member in members) != LEGACY_BASELINE_ARCHIVE_FILES:
-                raise ContractError("legacy baseline archive member set is not exact")
+        with tarfile.open(fileobj=io.BytesIO(raw_archive), mode="r|gz") as archive:
             result = {}
             total_size = 0
-            for member in members:
+            member_count = 0
+            for member in archive:
+                if member_count >= len(LEGACY_BASELINE_ARCHIVE_FILES):
+                    raise ContractError("legacy baseline archive member set is not exact")
+                if member.name != LEGACY_BASELINE_ARCHIVE_FILES[member_count]:
+                    raise ContractError("legacy baseline archive member set is not exact")
                 if not member.isfile() or member.issym() or member.islnk():
                     raise ContractError("legacy baseline archive member must be a regular file")
                 if member.size > LEGACY_BASELINE_MAX_ARCHIVE_MEMBER_SIZE:
@@ -429,6 +431,9 @@ def _read_legacy_baseline_archive(raw_archive):
                 result[member.name] = source.read(member.size + 1)
                 if len(result[member.name]) != member.size:
                     raise ContractError("legacy baseline archive member size changed while reading")
+                member_count += 1
+            if member_count != len(LEGACY_BASELINE_ARCHIVE_FILES):
+                raise ContractError("legacy baseline archive member set is not exact")
     except (OSError, tarfile.TarError) as exc:
         raise ContractError("invalid legacy baseline archive") from exc
     return result

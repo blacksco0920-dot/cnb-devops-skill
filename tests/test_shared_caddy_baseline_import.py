@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import tarfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -380,6 +381,15 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
         oversized_member["receipt"]["archive_id"] = oversized_member["archive_id"]
         with self.assertRaises(self.installer.ContractError):
             self.installer._read_legacy_baseline_archive(oversized_member["archive"])
+
+    def test_archive_reader_rejects_a_sixth_member_without_materializing_members(self):
+        raw_archive = archive_bytes(
+            {name: b"" for name in (*ARCHIVE_FILES, "unexpected.txt")},
+            (*ARCHIVE_FILES, "unexpected.txt"),
+        )
+        with mock.patch.object(tarfile.TarFile, "getmembers", side_effect=AssertionError):
+            with self.assertRaises(self.installer.ContractError):
+                self.installer._read_legacy_baseline_archive(raw_archive)
 
     def test_normal_bundle_loader_remains_closed_to_external_targets_and_baseline_provenance(self):
         artifacts = self.artifacts()
