@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "inventory.schema.json",
+  "title": "Combined Docker host inventory v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "topology", "observation"],
+  "properties": {
+    "schema_version": {"const": "deploydesk-docker-host-inventory/v2"},
+    "topology": {"$ref": "topology.schema.json"},
+    "observation": {"$ref": "observation.schema.json"}
+  }
+}
