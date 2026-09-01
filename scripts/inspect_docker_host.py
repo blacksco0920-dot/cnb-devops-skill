@@ -25,6 +25,7 @@ ALLOWED_LABELS = frozenset({
     "deployment.example/id",
     "io.deploydesk.deployment-id",
 })
+REQUIRED_OBSERVED_ROOTS = ("/", "/opt", "/var/lib")
 INVENTORY_KEYS = frozenset({
     "schema_version", "complete", "request_sha256", "container_count", "containers",
     "deletion_vector", "volume_count", "volumes", "network_count", "networks",
@@ -37,7 +38,7 @@ class InventoryError(ValueError):
 
 
 class CommandRunner(Protocol):
-    def run(self, argv: tuple[str, ...]) -> str:
+    def run(self, argv: tuple[str, ...], *, max_output_bytes: int) -> str:
         """Run one fixed argv vector and return only stdout."""
 
 
@@ -79,22 +80,14 @@ class InventoryRequest:
     def __post_init__(self):
         if self.schema_version != REQUEST_SCHEMA:
             raise InventoryError("unsupported request schema")
-        if not isinstance(self.docker_command, tuple) or not self.docker_command:
+        if self.docker_command != ("/usr/bin/docker",):
             raise InventoryError("unsafe docker command")
-        for item in self.docker_command:
-            if not isinstance(item, str) or not item or "\x00" in item:
-                raise InventoryError("unsafe docker command")
-        _safe_absolute_path(self.docker_command[0], "docker command")
         config = _safe_absolute_path(self.docker_config_path, "docker config path")
         socket = _safe_absolute_path(self.docker_socket_path, "docker socket path")
         if config != "/etc/docker" or socket not in {"/var/run/docker.sock", "/run/docker.sock"}:
             raise InventoryError("unsafe Docker endpoint/config path")
-        if not isinstance(self.observed_roots, tuple) or not self.observed_roots:
-            raise InventoryError("missing observed roots")
-        for root in self.observed_roots:
-            _safe_absolute_path(root, "observed root")
-        if len(set(self.observed_roots)) != len(self.observed_roots):
-            raise InventoryError("duplicate observed root")
+        if self.observed_roots != REQUIRED_OBSERVED_ROOTS:
+            raise InventoryError("unsafe observed roots")
         for limit in (self.max_containers, self.max_volumes, self.max_networks, self.max_output_bytes):
             if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
                 raise InventoryError("invalid inventory limit")
@@ -104,19 +97,32 @@ class InventoryRequest:
             _safe_absolute_path(path, "expected Caddy path")
             if not path.startswith("/etc/caddy/"):
                 raise InventoryError("unsafe expected Caddy path")
+        if list(self.expected_caddy_paths) != sorted(set(self.expected_caddy_paths)):
+            raise InventoryError("expected Caddy paths are not canonical")
 
 
 class SubprocessRunner:
     """A no-shell runner that intentionally never forwards stderr."""
 
-    def run(self, argv: tuple[str, ...]) -> str:
+    def run(self, argv: tuple[str, ...], *, max_output_bytes: int) -> str:
+        if not isinstance(max_output_bytes, int) or max_output_bytes <= 0:
+            raise InventoryError("invalid command output limit")
         try:
-            completed = subprocess.run(argv, check=True, stdin=subprocess.DEVNULL,
-                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                       text=True, encoding="utf-8", errors="strict", shell=False)
+            process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                       stderr=subprocess.DEVNULL, shell=False)
+            assert process.stdout is not None
+            output = process.stdout.read(max_output_bytes + 1)
+            if len(output) > max_output_bytes:
+                process.kill()
+                process.wait()
+                raise InventoryError("command output exceeds limit")
+            if process.wait() != 0:
+                raise InventoryError("required Docker command failed")
+            return output.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise InventoryError("command stdout is not UTF-8") from exc
         except (OSError, subprocess.SubprocessError) as exc:
             raise InventoryError("required Docker command failed") from exc
-        return completed.stdout
 
 
 def lines(value: str) -> list[str]:
@@ -153,16 +159,17 @@ def _checked_ids(values: list[str], kind: str, limit: int, pattern=CONTAINER_ID_
 
 
 def _stable_ids(runner: CommandRunner, docker: tuple[str, ...], argv: tuple[str, ...], kind: str,
-                limit: int, pattern=CONTAINER_ID_RE) -> list[str]:
-    before = _checked_ids(lines(runner.run(docker + argv)), kind, limit, pattern)
+                limit: int, max_output_bytes: int, pattern=CONTAINER_ID_RE) -> list[str]:
+    before = _checked_ids(lines(runner.run(docker + argv, max_output_bytes=max_output_bytes)), kind, limit, pattern)
     return before
 
 
 def _stable_inspect(runner: CommandRunner, docker: tuple[str, ...], list_argv: tuple[str, ...],
-                    inspect_argv: tuple[str, ...], kind: str, limit: int, pattern=CONTAINER_ID_RE):
-    before = _stable_ids(runner, docker, list_argv, kind, limit, pattern)
-    inspected = strict_json(runner.run(docker + inspect_argv + tuple(before))) if before else []
-    after = _stable_ids(runner, docker, list_argv, kind, limit, pattern)
+                    inspect_argv: tuple[str, ...], kind: str, limit: int, max_output_bytes: int,
+                    pattern=CONTAINER_ID_RE):
+    before = _stable_ids(runner, docker, list_argv, kind, limit, max_output_bytes, pattern)
+    inspected = strict_json(runner.run(docker + inspect_argv + tuple(before), max_output_bytes=max_output_bytes)) if before else []
+    after = _stable_ids(runner, docker, list_argv, kind, limit, max_output_bytes, pattern)
     if before != after:
         raise InventoryError(f"{kind} inventory changed during observation")
     if not isinstance(inspected, list):
@@ -210,7 +217,7 @@ def _mount_record(mount: object) -> dict[str, object]:
     raise InventoryError("unknown persistence")
 
 
-def _container_record(record: object, runner: CommandRunner, docker: tuple[str, ...]) -> dict[str, object]:
+def _container_record(record: object, runner: CommandRunner, docker: tuple[str, ...], max_output_bytes: int) -> dict[str, object]:
     if not isinstance(record, dict):
         raise InventoryError("invalid container inspection")
     identifier = record.get("Id")
@@ -226,7 +233,7 @@ def _container_record(record: object, runner: CommandRunner, docker: tuple[str, 
     labels = config.get("Labels", {}) if isinstance(config, dict) else {}
     if not isinstance(labels, dict):
         raise InventoryError("invalid labels")
-    safe_labels = {key: labels[key] for key in sorted(ALLOWED_LABELS & set(labels)) if isinstance(labels[key], str)}
+    safe_labels = sorted(key for key in ALLOWED_LABELS & set(labels) if isinstance(labels[key], str))
     networks = record.get("NetworkSettings", {}).get("Networks", {}) if isinstance(record.get("NetworkSettings"), dict) else {}
     if not isinstance(networks, dict):
         raise InventoryError("invalid network memberships")
@@ -241,7 +248,7 @@ def _container_record(record: object, runner: CommandRunner, docker: tuple[str, 
     mounts = record.get("Mounts", [])
     if not isinstance(mounts, list):
         raise InventoryError("unknown persistence")
-    diff = lines(runner.run(docker + ("diff", identifier)))
+    diff = lines(runner.run(docker + ("diff", identifier), max_output_bytes=max_output_bytes))
     return {
         "id": identifier, "image_id": image_id, "repo_digests_sha256": [_sha256_text(item) for item in sorted(repo_digests)],
         "labels": safe_labels, "networks": sorted(memberships, key=canonical_bytes),
@@ -266,7 +273,16 @@ def _filesystem_records(roots: tuple[str, ...]) -> list[dict[str, int]]:
             "available_bytes": usage.f_bavail * usage.f_frsize, "apparent_size_bytes": 0,
         })
         for directory, dirnames, filenames in os.walk(root, followlinks=False):
-            dirnames[:] = sorted(name for name in dirnames if not os.path.islink(os.path.join(directory, name)))
+            kept_directories = []
+            for name in sorted(dirnames):
+                candidate = os.path.join(directory, name)
+                try:
+                    facts = os.lstat(candidate)
+                except OSError as exc:
+                    raise InventoryError("missing filesystem host metadata") from exc
+                if not stat.S_ISLNK(facts.st_mode) and stat.S_ISDIR(facts.st_mode) and facts.st_dev == root_facts.st_dev:
+                    kept_directories.append(name)
+            dirnames[:] = kept_directories
             for filename in sorted(filenames):
                 path = os.path.join(directory, filename)
                 try:
@@ -284,7 +300,7 @@ def collect_inventory(request: InventoryRequest, runner: CommandRunner) -> dict[
     if not isinstance(request, InventoryRequest):
         raise InventoryError("invalid request")
     docker = request.docker_command + ("--config", request.docker_config_path, "--host", "unix://" + request.docker_socket_path)
-    container_ids, container_inspects = _stable_inspect(runner, docker, ("ps", "-aq", "--no-trunc"), ("inspect",), "container", request.max_containers)
+    container_ids, container_inspects = _stable_inspect(runner, docker, ("ps", "-aq", "--no-trunc"), ("inspect",), "container", request.max_containers, request.max_output_bytes)
     container_map = {}
     for record in container_inspects:
         if not isinstance(record, dict) or not isinstance(record.get("Id"), str):
@@ -294,29 +310,45 @@ def collect_inventory(request: InventoryRequest, runner: CommandRunner) -> dict[
         container_map[record["Id"]] = record
     if set(container_map) != set(container_ids):
         raise InventoryError("container inspection is incomplete")
-    containers = [_container_record(container_map[identifier], runner, docker) for identifier in sorted(container_ids)]
+    containers = [_container_record(container_map[identifier], runner, docker, request.max_output_bytes) for identifier in sorted(container_ids)]
     volume_pattern = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
-    volume_ids, volume_inspects = _stable_inspect(runner, docker, ("volume", "ls", "-q", "--no-trunc"), ("volume", "inspect"), "volume", request.max_volumes, volume_pattern)
+    volume_ids, volume_inspects = _stable_inspect(runner, docker, ("volume", "ls", "-q", "--no-trunc"), ("volume", "inspect"), "volume", request.max_volumes, request.max_output_bytes, volume_pattern)
     volume_map = {record.get("Name"): record for record in volume_inspects if isinstance(record, dict)}
     if len(volume_map) != len(volume_inspects) or set(volume_map) != set(volume_ids):
         raise InventoryError("volume inspection is incomplete")
-    volumes = [{"name_sha256": _sha256_text(identifier), "driver": volume_map[identifier].get("Driver", "")}
-               for identifier in sorted(volume_ids)]
+    volumes = sorted(
+        ({"name_sha256": _sha256_text(identifier), "driver": volume_map[identifier].get("Driver", "")}
+         for identifier in volume_ids),
+        key=canonical_bytes,
+    )
     if any(not isinstance(item["driver"], str) for item in volumes):
         raise InventoryError("invalid volume inspection")
-    network_ids, network_inspects = _stable_inspect(runner, docker, ("network", "ls", "-q", "--no-trunc"), ("network", "inspect"), "network", request.max_networks)
+    network_ids, network_inspects = _stable_inspect(runner, docker, ("network", "ls", "-q", "--no-trunc"), ("network", "inspect"), "network", request.max_networks, request.max_output_bytes)
     network_map = {record.get("Id"): record for record in network_inspects if isinstance(record, dict)}
     if len(network_map) != len(network_inspects) or set(network_map) != set(network_ids):
         raise InventoryError("network inspection is incomplete")
-    networks = [{"id": identifier, "name_sha256": _sha256_text(str(network_map[identifier].get("Name", "")))}
-                for identifier in sorted(network_ids)]
+    networks = []
+    for identifier in sorted(network_ids):
+        name = network_map[identifier].get("Name")
+        if not isinstance(name, str):
+            raise InventoryError("invalid network inspection")
+        networks.append({"id": identifier, "name_sha256": _sha256_text(name)})
+    filesystems = _filesystem_records(request.observed_roots)
+    final_vectors = (
+        ("container", container_ids, ("ps", "-aq", "--no-trunc"), request.max_containers, CONTAINER_ID_RE),
+        ("volume", volume_ids, ("volume", "ls", "-q", "--no-trunc"), request.max_volumes, volume_pattern),
+        ("network", network_ids, ("network", "ls", "-q", "--no-trunc"), request.max_networks, CONTAINER_ID_RE),
+    )
+    for kind, initial, argv, limit, pattern in final_vectors:
+        if _stable_ids(runner, docker, argv, kind, limit, request.max_output_bytes, pattern) != initial:
+            raise InventoryError(f"{kind} inventory changed during observation")
     value = {
         "schema_version": INVENTORY_SCHEMA, "complete": True,
         "request_sha256": identity_sha256(dataclasses.asdict(request)),
         "container_count": len(containers), "containers": containers,
         "deletion_vector": sorted(container_ids), "volume_count": len(volumes), "volumes": volumes,
         "network_count": len(networks), "networks": networks,
-        "filesystems": _filesystem_records(request.observed_roots),
+        "filesystems": filesystems,
         "expected_caddy_paths": list(request.expected_caddy_paths),
     }
     raw = canonical_bytes(value)
@@ -349,9 +381,12 @@ def validate_inventory(value: object) -> dict[str, object]:
             raise InventoryError("invalid container record")
         if not isinstance(item["image_id"], str) or not IMAGE_ID_RE.fullmatch(item["image_id"]):
             raise InventoryError("invalid container record")
-        if not isinstance(item["repo_digests_sha256"], list) or any(not isinstance(digest, str) or not SHA256_RE.fullmatch(digest) for digest in item["repo_digests_sha256"]):
+        if (not isinstance(item["repo_digests_sha256"], list) or not item["repo_digests_sha256"]
+                or item["repo_digests_sha256"] != sorted(set(item["repo_digests_sha256"]))
+                or any(not isinstance(digest, str) or not SHA256_RE.fullmatch(digest) for digest in item["repo_digests_sha256"])):
             raise InventoryError("invalid container record")
-        if not isinstance(item["labels"], dict) or set(item["labels"]) - ALLOWED_LABELS or any(not isinstance(label, str) for label in item["labels"].values()):
+        if (not isinstance(item["labels"], list) or item["labels"] != sorted(set(item["labels"]))
+                or any(not isinstance(label, str) or label not in ALLOWED_LABELS for label in item["labels"])):
             raise InventoryError("invalid container record")
         for membership in item["networks"] if isinstance(item["networks"], list) else ():
             if not isinstance(membership, dict) or set(membership) != {"name_sha256", "id_sha256"} or any(not isinstance(digest, str) or not SHA256_RE.fullmatch(digest) for digest in membership.values()):
@@ -376,21 +411,36 @@ def validate_inventory(value: object) -> dict[str, object]:
                     raise InventoryError("invalid container record")
         if not isinstance(item["mounts"], list) or not isinstance(item["writable_layer"], dict) or set(item["writable_layer"]) != {"count", "sha256"} or not isinstance(item["writable_layer"].get("count"), int) or isinstance(item["writable_layer"]["count"], bool) or item["writable_layer"]["count"] < 0 or not isinstance(item["writable_layer"].get("sha256"), str) or not SHA256_RE.fullmatch(item["writable_layer"]["sha256"]):
             raise InventoryError("invalid container record")
-    if [item["id"] for item in value["containers"]] != value["deletion_vector"]:
+    if [item["id"] for item in value["containers"]] != value["deletion_vector"] or len(set(value["deletion_vector"])) != len(value["deletion_vector"]):
         raise InventoryError("deletion vector does not match containers")
     if any(not isinstance(item, str) or not CONTAINER_ID_RE.fullmatch(item) for item in value["deletion_vector"]):
         raise InventoryError("invalid deletion vector")
     for item in value["volumes"]:
         if not isinstance(item, dict) or set(item) != {"name_sha256", "driver"} or not isinstance(item["name_sha256"], str) or not SHA256_RE.fullmatch(item["name_sha256"]) or not isinstance(item["driver"], str):
             raise InventoryError("invalid volume record")
+    if value["volumes"] != sorted(value["volumes"], key=canonical_bytes) or len({item["name_sha256"] for item in value["volumes"]}) != len(value["volumes"]):
+        raise InventoryError("invalid volume record")
     for item in value["networks"]:
         if not isinstance(item, dict) or set(item) != {"id", "name_sha256"} or not isinstance(item["id"], str) or not CONTAINER_ID_RE.fullmatch(item["id"]) or not isinstance(item["name_sha256"], str) or not SHA256_RE.fullmatch(item["name_sha256"]):
             raise InventoryError("invalid network record")
+    if value["networks"] != sorted(value["networks"], key=canonical_bytes) or len({item["id"] for item in value["networks"]}) != len(value["networks"]):
+        raise InventoryError("invalid network record")
     filesystem_keys = {"device", "capacity_bytes", "available_bytes", "apparent_size_bytes"}
-    if not isinstance(value["filesystems"], list) or any(not isinstance(item, dict) or set(item) != filesystem_keys or any(not isinstance(number, int) or isinstance(number, bool) or number < 0 for number in item.values()) for item in value["filesystems"]) or len({item["device"] for item in value["filesystems"]}) != len(value["filesystems"]):
+    if (not isinstance(value["filesystems"], list) or not value["filesystems"]
+            or any(not isinstance(item, dict) or set(item) != filesystem_keys or any(not isinstance(number, int) or isinstance(number, bool) or number < 0 for number in item.values()) for item in value["filesystems"])
+            or [item["device"] for item in value["filesystems"]] != sorted(item["device"] for item in value["filesystems"])
+            or len({item["device"] for item in value["filesystems"]}) != len(value["filesystems"])):
         raise InventoryError("invalid filesystem evidence")
-    if not isinstance(value["expected_caddy_paths"], list) or any(not isinstance(path, str) or not path.startswith("/etc/caddy/") for path in value["expected_caddy_paths"]):
+    if (not isinstance(value["expected_caddy_paths"], list) or not value["expected_caddy_paths"]
+            or value["expected_caddy_paths"] != sorted(set(value["expected_caddy_paths"]))):
         raise InventoryError("invalid Caddy paths")
+    for path in value["expected_caddy_paths"]:
+        try:
+            _safe_absolute_path(path, "expected Caddy path")
+        except InventoryError as exc:
+            raise InventoryError("invalid Caddy paths") from exc
+        if not path.startswith("/etc/caddy/"):
+            raise InventoryError("invalid Caddy paths")
     return value
 
 
@@ -447,7 +497,11 @@ def read_request_file(path: Path, expected_sha256: str, *, require_root: bool = 
         os.close(descriptor)
     if hashlib.sha256(raw).hexdigest() != expected_sha256:
         raise InventoryError("request digest mismatch")
-    value = strict_json(raw.decode("utf-8"))
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise InventoryError("request file is not UTF-8") from exc
+    value = strict_json(decoded)
     if canonical_bytes(value) != raw:
         raise InventoryError("request bytes are not canonical")
     return _request_object(value)
