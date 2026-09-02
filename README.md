@@ -12,7 +12,10 @@ and promote the exact OCI images already verified in staging.
 
 - Separate build, runtime, and public evidence.
 - One immutable service-to-digest candidate manifest.
-- Explicit production approval without a production rebuild.
+- A CNB Tag-details release page with ready-last candidate state, separate
+  readiness/approval/execution, and fail-closed production defaults.
+- Explicit production approval without a production rebuild; the same tested
+  digests are promoted through a project-owned execution adapter.
 - Clear ordinary-repository, Secret-repository, and target-host boundaries.
 - Role-owned setup and recovery information that survives a change of AI tool.
 - A versioned shared-Caddy declaration, internal/external provenance chain,
@@ -31,6 +34,8 @@ and promote the exact OCI images already verified in staging.
   and one-time console work.
 - [CNB OpenAPI](references/cnb-openapi.md) — current CNB-specific facts and
   mutation boundaries.
+- [CNB native deployment page](references/cnb-deployment-ui.md) — candidate
+  Tag, static/dynamic production gates, versioned handoff, and safe examples.
 - [Shared Caddy contract v1](references/shared-caddy-v1/contract.md) — schemas,
   canonical routes, persistent host locks, generation transactions, and recovery.
 - [Shared Caddy host handoff](references/shared-caddy-v1/host-handoff.md) —

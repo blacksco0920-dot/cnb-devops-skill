@@ -87,20 +87,51 @@ inside CNB Web, and return only a value-free receipt.
 
 ## Native deployment UI
 
-`.cnb/tag_deploy.yml` defines named environments. Selecting an environment
-triggers the matching `tag_deploy.<environment>` pipeline for the selected tag.
+`.cnb/tag_deploy.yml` renders environments and controls on the selected Tag's
+details page. A custom `button` triggers its configured `web_trigger_*` event;
+a `deploy` button triggers `tag_deploy.<environment>`. Both events load the
+selected Tag's configuration and code, not a later default-branch edit.
 
-Before relying on the UI for production, configure and verify:
+`permissions.roles` supports `owner`, `master`, and `developer`, but roles are
+not upward-inclusive. Once environment permissions are configured, the caller
+still needs repository write access; configure custom-button permissions
+separately. All `require` items must pass, including annotation and approver
+requirements.
 
-- deployment permissions in addition to repository write permission;
-- a staging environment requirement;
-- required candidate annotations that bind the immutable evidence;
-- the named approver requirement;
-- the matching production event in `.cnb.yml`.
+CNB restricts replay of a deployment build to its original trigger and to 24
+hours. After that, or when another operator acts, start again from the Tag
+details page. This replay restriction does not establish candidate freshness
+and does not replace a project-owned dynamic gate.
 
-All configured `require` items must pass. A UI approval is still only approval
-for the candidate represented by the tag; the production pipeline must reload
-and compare the complete tested digest map, and must not rebuild it.
+Use [CNB native deployment page and candidate gate](cnb-deployment-ui.md) for
+the ready-last candidate lifecycle, static and dynamic production gates,
+versioned handoff, safe default examples, and recovery behavior. A UI approval
+is still only approval for the exact candidate represented by the Tag; the
+production pipeline must reload and compare the complete tested digest map and
+must not rebuild it.
+
+### Empty annotation GET compatibility
+
+Pinned `cnbcool/annotations:v1.0.0` behavior has one important first-read edge
+case: when GET returns an empty array, the plugin prints `未获取到元数据` and
+returns before creating `toFile`. This was reproduced in a real CNB build and
+checked against the pinned image source; do not infer file creation from a zero
+plugin exit code.
+
+Immediately before the first GET on a newly created candidate, use `umask 077`
+to **pre-create only the first empty snapshot** as canonical `{}` with mode
+`0600`. If annotations exist, the plugin overwrites that file; if none exist,
+the safe empty object remains for strict parsing.
+
+Scope this compatibility rule narrowly. After any ADD, the next GET writes to a
+fresh path that was not pre-created. **A missing post-write snapshot remains an
+error** and blocks ready-last publication. In particular, never generalize
+missing file as empty, and do not accept arbitrary non-empty content as a
+successful readback; strictly parse the exact JSON object, reject duplicate or
+unknown keys, and compare every expected key and value before continuing. Set
+the retained snapshot to mode `0600`; a parse or comparison failure blocks the
+ready-last transition. See the
+[annotation readback example](cnb-deployment-ui/examples/annotation-readback.yml).
 
 ## Common errors
 

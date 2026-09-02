@@ -1,6 +1,6 @@
 # Release Safety
 
-Last verified: 2026-08-30
+Last verified: 2026-09-02
 
 ## Evidence planes
 
@@ -36,8 +36,36 @@ empty, malformed, or mismatched fields. Reject a partial service map and any
 mutable image reference. Create the candidate only after the real staging
 deployment has passed build, runtime, and public evidence checks.
 
+Define the hash domain without circularity: serialize the manifest using RFC 8785,
+append the contract's single LF framing byte, and hash those exact bytes.
+Store the resulting SHA-256 in a candidate annotation outside the manifest;
+never insert the digest into the payload it identifies.
+
 A source tag, branch, approval, or successful pipeline is not a substitute for
 the candidate manifest.
+
+Publish a candidate Tag create-only, then read back its peeled commit and exact
+canonical manifest message. Write manifest, commit, and separate evidence-plane
+annotations first; read them back; publish `candidate_status=ready` last. This
+**ready-last** order prevents a partial or later-repaired candidate from
+appearing deployable. Never force-move or overwrite a candidate Tag.
+
+For CNB's Tag-details control surface and safe examples, read
+[CNB native deployment page and candidate gate](cnb-deployment-ui.md).
+
+## Production readiness
+
+The CNB page's annotation and approver requirements are a static gate. A
+project-owned dynamic gate runs both when readiness is requested and at the
+start of deployment. It reloads the selected Tag, canonical manifest, complete
+service set, annotations, governed-branch ancestry, versioned
+`production-handoff/v1`, selected adapter status, and recovery state.
+
+A passed readiness result is bound to one candidate, manifest hash, policy, and
+verifier. It expires after at most **24 hours**. A pending handoff, disabled or
+mismatched adapter, stale readiness, missing evidence, or `recovery-required`
+state blocks before production credentials are loaded or an external call is
+made.
 
 ## Production promotion
 
@@ -45,6 +73,11 @@ Reload the stored candidate evidence at approval time. Compare the complete
 service set and every digest with the staging record, require an explicit
 production request and the configured approval, then deploy the same digests.
 Never rebuild, retag a mutable image as evidence, or infer a missing digest.
+
+Approval and execution are separate: the execution path re-runs the dynamic
+gate after approval and promotes the **same digest** for every configured
+service role. Any candidate, membership, digest, handoff, adapter, or policy
+change invalidates the earlier readiness and approval.
 
 After deployment, compare the actual production service set and digests with
 the candidate before recording success.
@@ -89,6 +122,11 @@ the failed attempt. After writers stop or a migration may have begun, write a
 `recovery-required` state atomically, preserve backup and rollback material,
 block the next release, and assign recovery review. Never guess at, automate,
 or imply a database rollback from an image rollback.
+
+After recovery, clear neither the blocker nor the historical record by
+assumption. Complete the configured recovery review, produce a new readiness
+result, and obtain new approval before any retry, even when the candidate's
+digest map is unchanged.
 
 ## Atomic records and retention
 

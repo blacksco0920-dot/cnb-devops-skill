@@ -1,0 +1,67 @@
+{
+  "environments": [
+    {
+      "name": "production",
+      "description": "Promote one immutable tested candidate",
+      "permissions": {
+        "roles": ["owner"]
+      },
+      "button": [
+        {
+          "name": "Refresh production readiness",
+          "description": "Revalidate the selected candidate without deploying",
+          "event": "web_trigger_production_readiness",
+          "permissions": {
+            "roles": ["owner"]
+          }
+        }
+      ],
+      "deploy": [
+        {
+          "name": "Execute production deployment",
+          "description": "Promote the approved candidate without rebuilding"
+        }
+      ],
+      "require": [
+        {
+          "annotation": "candidate_status",
+          "expect": {"eq": "ready"}
+        },
+        {
+          "annotation": "candidate_format",
+          "expect": {"eq": "candidate-manifest/v1"}
+        },
+        {
+          "annotation": "candidate_manifest_sha256",
+          "expect": {"reg": "^[0-9a-f]{64}$"}
+        },
+        {
+          "annotation": "candidate_commit",
+          "expect": {"reg": "^[0-9a-f]{40}$"}
+        },
+        {
+          "annotation": "test_build_status",
+          "expect": {"eq": "passed"}
+        },
+        {
+          "annotation": "test_runtime_status",
+          "expect": {"eq": "passed"}
+        },
+        {
+          "annotation": "test_public_status",
+          "expect": {"eq": "passed"}
+        },
+        {
+          "annotation": "production_readiness",
+          "expect": {"eq": "passed"}
+        },
+        {
+          "approver": {
+            "roles": ["owner"]
+          },
+          "title": "Approve this exact production candidate"
+        }
+      ]
+    }
+  ]
+}

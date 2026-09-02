@@ -1,0 +1,45 @@
+{
+  "stages": [
+    {
+      "name": "Initialize only a freshly created candidate's first empty snapshot",
+      "script": "set -eu\ntest -n \"${CANDIDATE_TAG:-}\"\numask 077\nmkdir -p .release\nprintf '{}\\n' > .release/annotations-before-add.json\nchmod 600 .release/annotations-before-add.json"
+    },
+    {
+      "name": "Read annotations before the first add",
+      "image": "cnbcool/annotations:v1.0.0@sha256:bfd02b627f3b49082aa7dbbac1999560b4d66c7d85682084d0747eabecd75818",
+      "settings": {
+        "type": "GET",
+        "tag": "${CANDIDATE_TAG}",
+        "toFile": ".release/annotations-before-add.json"
+      }
+    },
+    {
+      "name": "Validate the canonical initial snapshot",
+      "image": "cnbcool/annotations:v1.0.0@sha256:bfd02b627f3b49082aa7dbbac1999560b4d66c7d85682084d0747eabecd75818",
+      "script": "set -eu\nsnapshot=.release/annotations-before-add.json\ntest -f \"$snapshot\"\ntest -r \"$snapshot\"\nmode=$(stat -c '%a' \"$snapshot\" 2>/dev/null || stat -f '%Lp' \"$snapshot\")\ntest \"$mode\" = 600\nnode - \"$snapshot\" <<'NODE'\nconst fs = require(\"fs\");\nconst raw = fs.readFileSync(process.argv[2], \"utf8\");\nif (raw !== \"{}\\n\") throw new Error(\"initial annotation snapshot is not canonical empty JSON\");\nconst value = JSON.parse(raw);\nif (Array.isArray(value) || value === null || Object.keys(value).length !== 0) throw new Error(\"initial annotation snapshot is not empty\");\nNODE"
+    },
+    {
+      "name": "Add one non-ready candidate annotation",
+      "image": "cnbcool/annotations:v1.0.0@sha256:bfd02b627f3b49082aa7dbbac1999560b4d66c7d85682084d0747eabecd75818",
+      "settings": {
+        "type": "ADD",
+        "tag": "${CANDIDATE_TAG}",
+        "data": "candidate_format=candidate-manifest/v1"
+      }
+    },
+    {
+      "name": "Read annotations after add without seeding the output",
+      "image": "cnbcool/annotations:v1.0.0@sha256:bfd02b627f3b49082aa7dbbac1999560b4d66c7d85682084d0747eabecd75818",
+      "settings": {
+        "type": "GET",
+        "tag": "${CANDIDATE_TAG}",
+        "toFile": ".release/annotations-after-add.json"
+      }
+    },
+    {
+      "name": "Fail closed if the post-write snapshot is missing",
+      "image": "cnbcool/annotations:v1.0.0@sha256:bfd02b627f3b49082aa7dbbac1999560b4d66c7d85682084d0747eabecd75818",
+      "script": "set -eu\nsnapshot=.release/annotations-after-add.json\ntest -s \"$snapshot\"\nchmod 600 \"$snapshot\"\nmode=$(stat -c '%a' \"$snapshot\" 2>/dev/null || stat -f '%Lp' \"$snapshot\")\ntest \"$mode\" = 600\nnode - \"$snapshot\" <<'NODE'\nconst fs = require(\"fs\");\nconst raw = fs.readFileSync(process.argv[2], \"utf8\");\nconst expected = \"{\\n  \\\"candidate_format\\\": \\\"candidate-manifest/v1\\\"\\n}\";\nif (raw !== expected) throw new Error(\"post-write annotation snapshot is not the exact expected payload\");\nconst value = JSON.parse(raw);\nconst keys = Object.keys(value);\nif (keys.length !== 1 || keys[0] !== \"candidate_format\" || value.candidate_format !== \"candidate-manifest/v1\") throw new Error(\"candidate annotation readback mismatch\");\nNODE"
+    }
+  ]
+}

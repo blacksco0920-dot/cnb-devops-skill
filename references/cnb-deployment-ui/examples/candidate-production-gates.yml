@@ -1,0 +1,24 @@
+{
+  "release-candidate-*": {
+    "web_trigger_production_readiness": [
+      {
+        "stages": [
+          {
+            "name": "Fail closed until the project readiness verifier is installed",
+            "script": "printf '%s\\n' '{\"status\":\"blocked\",\"reason\":\"PROJECT_READINESS_VERIFIER_REQUIRED\"}' >&2\nexit 1"
+          }
+        ]
+      }
+    ],
+    "tag_deploy.production": [
+      {
+        "stages": [
+          {
+            "name": "Fail closed until the production adapter is accepted",
+            "script": "printf '%s\\n' '{\"status\":\"blocked\",\"reason\":\"PRODUCTION_HANDOFF_REQUIRED\"}' >&2\nexit 1"
+          }
+        ]
+      }
+    ]
+  }
+}

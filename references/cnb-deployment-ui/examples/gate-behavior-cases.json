@@ -1,0 +1,434 @@
+{
+  "schema": "production-gate-behavior/v1",
+  "readiness_max_age_seconds": 86400,
+  "candidate_retry_cases": [
+    {
+      "name": "new candidate",
+      "expected": "create",
+      "remote_exists": false,
+      "force_requested": false,
+      "peeled_commit_matches": false,
+      "message_bytes_match": false,
+      "annotation_state": "not_applicable"
+    },
+    {
+      "name": "exact existing candidate with no annotations",
+      "expected": "resume",
+      "remote_exists": true,
+      "force_requested": false,
+      "peeled_commit_matches": true,
+      "message_bytes_match": true,
+      "annotation_state": "empty"
+    },
+    {
+      "name": "exact existing candidate with a non-ready prefix",
+      "expected": "resume",
+      "remote_exists": true,
+      "force_requested": false,
+      "peeled_commit_matches": true,
+      "message_bytes_match": true,
+      "annotation_state": "exact_non_ready_prefix"
+    },
+    {
+      "name": "exact existing ready candidate",
+      "expected": "no_write",
+      "remote_exists": true,
+      "force_requested": false,
+      "peeled_commit_matches": true,
+      "message_bytes_match": true,
+      "annotation_state": "exact_ready"
+    },
+    {
+      "name": "existing candidate has another commit",
+      "expected": "block",
+      "remote_exists": true,
+      "force_requested": false,
+      "peeled_commit_matches": false,
+      "message_bytes_match": true,
+      "annotation_state": "exact_non_ready_prefix"
+    },
+    {
+      "name": "existing candidate has another message",
+      "expected": "block",
+      "remote_exists": true,
+      "force_requested": false,
+      "peeled_commit_matches": true,
+      "message_bytes_match": false,
+      "annotation_state": "exact_non_ready_prefix"
+    },
+    {
+      "name": "existing candidate annotations mismatch",
+      "expected": "block",
+      "remote_exists": true,
+      "force_requested": false,
+      "peeled_commit_matches": true,
+      "message_bytes_match": true,
+      "annotation_state": "mismatched"
+    },
+    {
+      "name": "existing candidate has unknown annotations",
+      "expected": "block",
+      "remote_exists": true,
+      "force_requested": false,
+      "peeled_commit_matches": true,
+      "message_bytes_match": true,
+      "annotation_state": "unknown"
+    },
+    {
+      "name": "existing candidate is ready but incomplete",
+      "expected": "block",
+      "remote_exists": true,
+      "force_requested": false,
+      "peeled_commit_matches": true,
+      "message_bytes_match": true,
+      "annotation_state": "incomplete_ready"
+    },
+    {
+      "name": "force is forbidden",
+      "expected": "block",
+      "remote_exists": true,
+      "force_requested": true,
+      "peeled_commit_matches": true,
+      "message_bytes_match": true,
+      "annotation_state": "exact_ready"
+    }
+  ],
+  "production_defaults": {
+    "adapter_kind": "project-owned",
+    "adapter_status": "enabled",
+    "adapter_version": "adapter-v1",
+    "enabled_adapter_kind": "project-owned",
+    "enabled_adapter_version": "adapter-v1",
+    "approval_generation": "approval-2",
+    "annotation_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "canonical_manifest_valid": true,
+    "candidate_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "candidate_controller_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "candidate_environment": "production",
+    "candidate_format": "candidate-manifest/v1",
+    "candidate_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "candidate_project_id": "sample-project",
+    "candidate_services": {
+      "service-api": "registry.example.invalid/team/service-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "candidate_status": "ready",
+    "candidate_tag": "release-candidate-example",
+    "candidate_tag_matches_prefix": true,
+    "computed_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "expected_controller_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "expected_project_id": "sample-project",
+    "expected_service_repositories": {
+      "service-api": "registry.example.invalid/team/service-api"
+    },
+    "expected_service_roles": [
+      "service-api"
+    ],
+    "governed_branch_contains_candidate": true,
+    "handoff_adapter_kind": "project-owned",
+    "handoff_adapter_version": "adapter-v1",
+    "handoff_candidate_tag": "release-candidate-example",
+    "handoff_environment": "production",
+    "handoff_policy_version": "release-policy/v1",
+    "handoff_status": "accepted",
+    "maintenance_blocker": false,
+    "peeled_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "policy_version": "release-policy/v1",
+    "readiness_age_seconds": 0,
+    "readiness_candidate_tag": "release-candidate-example",
+    "readiness_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "readiness_policy_version": "release-policy/v1",
+    "readiness_status": "passed",
+    "readiness_verifier_version": "candidate-verifier/v1",
+    "recovery_required": false,
+    "required_approval_generation": "approval-2",
+    "selected_candidate_tag": "release-candidate-example",
+    "selected_environment": "production",
+    "selected_services": {
+      "service-api": "registry.example.invalid/team/service-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "source_mirrors_match": true,
+    "unresolved_transaction": false,
+    "verifier_version": "candidate-verifier/v1"
+  },
+  "production_cases": [
+    {
+      "name": "fresh exact candidate at inclusive limit",
+      "expected": "allow",
+      "overrides": {
+        "readiness_age_seconds": 86400
+      }
+    },
+    {
+      "name": "selected candidate tag differs",
+      "expected": "block",
+      "overrides": {
+        "selected_candidate_tag": "release-candidate-other"
+      }
+    },
+    {
+      "name": "candidate format differs",
+      "expected": "block",
+      "overrides": {
+        "candidate_format": "candidate-manifest/v0"
+      }
+    },
+    {
+      "name": "candidate is not ready",
+      "expected": "block",
+      "overrides": {
+        "candidate_status": "partial"
+      }
+    },
+    {
+      "name": "candidate tag is outside the configured prefix",
+      "expected": "block",
+      "overrides": {
+        "candidate_tag_matches_prefix": false
+      }
+    },
+    {
+      "name": "canonical manifest parse fails",
+      "expected": "block",
+      "overrides": {
+        "canonical_manifest_valid": false
+      }
+    },
+    {
+      "name": "peeled commit differs",
+      "expected": "block",
+      "overrides": {
+        "peeled_commit": "dddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    {
+      "name": "controller commit differs",
+      "expected": "block",
+      "overrides": {
+        "candidate_controller_commit": "dddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    {
+      "name": "manifest annotation differs",
+      "expected": "block",
+      "overrides": {
+        "annotation_manifest_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    {
+      "name": "computed manifest hash differs",
+      "expected": "block",
+      "overrides": {
+        "computed_manifest_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    {
+      "name": "project identity differs",
+      "expected": "block",
+      "overrides": {
+        "candidate_project_id": "other-project"
+      }
+    },
+    {
+      "name": "environment identity differs",
+      "expected": "block",
+      "overrides": {
+        "candidate_environment": "staging"
+      }
+    },
+    {
+      "name": "candidate is outside governed branch",
+      "expected": "block",
+      "overrides": {
+        "governed_branch_contains_candidate": false
+      }
+    },
+    {
+      "name": "source mirrors disagree",
+      "expected": "block",
+      "overrides": {
+        "source_mirrors_match": false
+      }
+    },
+    {
+      "name": "future-dated readiness",
+      "expected": "block",
+      "overrides": {
+        "readiness_age_seconds": -1
+      }
+    },
+    {
+      "name": "readiness older than limit",
+      "expected": "block",
+      "overrides": {
+        "readiness_age_seconds": 86401
+      }
+    },
+    {
+      "name": "failed readiness",
+      "expected": "block",
+      "overrides": {
+        "readiness_status": "failed"
+      }
+    },
+    {
+      "name": "readiness belongs to another candidate",
+      "expected": "block",
+      "overrides": {
+        "readiness_candidate_tag": "release-candidate-other"
+      }
+    },
+    {
+      "name": "readiness manifest differs",
+      "expected": "block",
+      "overrides": {
+        "readiness_manifest_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    {
+      "name": "readiness policy version differs",
+      "expected": "block",
+      "overrides": {
+        "readiness_policy_version": "release-policy/v0"
+      }
+    },
+    {
+      "name": "readiness verifier version differs",
+      "expected": "block",
+      "overrides": {
+        "readiness_verifier_version": "candidate-verifier/v0"
+      }
+    },
+    {
+      "name": "recovery invalidates readiness and approval",
+      "expected": "block",
+      "overrides": {
+        "recovery_required": true
+      }
+    },
+    {
+      "name": "old approval generation after recovery",
+      "expected": "block",
+      "overrides": {
+        "approval_generation": "approval-1"
+      }
+    },
+    {
+      "name": "handoff is still pending",
+      "expected": "block",
+      "overrides": {
+        "handoff_status": "pending"
+      }
+    },
+    {
+      "name": "handoff belongs to another candidate",
+      "expected": "block",
+      "overrides": {
+        "handoff_candidate_tag": "release-candidate-other"
+      }
+    },
+    {
+      "name": "handoff environment differs",
+      "expected": "block",
+      "overrides": {
+        "handoff_environment": "staging"
+      }
+    },
+    {
+      "name": "handoff policy version differs",
+      "expected": "block",
+      "overrides": {
+        "handoff_policy_version": "release-policy/v0"
+      }
+    },
+    {
+      "name": "handoff adapter kind differs",
+      "expected": "block",
+      "overrides": {
+        "handoff_adapter_kind": "other-adapter"
+      }
+    },
+    {
+      "name": "handoff adapter version differs",
+      "expected": "block",
+      "overrides": {
+        "handoff_adapter_version": "adapter-v0"
+      }
+    },
+    {
+      "name": "execution adapter is disabled",
+      "expected": "block",
+      "overrides": {
+        "adapter_status": "disabled"
+      }
+    },
+    {
+      "name": "enabled adapter kind differs",
+      "expected": "block",
+      "overrides": {
+        "enabled_adapter_kind": "other-adapter"
+      }
+    },
+    {
+      "name": "enabled adapter version differs",
+      "expected": "block",
+      "overrides": {
+        "enabled_adapter_version": "adapter-v0"
+      }
+    },
+    {
+      "name": "unresolved transaction blocks deployment",
+      "expected": "block",
+      "overrides": {
+        "unresolved_transaction": true
+      }
+    },
+    {
+      "name": "maintenance blocker blocks deployment",
+      "expected": "block",
+      "overrides": {
+        "maintenance_blocker": true
+      }
+    },
+    {
+      "name": "selected digest differs",
+      "expected": "block",
+      "overrides": {
+        "selected_services": {
+          "service-api": "registry.example.invalid/team/service-api@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      }
+    },
+    {
+      "name": "selected service membership is partial",
+      "expected": "block",
+      "overrides": {
+        "candidate_services": {
+          "service-api": "registry.example.invalid/team/service-api@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "service-worker": "registry.example.invalid/team/service-worker@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      }
+    },
+    {
+      "name": "candidate and selection use the wrong repository",
+      "expected": "block",
+      "overrides": {
+        "candidate_services": {
+          "service-api": "registry.example.invalid/team/other-service-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "selected_services": {
+          "service-api": "registry.example.invalid/team/other-service-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      }
+    },
+    {
+      "name": "candidate omits a configured service role",
+      "expected": "block",
+      "overrides": {
+        "expected_service_roles": [
+          "service-api",
+          "service-worker"
+        ]
+      }
+    }
+  ]
+}

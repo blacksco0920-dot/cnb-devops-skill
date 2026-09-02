@@ -119,6 +119,71 @@ class SkillPackageTests(unittest.TestCase):
             handoffs,
         )
 
+    def test_cnb_openapi_routes_the_native_deployment_ui_contract(self):
+        openapi = self.text("references/cnb-openapi.md")
+        route = "cnb-deployment-ui.md"
+        self.assertIn(f"]({route})", openapi)
+        self.assertTrue((ROOT / "references" / route).is_file())
+
+        normalized = " ".join(openapi.split())
+        for phrase in (
+            "prints `未获取到元数据` and returns before creating `toFile`",
+            "pre-create only the first empty snapshot",
+            "canonical `{}`",
+            "mode `0600`",
+            "A missing post-write snapshot remains an error",
+            "never generalize missing file as empty",
+            "do not accept arbitrary non-empty content",
+            "strictly parse the exact JSON object",
+            "compare every expected key and value",
+        ):
+            self.assertIn(phrase, normalized)
+
+    def test_native_deployment_ui_adds_no_generator_cli_or_server_script(self):
+        example_root = ROOT / "references" / "cnb-deployment-ui" / "examples"
+        self.assertTrue(example_root.is_dir())
+        self.assertFalse(
+            any(path.suffix in {".py", ".sh"} for path in example_root.rglob("*"))
+        )
+        for relative in (
+            "scripts/create_candidate.py",
+            "scripts/publish_candidate_tag.sh",
+            "scripts/production_gate.py",
+            "scripts/deploy_production.sh",
+        ):
+            self.assertFalse((ROOT / relative).exists(), relative)
+
+    def test_native_deployment_ui_is_routed_through_package_guidance(self):
+        readme = self.text("README.md")
+        safety = self.text("references/release-safety.md")
+        handoffs = self.text("references/human-handoffs.md")
+        normalized_handoffs = handoffs.lower()
+        scenarios = self.text("tests/skill-scenarios.md")
+
+        self.assertIn(
+            "](references/cnb-deployment-ui.md)",
+            readme,
+        )
+        for phrase in (
+            "ready-last",
+            "24 hours",
+            "production-handoff/v1",
+            "same digest",
+            "recovery-required",
+            "RFC 8785",
+            "outside the manifest",
+        ):
+            self.assertIn(phrase, safety)
+        for phrase in (
+            "readiness receipt",
+            "versioned production handoff",
+            "approval and execution are separate",
+            "new approval",
+        ):
+            self.assertIn(phrase, normalized_handoffs)
+        self.assertIn("## CNB native deployment page regression", scenarios)
+        self.assertIn("CNB_NATIVE_DEPLOYMENT_GATE", scenarios)
+
     def test_public_runtime_has_no_network_cli_or_vendor_wrapper(self):
         forbidden = (
             "scripts/" + "cnb.py",
@@ -227,6 +292,7 @@ class SkillPackageTests(unittest.TestCase):
             for path in sorted(ROOT.rglob("*"))
             if path.is_file()
             and ".git" not in path.parts
+            and ".worktrees" not in path.parts
             and path.suffix in {".json", ".md", ".py", ".sh", ".yaml", ".yml"}
         )
         for pattern in (

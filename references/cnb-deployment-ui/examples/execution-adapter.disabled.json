@@ -1,0 +1,5 @@
+{
+  "reason": "execution_adapter_not_accepted",
+  "schema": "production-execution-adapter/v1",
+  "status": "disabled"
+}
