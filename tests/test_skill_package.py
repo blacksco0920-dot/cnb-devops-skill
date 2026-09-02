@@ -64,7 +64,7 @@ class SkillPackageTests(unittest.TestCase):
             "TCR Personal",
             "PullRepositoryPersonal",
             "cross-account role",
-            "Last verified: 2026-08-30",
+            "Last verified: 2026-09-02",
         ):
             self.assertIn(phrase, handoffs)
 
@@ -88,6 +88,36 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("tat:DescribeAutomationAgentStatus", handoffs)
         self.assertNotIn("accepts only `secret_id` and `secret_key`", handoffs)
         self.assertNotIn("current two-field plugin is not sufficient", handoffs)
+
+    def test_secret_reference_rules_distinguish_script_and_plugin_tasks(self):
+        openapi = self.text("references/cnb-openapi.md")
+        handoffs = self.text("references/human-handoffs.md")
+        scenarios = self.text("tests/skill-scenarios.md")
+        normalized_openapi = " ".join(openapi.split())
+
+        for phrase in (
+            "a job that has both `image` and `script` is still a script task",
+            "A pipeline-level `image` is also an execution environment, not a plugin",
+            "A plugin-level `imports` reference triggers `allow_images` authorization",
+            "does not pass imported custom variables into the plugin",
+            "`settingsFrom` directly loads plugin parameters",
+            "treat it as exposed",
+            "never echo the value",
+        ):
+            self.assertIn(phrase, normalized_openapi)
+
+        self.assertIn("omit `allow_images`", handoffs)
+        self.assertIn("GREEN evaluation date: 2026-09-02", scenarios)
+        self.assertIn("fresh-context evaluator", scenarios)
+
+        self.assertNotIn(
+            "`allow_slugs`, `allow_events`, `allow_branches`, and `allow_images` fields",
+            openapi,
+        )
+        self.assertNotIn(
+            "`allow_slugs`, `allow_events`, `allow_branches`, and `allow_images` rules",
+            handoffs,
+        )
 
     def test_public_runtime_has_no_network_cli_or_vendor_wrapper(self):
         forbidden = (

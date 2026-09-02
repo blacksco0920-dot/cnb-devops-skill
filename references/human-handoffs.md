@@ -1,6 +1,6 @@
 # Human Handoffs
 
-Last verified: 2026-08-30
+Last verified: 2026-09-02
 
 Use this reference when a release needs information or a console action that an
 AI cannot safely discover or perform. Ask once for the smallest durable
@@ -446,12 +446,22 @@ Only an authorized human Secret maintainer performs these steps:
 1. In CNB Web, create or select the intended **Secret repository**.
 2. Open the intended YAML file in the Web editor; Secret repositories cannot be
    cloned or pushed from a local checkout.
-3. Enter the values directly there. Add the narrowest applicable
-   `allow_slugs`, `allow_events`, `allow_branches`, and `allow_images` rules.
-4. Save through the audited Web flow.
-5. Trigger only a harmless authorized validation and confirm that the intended
+3. Inspect the consuming job before writing permission fields. For an ordinary
+   `script` or `commands` task, add the narrowest applicable `allow_slugs`,
+   `allow_events`, and `allow_branches`, and omit `allow_images`. A job that
+   specifies both `image` and `script` remains a script task; a pipeline-level
+   `image` is likewise only an execution environment.
+4. For a plugin task, also declare `allow_images` for the exact pinned plugin
+   image. Plugin-level `imports` participates in image authorization but does
+   not pass custom variables automatically; `settingsFrom` loads plugin
+   parameters directly. A non-plugin task cannot match `allow_images`.
+5. Enter values directly in CNB Web and save through the audited flow. If a
+   value was pasted into chat, a log, or another ordinary artifact, treat it as
+   exposed, never echo the value, and have the authorized owner rotate it at
+   the source before replacing it here.
+6. Trigger only a harmless authorized validation and confirm that the intended
    pipeline can reference the file while an out-of-scope pipeline cannot.
-6. Return only the variable names and `secret receipt`s. Do not paste values
+7. Return only the variable names and `secret receipt`s. Do not paste values
    into chat or an AI prompt.
 
 Official guidance:
