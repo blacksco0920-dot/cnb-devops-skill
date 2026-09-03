@@ -53,7 +53,7 @@ authority through an application release or its sudo boundary.
 
 ## Read only what the task needs
 
-- Candidate, failure, recovery, audit, or retention: [release safety](references/release-safety.md).
+- Existing-host first release, controller upgrade, candidate, failure, recovery, audit, or retention: [release safety](references/release-safety.md).
 - Human setup or missing information: [human handoffs](references/human-handoffs.md).
 - CNB API, token, Secret repository, or deployment UI behavior: [CNB OpenAPI](references/cnb-openapi.md).
 - Multiple projects sharing one host Caddy, route ownership, helper attestation,

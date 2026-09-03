@@ -1,6 +1,6 @@
 # Human Handoffs
 
-Last verified: 2026-09-02
+Last verified: 2026-09-03
 
 Use this reference when a release needs information or a console action that an
 AI cannot safely discover or perform. Ask once for the smallest durable
@@ -46,6 +46,54 @@ A `readiness receipt` records one candidate identity, manifest hash, policy and
 verifier versions, completion time, expiry, and passed/blocked result. It is
 non-secret and never grants approval. A passed receipt is valid for at most 24
 hours and is revalidated when production execution begins.
+
+### compatibility receipt
+
+A value-free `compatibility receipt` binds an opaque target-scope commitment
+and control-record ID, exact deployment controller, exact path-contract digest,
+verifier, issue and expiry times, and per-check pass/block status. The approved
+control record holds the actual target host set, paths, and expected metadata;
+the receipt contains no credential, raw target IDs or paths, metadata value, or
+file content.
+
+A passed receipt applies only to that target scope, controller, contract, and
+validity period. Target-set, metadata, ACL, mount, required-capability,
+controller, or contract drift invalidates it; any maintenance invalidates it as
+well. Immediately before release execution, recheck freshness, scope, and drift
+against the approved control record and fail closed on uncertainty.
+
+## Target-host owner/operator
+
+### When
+
+Before the first managed release to an existing single-host staging server or
+customer production server, whenever the controller or path contract changes,
+and before and after host maintenance. This role must be named in the
+handoff manifest; ordinary release authority does not imply this role.
+
+### Deliver
+
+- The approved control record containing the real target scope and controller
+  path contract. Expose only its opaque control-record ID and target-scope
+  commitment outside that control boundary.
+- A full read-only compatibility preflight using the exact incoming controller,
+  plus a value-free `compatibility receipt` bound to the exact path-contract
+  digest and finite validity period.
+- If metadata maintenance is required, its separate authorization, executor,
+  narrow numeric UID/GID or mode scope, completion evidence, and the fresh
+  post-maintenance receipt. An ACL change requires its own reviewed fd-safe
+  procedure and authority.
+
+### Acceptance
+
+The receipt is passed, unexpired, in scope, and unchanged by target, metadata,
+ACL, mount, capability, controller, contract, or maintenance drift. Release
+execution independently rechecks freshness, scope, and drift before mutation.
+
+### Never deliver
+
+Credentials, raw target IDs or paths, file contents, a blanket root authority,
+or permission for an ordinary release to repair metadata or ACLs.
 
 ## Shared Caddy host administrator
 
@@ -100,8 +148,9 @@ uncooperative legacy writer.
 
 ### When
 
-Before a repository is first connected, whenever its deployable topology
-changes, and before a candidate is approved.
+Before a repository is first connected, whenever its deployable topology or
+deployment-controller path contract changes, before the first managed release
+to an existing host, and before a candidate is approved.
 
 ### Deliver
 
@@ -111,6 +160,13 @@ changes, and before a candidate is approved.
   volumes.
 - The governed branch, candidate prefix, and whether application/controller
   commits must be identical because they share a repository.
+- A versioned controller path contract for each environment: logical path
+  roles, object kinds, no-symlink requirements, numeric UID/GID, exact mode and
+  ACL requirements, parent-directory traversal identity, mount/capacity
+  expectations, lock/transaction/recovery locations, and required atomic file
+  operations. Keep target-specific values in the approved control system.
+- For an existing host or a new or stricter controller, an accepted value-free
+  `compatibility receipt` produced before the first ordinary release.
 - Environment variable names, classification, and owning role; no values.
 - Independently selected CNB page operator, readiness operator, production
   approver, and change/rollback owner; do not assume roles are upward-inclusive.
@@ -127,6 +183,10 @@ changes, and before a candidate is approved.
 3. Configure synchronization only for governed branches. Do not use a
    destructive `--mirror` flow that could delete CNB candidate tags.
 4. Record the GitHub and CNB full commit IDs after synchronization.
+5. Deliver the controller path contract to the target-host owner/operator named
+   in the handoff manifest. Have that role run the read-only compatibility
+   preflight with the exact incoming controller and return only the value-free
+   `compatibility receipt`.
 
 Official guidance:
 
@@ -141,7 +201,10 @@ The handoff is accepted only when GitHub and CNB resolve the governed branch to
 the same full SHA and the repository's real clean build succeeds. The receipt
 for `CNB_PUSH_TOKEN` exists without exposing its value. The service map,
 candidate naming, UI roles, and execution-adapter ownership are explicit rather
-than inherited from another project.
+than inherited from another project. An existing host also has an accepted
+`compatibility receipt` for the exact controller and path contract; a blocked
+receipt is resolved only through separately authorized maintenance, never by
+the ordinary release.
 
 ### Never deliver
 
@@ -376,6 +439,12 @@ application rollback may be incompatible with stored data.
 - One explicit mode: `none`, `empty`, or `migrate`.
 - Database engine/version, encoding, extensions, schema state, migration order,
   persistent volumes, and external stores.
+- The data and backup portions of the controller path contract, including
+  object kind, numeric UID/GID, exact mode and ACL requirements, retention,
+  parent traversal, capacity, and atomic-write expectations; no data values or
+  dump contents.
+- For an existing host or new controller, the data owner's acceptance of the
+  value-free `compatibility receipt` before backup or migration may start.
 - Encrypted backup location and checksum, restore steps, freeze window, RPO,
   RTO, retention, reconciliation checks, and named recovery owner.
 
@@ -388,6 +457,9 @@ application rollback may be incompatible with stored data.
    as non-secret evidence.
 4. Approve the freeze and migration window only after the rehearsal meets RPO
    and RTO. Keep database recovery as a separate decision from image rollback.
+5. Reject a blocked or stale `compatibility receipt`; metadata repair belongs
+   to separately authorized target-host maintenance, not to backup or migration
+   execution.
 
 Official guidance:
 
@@ -399,8 +471,9 @@ Official guidance:
 ### Acceptance
 
 Mode, backup checksum, successful restore rehearsal, business reconciliation,
-retention, and recovery owner are recorded. The release evidence states whether
-the prior application can safely use the post-migration data.
+retention, recovery owner, and the exact-controller `compatibility receipt` are
+recorded. The release evidence states whether the prior application can safely
+use the post-migration data.
 
 ### Never deliver
 

@@ -49,6 +49,87 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in required:
             self.assertIn(phrase, safety)
 
+    def test_existing_host_controller_compatibility_is_fail_closed(self):
+        safety = " ".join(
+            self.text("references/release-safety.md").split()
+        )
+        handoffs = " ".join(
+            self.text("references/human-handoffs.md").split()
+        )
+
+        for phrase in (
+            "new or stricter deployment controller",
+            "read-only compatibility preflight",
+            "numeric UID/GID",
+            "exact mode and ACL",
+            "parent-directory traversal",
+            "mount writability, capacity, and inodes",
+            "lock, transaction, and recovery state",
+            "atomic file-operation compatibility",
+            "old controller",
+            "descriptor-bound",
+            "no-follow",
+            "inode reread",
+            "fchmod` or `fchown",
+            "fsync and readback",
+            "compatibility receipt",
+            "no migration or transaction began",
+            "recovery review",
+        ):
+            self.assertIn(phrase, safety)
+
+        for phrase in (
+            "controller path contract",
+            "numeric UID/GID",
+            "compatibility receipt",
+            "Last verified: 2026-09-03",
+        ):
+            self.assertIn(phrase, handoffs)
+
+    def test_compatibility_receipt_scope_and_maintenance_are_fail_closed(self):
+        safety = " ".join(
+            self.text("references/release-safety.md").lower().split()
+        )
+        handoffs = " ".join(
+            self.text("references/human-handoffs.md").lower().split()
+        )
+
+        for phrase in (
+            "separately authorized",
+            "root maintenance",
+            "same application release lock",
+            "never auto-repair",
+            "never relax",
+            "target-scope commitment",
+            "control-record id",
+            "exact path-contract digest",
+            "target host set, path metadata or acl, mount, required capability, "
+            "controller, or path contract invalidates",
+            "freshness, target scope, and drift",
+            "any maintenance invalidates",
+            "full read-only compatibility preflight",
+            "fresh passed `compatibility receipt`",
+            "only when both",
+            "explicit acl mismatch",
+            "fd-safe maintenance",
+            "remains blocked",
+        ):
+            self.assertIn(phrase, safety)
+
+        for phrase in (
+            "target-host owner/operator",
+            "named in the handoff manifest",
+            "control-record id",
+            "target-scope commitment",
+            "exact path-contract digest",
+            "issue and expiry times",
+            "raw target ids or paths",
+            "target-set, metadata, acl, mount, required-capability, controller, "
+            "or contract drift",
+            "freshness, scope, and drift",
+        ):
+            self.assertIn(phrase, handoffs)
+
     def test_handoffs_cover_roles_artifacts_and_free_tcr_path(self):
         handoffs = self.text("references/human-handoffs.md")
         for phrase in (
@@ -64,7 +145,7 @@ class SkillPackageTests(unittest.TestCase):
             "TCR Personal",
             "PullRepositoryPersonal",
             "cross-account role",
-            "Last verified: 2026-09-02",
+            "Last verified: 2026-09-03",
         ):
             self.assertIn(phrase, handoffs)
 

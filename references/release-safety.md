@@ -1,6 +1,6 @@
 # Release Safety
 
-Last verified: 2026-09-02
+Last verified: 2026-09-03
 
 ## Evidence planes
 
@@ -92,6 +92,45 @@ Load credentials from their approved secure location only for the operation
 that needs them. Remove temporary Git and registry authentication before
 entering the next trust domain. Never place a token in a URL, remote, argument,
 log, ordinary repository, handoff manifest, or example value.
+
+## Existing-host controller compatibility
+
+Before the first run of a new or stricter deployment controller against
+existing application state, complete a read-only compatibility preflight for
+every controller-managed path. Verify object kind and absence of symlinks;
+numeric UID/GID; exact mode and ACL where applicable; parent-directory
+traversal by the actual runtime identity; mount writability, capacity, and
+inodes; lock, transaction, and recovery state; and every required atomic
+file-operation compatibility. Success with an old controller is not evidence
+that the existing host satisfies the incoming controller's path contract.
+
+If a legitimate existing path has only a numeric UID/GID or mode mismatch, stop
+the ordinary release. Use a separately authorized, one-time root maintenance
+action under the same application release lock. Keep the operation
+descriptor-bound with no-follow semantics, perform an inode reread before
+mutation, narrow the change to the required `fchmod` or `fchown`, then require
+fsync and readback. This repair path covers only numeric ownership and mode. An
+explicit ACL mismatch requires separately designed and reviewed fd-safe
+maintenance; without it, the release remains blocked. Never auto-repair path
+metadata during an ordinary release. Never relax the incoming controller to
+accept legacy state.
+
+Record a value-free compatibility receipt containing an opaque target-scope
+commitment and control-record ID, the exact controller identity and exact
+path-contract digest, verifier, issue and expiry times, and per-check
+pass/block status. The approved control record holds the real target set and
+path data; keep credentials, raw target IDs or paths, metadata values, and file
+contents out of the receipt. A change to the target host set, path metadata or
+ACL, mount, required capability, controller, or path contract invalidates the
+receipt; any maintenance invalidates it as well. Immediately before release
+execution, recheck receipt freshness, target scope, and drift against the
+control record and fail closed on uncertainty.
+
+After any maintenance, rerun the full read-only compatibility preflight and
+issue a fresh passed `compatibility receipt`. Retry the complete staging
+release only when both that fresh receipt and retained proof that no migration
+or transaction began are present. Otherwise preserve the evidence and require
+recovery review.
 
 ## Host transaction
 
