@@ -42,17 +42,11 @@ integrations disabled with a recorded reason, while completing independent work.
 Index generated files, actual check results and remaining blockers in the status
 document. Local generation or passing checks do not establish live acceptance.
 
-Read role details only for the current dependency. Roles identify accountable
-authorities; one person may hold several roles under actual project policy.
-The AI first prepares reviewable configuration, commands and value-free record
-drafts, then validates through available authorized tools and records. Ask the
-person only to perform or confirm the necessary real-world action: where to go,
-what to do, and how completion will be checked. The AI then records verified,
-authorized acceptance; a draft is never evidence of completion. When account
-access or a binding is missing, request that smallest prerequisite, not a
-completed technical receipt. Follow the [human handoff process](human-handoffs.md)
-and keep sensitive inputs in the designated private store. Approval remains a
-distinct candidate-bound decision and never executes production.
+For the current dependency, follow the [human handoff process](human-handoffs.md):
+the AI prepares technical materials and records actual authorized acceptance;
+the human performs or confirms only necessary real-world actions. Keep sensitive
+inputs in the designated private store. Apply the project's approval policy;
+approval remains a distinct candidate-bound decision and never executes production.
 
 ## Project document contract
 
