@@ -44,14 +44,14 @@ HOSTNAME_PATTERN = (
 SOURCE_REPO_RE = re.compile(
     r"https://(?=[^/]{1,253}/)" + HOSTNAME_PATTERN + r"(?:/[A-Za-z0-9._~-]+)+"
 )
-LEGACY_BASELINE_PROJECT_ID = "ecat-energy"
+LEGACY_BASELINE_PROJECT_ID = "sample-app"
 LEGACY_BASELINE_ENVIRONMENT = "legacy-edge"
-LEGACY_BASELINE_DEPLOYMENT_ID = "ecat-energy--legacy-edge"
-LEGACY_BASELINE_SOURCE_REPO = "https://github.com/blacksco0920-dot/ecat-energy"
+LEGACY_BASELINE_DEPLOYMENT_ID = "sample-app--legacy-edge"
+LEGACY_BASELINE_SOURCE_REPO = "https://example.invalid/sample-org/sample-app"
 LEGACY_BASELINE_COMPATIBILITY_PAIRS = (
-    ("ecat.swifteng.com.cn", "www.dianqimao.vip"),
-    ("ecatadmin.swifteng.com.cn", "admin.dianqimao.vip"),
-    ("ecatapi.swifteng.com.cn", "api.dianqimao.vip"),
+    ("app.sample.example.invalid", "www.upstream.example.invalid"),
+    ("admin.sample.example.invalid", "admin.upstream.example.invalid"),
+    ("api.sample.example.invalid", "api.upstream.example.invalid"),
 )
 LEGACY_BASELINE_HOSTS = tuple(pair[0] for pair in LEGACY_BASELINE_COMPATIBILITY_PAIRS)
 LEGACY_BASELINE_ARCHIVE_FILES = (

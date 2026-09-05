@@ -224,14 +224,14 @@ class FinalWaveInstallerTests(unittest.TestCase):
         ):
             self.assertEqual(getattr(helper_layout, name), getattr(installer_layout, name))
 
-        bundle_id = hashlib.sha256(b"ecat-energy test deployment bundle").hexdigest()
+        bundle_id = hashlib.sha256(b"sample-app test deployment bundle").hexdigest()
         arguments = self.h.build_parser().parse_args([
             "--preflight",
-            "--deployment-id", "ecat-energy--test",
+            "--deployment-id", "sample-app--test",
             "--bundle-id", bundle_id,
         ])
         self.assertTrue(arguments.preflight)
-        self.assertEqual("ecat-energy--test", arguments.deployment_id)
+        self.assertEqual("sample-app--test", arguments.deployment_id)
         self.assertEqual(bundle_id, arguments.bundle_id)
 
         valid_contract = {

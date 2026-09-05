@@ -102,3 +102,62 @@ system `python3` does. The package itself is valid and the quick validator passe
 using the available compatible interpreter. No repository dependency files were
 changed because this task is documentation-only and the validation script's
 dependency is an environment concern.
+
+## Fix round 1: reviewer findings
+
+### Changes
+
+- Replaced every public shared-Caddy fixture, schema, helper constant, sudoers
+  sample, and deterministic test reference that carried project-specific
+  identifiers with neutral `sample` and `example.invalid` values.
+- Replaced the retained dynamic TAT `RunCommand` model with fixed-command
+  readback and invocation: `DescribeCommands`, `InvokeCommand`,
+  `DescribeInvocations`, and `DescribeInvocationTasks`.
+- Defined the ownership boundary in all four adoption references: a Saved
+  Command owns reviewed command content/controller; exact target InstanceIds
+  come from an approved project-owned adapter/control record and CAM resource
+  scope; CNB supplies neither targets nor arbitrary script text.
+- Restricted shared-Caddy takeover routing to opaque ownership, shared route
+  ownership, or multiple independently managed projects. A visible
+  single-project legacy route is not a takeover trigger.
+
+### RED evidence
+
+The expanded package suite first failed as intended: the fixed-command test
+found the missing adapter/control-record boundary, and the shared-Caddy test
+found `legacy HTTPS routes` still acting as an independent routing trigger.
+
+After correcting the public-file scan to evaluate paths relative to the package
+root, the sanitation regression failed on retained project-specific fixture
+content. This proved the initial scan had been excluding the current worktree
+rather than proving the package clean.
+
+### GREEN evidence
+
+The updated covering tests passed:
+
+```text
+python3 -m unittest tests.test_skill_package.SkillPackageTests -v
+Ran 22 tests ... OK
+
+python3 -m unittest tests.test_shared_caddy_baseline_import \
+  tests.test_shared_caddy_preflight tests.test_shared_caddy_installer \
+  tests.test_shared_caddy_schemas -v
+Ran 78 tests ... OK (skipped=1)
+```
+
+Residual scans completed with no matches for the retired project identifiers or
+`tat:RunCommand`/`RunCommand`; `git diff --check` also completed without output.
+
+### Final validation
+
+```text
+python3 -m unittest tests.test_skill_package.SkillPackageTests -v
+Ran 22 tests ... OK
+
+PATH=/usr/bin:$PATH python3 tests/quick_validate.py .
+Skill is valid!
+
+python3 -m unittest discover -s tests -p 'test_*.py'
+Ran 314 tests ... OK (skipped=1)
+```

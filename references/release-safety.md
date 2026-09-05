@@ -89,12 +89,17 @@ role assumption, Git read, and business builds. Do not reuse one credential
 across trust domains. Pin executable and plugin images by digest.
 
 For ordinary operator-owned testing and customer-owned production, the pragmatic
-default is dedicated direct CAM identities with fixed, pre-created TAT Saved Commands: one value-free readiness command and one value-free apply command.
-Each command has a project-reviewed target and fixed action; it accepts no
-caller-supplied script, path, target, or credential. A cross-account role/STS is optional when an organization needs that delegation boundary, not a prerequisite
-for a simple project. CNB supplies only normalized non-secret release identity
-and the complete digest map to the selected Saved Command boundary; it does not
-send arbitrary scripts, paths, targets, credentials, or an alternate image map.
+default is dedicated direct CAM identities with fixed, pre-created TAT Saved
+Commands: one value-free readiness command and one value-free apply command.
+Each Saved Command owns fixed reviewed command content/controller. Exact target
+InstanceIds come only from an approved project-owned adapter/control record and
+are constrained by CAM resource scope. CNB supplies only normalized non-secret
+release identity and the complete digest map; it never supplies arbitrary script
+text, paths, targets, credentials, or an alternate image map. The adapter reads
+back the fixed command, invokes its CommandId, and records invocation evidence.
+Cross-account role/STS is optional when an organization needs that delegation
+boundary, not a prerequisite for a simple project; it invokes the same fixed
+commands and does not change the CNB input boundary.
 
 Load credentials from their approved secure location only for the operation
 that needs them. Remove temporary Git and registry authentication before

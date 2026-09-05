@@ -29,7 +29,7 @@ Missing commit, digest, staging evidence, approval, or a required human delivera
 
 ## Legacy shared-host takeover
 
-Only when read-only evidence shows opaque Caddy, legacy HTTPS routes, shared route ownership, or multiple independently managed projects, use [Shared Caddy v1](references/shared-caddy-v1/contract.md) and its [host handoff](references/shared-caddy-v1/host-handoff.md). Keep this order:
+Only when read-only evidence shows opaque Caddy ownership, shared route ownership, or multiple independently managed projects, use [Shared Caddy v1](references/shared-caddy-v1/contract.md) and its [host handoff](references/shared-caddy-v1/host-handoff.md). Keep this order:
 
 ```text
 route inventory (read-only/canonical; no ad-hoc mutation) → external restore-verified snapshot → credential-rotation receipt → root bootstrap → helper-pair maintenance → baseline import/recovery → provision → ordinary release

@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HELPER_PATH = ROOT / "scripts" / "deploydesk_caddy_apply.py"
 INSTALLER_PATH = ROOT / "scripts" / "install_shared_caddy_helper.py"
 FIXTURE = ROOT / "tests" / "fixtures" / "shared-caddy-v1"
-DEPLOYMENT_ID = "ecat-energy--test"
+DEPLOYMENT_ID = "sample-app--test"
 
 
 def load(path, name):
@@ -55,7 +55,7 @@ class SharedCaddyPreflightTests(unittest.TestCase):
         self.layout = self.h.Layout.for_test_root(self.root)
         self.fixture = self.root / "fixture"
         shutil.copytree(FIXTURE, self.fixture)
-        self._retarget_fixture_to_ecat()
+        self._retarget_fixture_to_sample()
         self.i.bootstrap_host(self.layout, owner_uid=os.getuid())
         self.i.install_helper(
             self.layout,
@@ -84,14 +84,14 @@ class SharedCaddyPreflightTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def _retarget_fixture_to_ecat(self):
+    def _retarget_fixture_to_sample(self):
         declaration_path = self.fixture / "bundle" / "caddy" / "declaration.json"
         declaration = json.loads(declaration_path.read_text())
         declaration.update({
-            "project_id": "ecat-energy",
+            "project_id": "sample-app",
             "environment": "test",
             "deployment_id": DEPLOYMENT_ID,
-            "source_repo": "https://cnb.cool/ecat/energy",
+            "source_repo": "https://example.invalid/sample-org/sample-app",
         })
         declaration_path.write_text(json.dumps(declaration, sort_keys=True) + "\n")
 
@@ -209,7 +209,7 @@ class SharedCaddyPreflightTests(unittest.TestCase):
             DEPLOYMENT_ID,
             "app.example.test",
             fragment=old_fragment,
-            manifest_updates={"source_repo": "https://cnb.cool/ecat/energy"},
+            manifest_updates={"source_repo": "https://example.invalid/sample-org/sample-app"},
         )
         incoming_manifest = json.loads(
             (
@@ -265,7 +265,7 @@ class SharedCaddyPreflightTests(unittest.TestCase):
         helper_class.assert_not_called()
         self.assertEqual("", output.getvalue())
 
-    def test_cli_dispatches_exact_ecat_preflight_and_emits_one_canonical_json(self):
+    def test_cli_dispatches_exact_sample_preflight_and_emits_one_canonical_json(self):
         expected = {
             "schema_version": "shared-caddy-preflight/v1",
             "status": "passed",
@@ -355,7 +355,7 @@ class SharedCaddyPreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(self.h.OwnershipError, "already owned"):
             self.preflight()
 
-    def test_preflight_rejects_incoming_ecat_host_conflict(self):
+    def test_preflight_rejects_incoming_sample_host_conflict(self):
         self.write_live_owner("other-app--test", "app.example.test")
         with self.assertRaisesRegex(self.h.OwnershipError, "already owned"):
             self.preflight()
@@ -363,7 +363,7 @@ class SharedCaddyPreflightTests(unittest.TestCase):
     def test_preflight_rejects_ownership_identity_change(self):
         self.write_live_owner(
             DEPLOYMENT_ID, "app.example.test",
-            manifest_updates={"source_repo": "https://code.example/other/ecat-energy"},
+            manifest_updates={"source_repo": "https://code.example/other/sample-app"},
         )
         with self.assertRaisesRegex(self.h.MaintenanceRequired, "identity change"):
             self.preflight()

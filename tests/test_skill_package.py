@@ -149,26 +149,24 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, handoffs)
 
-    def test_handoffs_cover_lighthouse_and_the_pinned_tat_runtime_contract(self):
+    def test_handoffs_cover_lighthouse_and_the_fixed_tat_command_contract(self):
         handoffs = self.text("references/human-handoffs.md")
         for phrase in (
             "CVM",
             "Lighthouse",
-            "tat:RunCommand",
+            "tat:DescribeCommands",
+            "tat:InvokeCommand",
             "tat:DescribeInvocations",
             "tat:DescribeInvocationTasks",
-            "tencentcom/tcloud-cmd:v1.2.0@sha256:04824cba6a59858a2c78d6ddfc75c63a30941c219c85f414b379f425c43e8845",
-            "/app/index.js",
-            "Repeat this inspection whenever the selected digest changes",
-            "PLUGIN_TOKEN",
-            "credential expiration",
-            "worst-case remote timeout",
+            "CommandId",
+            "exact target InstanceIds",
+            "approved project-owned adapter/control record",
+            "arbitrary script text",
             "harmless TAT preflight",
         ):
             self.assertIn(phrase, handoffs)
+        self.assertNotIn("tat:Run" + "Command", handoffs)
         self.assertNotIn("tat:DescribeAutomationAgentStatus", handoffs)
-        self.assertNotIn("accepts only `secret_id` and `secret_key`", handoffs)
-        self.assertNotIn("current two-field plugin is not sufficient", handoffs)
 
     def test_secret_reference_rules_distinguish_script_and_plugin_tasks(self):
         openapi = self.text("references/cnb-openapi.md")
@@ -297,17 +295,20 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, adoption)
 
+        routed_contract = " ".join(
+            "\n".join((safety, deployment_ui, handoffs)).lower().split()
+        )
         for phrase in (
-            "dedicated direct CAM identities",
-            "fixed, pre-created TAT Saved Commands",
+            "dedicated direct cam identities",
+            "fixed, pre-created tat saved commands",
             "readiness",
             "apply",
-            "cross-account role/STS is optional",
+            "cross-account role/sts is optional",
             "normalized non-secret release identity",
             "complete digest map",
-            "arbitrary scripts, paths, targets, credentials",
+            "arbitrary script text",
         ):
-            self.assertIn(phrase, "\n".join((safety, deployment_ui, handoffs)))
+            self.assertIn(phrase, routed_contract)
 
         for scenario in (
             "NEW_PROJECT_REPO_ONLY",
@@ -329,6 +330,50 @@ class SkillPackageTests(unittest.TestCase):
         skill = self.text("SKILL.md")
         self.assertIn("multiple independently managed projects", skill)
         self.assertNotIn("multi-container Docker host", skill)
+
+    def test_shared_caddy_routing_does_not_treat_a_visible_single_project_route_as_shared(self):
+        skill = self.text("SKILL.md")
+        self.assertIn("opaque Caddy", skill)
+        self.assertIn("shared route ownership", skill)
+        self.assertNotIn("legacy " + "HTTPS routes", skill)
+
+    def test_fixed_tat_commands_keep_scripts_and_targets_out_of_cnb_inputs(self):
+        release_safety = self.text("references/release-safety.md")
+        deployment_ui = self.text("references/cnb-deployment-ui.md")
+        handoffs = self.text("references/human-handoffs.md")
+        adoption = self.text("references/project-adoption.md")
+
+        for source in (release_safety, deployment_ui, handoffs, adoption):
+            source = " ".join(source.lower().split())
+            self.assertIn("fixed, pre-created tat saved commands", source)
+            self.assertIn("approved project-owned adapter/control record", source)
+            self.assertIn("arbitrary script text", source)
+            self.assertIn("exact target instanceids", source)
+
+        for phrase in (
+            "tat:DescribeCommands",
+            "tat:InvokeCommand",
+            "tat:DescribeInvocations",
+            "tat:DescribeInvocationTasks",
+        ):
+            self.assertIn(phrase, handoffs)
+        self.assertNotIn("tat:Run" + "Command", handoffs)
+
+    def test_public_package_has_no_project_specific_fixture_facts(self):
+        public = "\n".join(
+            path.read_text(encoding="utf-8")
+            for directory in ("references", "scripts", "tests")
+            for path in sorted((ROOT / directory).rglob("*"))
+            if path.is_file()
+            and path.suffix in {".json", ".md", ".py", ".sh", ".yaml", ".yml"}
+        ).lower()
+        for forbidden in (
+            "e" + "cat",
+            "swift" + "eng",
+            "dianqi" + "mao",
+            "blacksco" + "0920",
+        ):
+            self.assertNotIn(forbidden, public)
 
     def test_public_runtime_has_no_network_cli_or_vendor_wrapper(self):
         forbidden = (
@@ -403,17 +448,17 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, contract)
         self.assertIn(
-            "Cmnd_Alias ECAT_CADDY_PREFLIGHT = /usr/local/sbin/deploydesk-caddy-apply "
-            "^--preflight --deployment-id ecat-energy--test --bundle-id [0-9a-f]{64}$",
+            "Cmnd_Alias SAMPLE_APP_CADDY_PREFLIGHT = /usr/local/sbin/deploydesk-caddy-apply "
+            "^--preflight --deployment-id sample-app--test --bundle-id [0-9a-f]{64}$",
             sudoers,
         )
         self.assertIn(
-            "Cmnd_Alias ECAT_CADDY_APPLY = /usr/local/sbin/deploydesk-caddy-apply "
-            "^--deployment-id ecat-energy--test --bundle-id [0-9a-f]{64}$",
+            "Cmnd_Alias SAMPLE_APP_CADDY_APPLY = /usr/local/sbin/deploydesk-caddy-apply "
+            "^--deployment-id sample-app--test --bundle-id [0-9a-f]{64}$",
             sudoers,
         )
         self.assertIn(
-            "ubuntu ALL=(root) NOPASSWD: ECAT_CADDY_PREFLIGHT, ECAT_CADDY_APPLY",
+            "ubuntu ALL=(root) NOPASSWD: SAMPLE_APP_CADDY_PREFLIGHT, SAMPLE_APP_CADDY_APPLY",
             sudoers,
         )
 

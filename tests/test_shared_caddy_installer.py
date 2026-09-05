@@ -356,7 +356,7 @@ class SharedCaddyInstallerTests(unittest.TestCase):
             {action.dest for action in self.helper.build_parser()._actions},
         )
         rendered = self.installer.render_deployment_sudoers(
-            "ecat-energy--test", "ubuntu", "ECAT",
+            "sample-app--test", "ubuntu", "SAMPLE_APP",
         )
         self.assertEqual(2, rendered.count("Cmnd_Alias"))
         self.assertNotIn("baseline", rendered.lower())
@@ -365,24 +365,24 @@ class SharedCaddyInstallerTests(unittest.TestCase):
     def test_sudoers_rendering_grants_only_one_deployments_preflight_and_apply(self):
         self.assertEqual(
             (
-                "Cmnd_Alias ECAT_CADDY_PREFLIGHT = "
+                "Cmnd_Alias SAMPLE_APP_CADDY_PREFLIGHT = "
                 "/usr/local/sbin/deploydesk-caddy-apply ^--preflight "
-                "--deployment-id ecat-energy--test --bundle-id [0-9a-f]{64}$\n"
-                "Cmnd_Alias ECAT_CADDY_APPLY = "
+                "--deployment-id sample-app--test --bundle-id [0-9a-f]{64}$\n"
+                "Cmnd_Alias SAMPLE_APP_CADDY_APPLY = "
                 "/usr/local/sbin/deploydesk-caddy-apply ^--deployment-id "
-                "ecat-energy--test --bundle-id [0-9a-f]{64}$\n"
-                "ubuntu ALL=(root) NOPASSWD: ECAT_CADDY_PREFLIGHT, ECAT_CADDY_APPLY\n"
+                "sample-app--test --bundle-id [0-9a-f]{64}$\n"
+                "ubuntu ALL=(root) NOPASSWD: SAMPLE_APP_CADDY_PREFLIGHT, SAMPLE_APP_CADDY_APPLY\n"
             ),
             self.installer.render_deployment_sudoers(
-                "ecat-energy--test", "ubuntu", "ECAT",
+                "sample-app--test", "ubuntu", "SAMPLE_APP",
             ),
         )
 
     def test_sudoers_rendering_rejects_untrusted_identity_or_alias(self):
         for deployment_id, release_identity, alias in (
-            ("ecat-energy--test --bundle-id x", "ubuntu", "ECAT"),
-            ("ecat-energy--test", "ubuntu ALL=(root)", "ECAT"),
-            ("ecat-energy--test", "ubuntu", "ECAT, ALL"),
+            ("sample-app--test --bundle-id x", "ubuntu", "SAMPLE_APP"),
+            ("sample-app--test", "ubuntu ALL=(root)", "SAMPLE_APP"),
+            ("sample-app--test", "ubuntu", "SAMPLE_APP, ALL"),
         ):
             with self.subTest(
                 deployment_id=deployment_id,

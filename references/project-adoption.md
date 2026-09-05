@@ -61,12 +61,16 @@ because a project is new.
 
 For both operator-owned testing and customer-owned production, use dedicated
 direct CAM identities with two fixed, pre-created TAT Saved Commands: one for
-readiness and one for apply. The command definitions own the reviewed target and
-action. CNB supplies only normalized non-secret release identity and the
-complete digest map; it never supplies arbitrary scripts, paths, targets, or
-credentials. Cross-account role/STS is optional when an organization needs a
-separate delegation boundary. Return missing setup work as one owner,
-destination, and acceptance result, never as secret-value questions.
+readiness and one for apply. Each Saved Command owns fixed reviewed command
+content/controller. Exact target InstanceIds come only from an approved
+project-owned adapter/control record and CAM resource scope, never from CNB.
+CNB supplies only normalized non-secret release identity and the complete digest
+map; it never supplies arbitrary script text, paths, targets, or credentials.
+The adapter reads back the fixed command, invokes its CommandId, and records
+invocation evidence. Cross-account role/STS is optional when an organization
+needs a separate delegation boundary and invokes the same fixed commands. Return
+missing setup work as one owner, destination, and acceptance result, never as
+secret-value questions.
 
 ## Minimal release ladder
 

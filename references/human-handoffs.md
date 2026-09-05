@@ -316,9 +316,10 @@ ready, and whenever its role, instance, region, or maintenance window changes.
   window directly into the approved control locations—not into chat or the
   `handoff manifest`.
 - A dedicated direct CAM identity scoped to this project's fixed, pre-created
-  TAT Saved Commands for readiness and apply. Its command definitions hold the
-  approved target and action; CNB receives no arbitrary script, path, target,
-  or credential input.
+  TAT Saved Commands for readiness and apply. Each Saved Command owns fixed
+  reviewed command content/controller. Exact target InstanceIds come only from
+  an approved project-owned adapter/control record and CAM resource scope; CNB
+  receives no arbitrary script text, path, target, or credential input.
 - A `secret receipt` for the required variable names, approved storage
   locations, owner, and validation state—never their values.
 - If organizational delegation requires it, a customer-controlled
@@ -338,13 +339,16 @@ ready, and whenever its role, instance, region, or maintenance window changes.
    identity, and enable external-ID validation. This cross-account role/STS path
    is optional; never trust a human administrator's general identity or every
    identity in the account.
-4. Attach a custom least-privilege policy matching the calls made by the exact
-   pinned execution artifact. The verified `tcloud-cmd` runtime calls
-   `tat:RunCommand`, polls with `tat:DescribeInvocations`, and, when instance
-   output is requested, calls `tat:DescribeInvocationTasks`. Scope these calls
-   to the intended command and target-instance resources. A CVM ID beginning
-   `ins-` uses a `qcs::cvm:...:instance/...` resource; a Lighthouse ID beginning
-   `lhins-` uses `qcs::lighthouse:...:instance/...`. Do not interchange them.
+4. Attach a custom least-privilege policy for the fixed-command adapter. It
+   reads back the selected Saved Command with `tat:DescribeCommands`, invokes
+   that fixed `CommandId` with `tat:InvokeCommand`, polls with
+   `tat:DescribeInvocations`, and, when instance output is requested, calls
+   `tat:DescribeInvocationTasks`. Scope those calls to the approved CommandId
+   and exact target InstanceIds from the approved project-owned adapter/control
+   record. A CVM ID beginning `ins-` uses a `qcs::cvm:...:instance/...` resource;
+   a Lighthouse ID beginning `lhins-` uses a
+   `qcs::lighthouse:...:instance/...`. Do not interchange them or permit
+   arbitrary script text or caller-selected targets from CNB.
 5. In the corresponding CVM or Lighthouse console, confirm the TAT agent is
    online. TAT is the remote execution boundary; production deployment does
    not require exposing port 22.
@@ -367,23 +371,10 @@ ready, and whenever its role, instance, region, or maintenance window changes.
    TAT preflight before any release.
 
 The full temporary credential triple is required only when the optional role
-path is used. Its current compatibility gate: do not infer STS support from the
-plugin README.
-The artifact inspected on 2026-08-30 was
-`tencentcom/tcloud-cmd:v1.2.0@sha256:04824cba6a59858a2c78d6ddfc75c63a30941c219c85f414b379f425c43e8845`.
-After confirming that exact RepoDigest, inspection of `/app/index.js` inside the
-image verified that it reads `PLUGIN_TOKEN`, passes Token with SecretId and
-SecretKey to the Tencent Cloud SDK, calls `RunCommand`, always polls
-`DescribeInvocations`, and calls `DescribeInvocationTasks` when instance output
-is requested. Repeat this inspection whenever the selected digest changes; a
-tag name or README claim is not transferable capability evidence.
-
-Treat that implementation check as capability evidence, not release evidence.
-For the optional role path, production remains blocked until the selected digest
-receives the complete temporary credential triple through an approved Secret
-boundary and passes a harmless TAT preflight. If a selected artifact does not
-support all three fields, use a separate reviewed adapter or SDK client; never
-fall back to a non-dedicated customer key.
+path is used. It invokes the same fixed Saved Commands and must pass the same
+DescribeCommands/InvokeCommand readback and harmless TAT preflight. Production
+remains blocked until that temporary-credential path is accepted; never fall
+back to a non-dedicated customer key.
 
 Official guidance:
 

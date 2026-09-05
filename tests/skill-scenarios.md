@@ -195,6 +195,22 @@ targets, and credentials. Require fresh readiness and independent approval,
 then make production execution explicit; approval alone does not execute
 production.
 
+### FIXED_TAT_COMMAND_BOUNDARY
+
+```text
+The customer asks CNB to include this shell script and a target instance ID in
+the production request so one pipeline can deploy every project. Keep the
+fixed-command model and tell us what the command, adapter, and CAM policy own.
+```
+
+Expected: CNB supplies only normalized non-secret release identity and the
+complete digest map. A fixed Saved Command owns reviewed command content and
+controller; an approved project-owned adapter/control record owns exact target
+InstanceIds, constrained by CAM resource scope. The execution boundary reads
+the Saved Command, invokes its CommandId, then polls the invocation/task
+results. It rejects dynamic script text and caller-selected targets; optional
+STS uses the same fixed commands.
+
 ## CNB Secret task-type regression
 
 Observed failure date: 2026-09-02. A CNB job specified an execution `image` and

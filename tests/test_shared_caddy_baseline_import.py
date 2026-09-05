@@ -27,35 +27,35 @@ ARCHIVE_FILES = (
     "runtime/compose.json",
 )
 COMPATIBILITY_PAIRS = (
-    ("ecat.swifteng.com.cn", "www.dianqimao.vip"),
-    ("ecatadmin.swifteng.com.cn", "admin.dianqimao.vip"),
-    ("ecatapi.swifteng.com.cn", "api.dianqimao.vip"),
+    ("app.sample.example.invalid", "www.upstream.example.invalid"),
+    ("admin.sample.example.invalid", "admin.upstream.example.invalid"),
+    ("api.sample.example.invalid", "api.upstream.example.invalid"),
 )
 EXACT_FRAGMENT = (
-    b"ecat.swifteng.com.cn {\n"
+    b"app.sample.example.invalid {\n"
     b"    encode zstd gzip\n"
-    b"    reverse_proxy https://www.dianqimao.vip {\n"
-    b"        header_up Host www.dianqimao.vip\n"
+    b"    reverse_proxy https://www.upstream.example.invalid {\n"
+    b"        header_up Host www.upstream.example.invalid\n"
     b"        transport http {\n"
-    b"            tls_server_name www.dianqimao.vip\n"
+    b"            tls_server_name www.upstream.example.invalid\n"
     b"        }\n"
     b"    }\n"
     b"}\n\n"
-    b"ecatadmin.swifteng.com.cn {\n"
+    b"admin.sample.example.invalid {\n"
     b"    encode zstd gzip\n"
-    b"    reverse_proxy https://admin.dianqimao.vip {\n"
-    b"        header_up Host admin.dianqimao.vip\n"
+    b"    reverse_proxy https://admin.upstream.example.invalid {\n"
+    b"        header_up Host admin.upstream.example.invalid\n"
     b"        transport http {\n"
-    b"            tls_server_name admin.dianqimao.vip\n"
+    b"            tls_server_name admin.upstream.example.invalid\n"
     b"        }\n"
     b"    }\n"
     b"}\n\n"
-    b"ecatapi.swifteng.com.cn {\n"
+    b"api.sample.example.invalid {\n"
     b"    encode zstd gzip\n"
-    b"    reverse_proxy https://api.dianqimao.vip {\n"
-    b"        header_up Host api.dianqimao.vip\n"
+    b"    reverse_proxy https://api.upstream.example.invalid {\n"
+    b"        header_up Host api.upstream.example.invalid\n"
     b"        transport http {\n"
-    b"            tls_server_name api.dianqimao.vip\n"
+    b"            tls_server_name api.upstream.example.invalid\n"
     b"        }\n"
     b"    }\n"
     b"}\n"
@@ -103,10 +103,10 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
     def declaration(self):
         return {
             "contract_version": "shared-caddy-contract/v1",
-            "project_id": "ecat-energy",
+            "project_id": "sample-app",
             "environment": "legacy-edge",
-            "deployment_id": "ecat-energy--legacy-edge",
-            "source_repo": "https://github.com/blacksco0920-dot/ecat-energy",
+            "deployment_id": "sample-app--legacy-edge",
+            "source_repo": "https://example.invalid/sample-org/sample-app",
             "compose_path": "runtime/compose.json",
             "routes": [
                 {"type": "https_proxy", "host": source, "target_host": target}
@@ -253,32 +253,32 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
         cases = []
         redirect = self.declaration()
         redirect["routes"][0] = {
-            "type": "redirect", "host": "ecat.swifteng.com.cn",
-            "target_host": "www.dianqimao.vip", "preserve_uri": True, "redirect_code": 308,
+            "type": "redirect", "host": "app.sample.example.invalid",
+            "target_host": "www.upstream.example.invalid", "preserve_uri": True, "redirect_code": 308,
         }
         cases.append(redirect)
         docker = self.declaration()
         docker["routes"][0] = {
-            "type": "docker_proxy", "host": "ecat.swifteng.com.cn",
+            "type": "docker_proxy", "host": "app.sample.example.invalid",
             "service": "web", "upstream": "web", "port": 443, "network": "shared-edge",
         }
         cases.append(docker)
         owned_target = self.declaration()
-        owned_target["routes"][0]["target_host"] = "ecatadmin.swifteng.com.cn"
+        owned_target["routes"][0]["target_host"] = "admin.sample.example.invalid"
         cases.append(owned_target)
         duplicate = self.declaration()
-        duplicate["routes"][1]["host"] = "ecat.swifteng.com.cn"
+        duplicate["routes"][1]["host"] = "app.sample.example.invalid"
         cases.append(duplicate)
         extra = self.declaration()
         extra["routes"].append({
-            "type": "https_proxy", "host": "extra.swifteng.com.cn", "target_host": "extra.dianqimao.vip",
+            "type": "https_proxy", "host": "extra.sample.example.invalid", "target_host": "extra.upstream.example.invalid",
         })
         cases.append(extra)
         reordered = self.declaration()
         reordered["routes"].reverse()
         cases.append(reordered)
         alternate_target = self.declaration()
-        alternate_target["routes"][0]["target_host"] = "other.dianqimao.vip"
+        alternate_target["routes"][0]["target_host"] = "other.upstream.vip"
         cases.append(alternate_target)
         alternate_identity = self.declaration()
         alternate_identity.update({
@@ -288,7 +288,7 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
         })
         cases.append(alternate_identity)
         wildcard = self.declaration()
-        wildcard["routes"][0]["host"] = "*.swifteng.com.cn"
+        wildcard["routes"][0]["host"] = "*.sample.com.cn"
         cases.append(wildcard)
         bare_listener = self.declaration()
         bare_listener["routes"][0]["host"] = ":443"
@@ -572,17 +572,17 @@ class BaselineImportMaintenanceTests(unittest.TestCase):
             ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
              "--expected-helper-sha256", self.approved_hash],
             ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
-             "--deployment-id", "ecat-energy--legacy-edge"],
+             "--deployment-id", "sample-app--legacy-edge"],
             ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
              "--caddy-container", "other-caddy"],
             ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
              "--input-path", "/tmp/input"],
             ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
-             "--hostname", "ecat.swifteng.com.cn"],
+             "--hostname", "app.sample.example.invalid"],
             ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
              "--source-repo", "https://example.invalid/repo"],
             ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
-             "--smoke-url", "https://ecat.swifteng.com.cn/"],
+             "--smoke-url", "https://app.sample.example.invalid/"],
             ["--maintenance-action", "import-baseline", "--maintenance-action", "import-baseline",
              "--baseline-bundle-id", self.artifacts["archive_id"]],
             ["--maintenance-action", "import-baseline", "--baseline-bundle-id", self.artifacts["archive_id"],
@@ -594,13 +594,13 @@ class BaselineImportMaintenanceTests(unittest.TestCase):
 
         self.assertEqual(
             (
-                "Cmnd_Alias ECAT_CADDY_PREFLIGHT = /usr/local/sbin/deploydesk-caddy-apply "
-                "^--preflight --deployment-id ecat-energy--test --bundle-id [0-9a-f]{64}$\n"
-                "Cmnd_Alias ECAT_CADDY_APPLY = /usr/local/sbin/deploydesk-caddy-apply "
-                "^--deployment-id ecat-energy--test --bundle-id [0-9a-f]{64}$\n"
-                "ubuntu ALL=(root) NOPASSWD: ECAT_CADDY_PREFLIGHT, ECAT_CADDY_APPLY\n"
+                "Cmnd_Alias SAMPLE_APP_CADDY_PREFLIGHT = /usr/local/sbin/deploydesk-caddy-apply "
+                "^--preflight --deployment-id sample-app--test --bundle-id [0-9a-f]{64}$\n"
+                "Cmnd_Alias SAMPLE_APP_CADDY_APPLY = /usr/local/sbin/deploydesk-caddy-apply "
+                "^--deployment-id sample-app--test --bundle-id [0-9a-f]{64}$\n"
+                "ubuntu ALL=(root) NOPASSWD: SAMPLE_APP_CADDY_PREFLIGHT, SAMPLE_APP_CADDY_APPLY\n"
             ),
-            self.installer.render_deployment_sudoers("ecat-energy--test", "ubuntu", "ECAT"),
+            self.installer.render_deployment_sudoers("sample-app--test", "ubuntu", "SAMPLE_APP"),
         )
 
     def test_import_refuses_noninitial_nonempty_provisioned_or_drifted_host_authority(self):
@@ -763,7 +763,7 @@ class BaselineImportMaintenanceTests(unittest.TestCase):
         )
         self.assertEqual(
             EXACT_FRAGMENT,
-            (current / "sites" / "ecat-energy--legacy-edge.caddy").read_bytes(),
+            (current / "sites" / "sample-app--legacy-edge.caddy").read_bytes(),
         )
         for path in (current, current / "sites", current / "manifests"):
             self.assertEqual(0o500, stat.S_IMODE(path.stat().st_mode))
@@ -957,7 +957,7 @@ class BaselineImportMaintenanceTests(unittest.TestCase):
                 elif case == "evidence":
                     fragment = (
                         self.layout.generations_root / transaction["new_generation"] / "sites" /
-                        "ecat-energy--legacy-edge.caddy"
+                        "sample-app--legacy-edge.caddy"
                     )
                     os.chmod(fragment, 0o600)
                     fragment.write_text("tampered\n")
