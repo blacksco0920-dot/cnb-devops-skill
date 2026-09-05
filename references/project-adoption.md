@@ -24,7 +24,7 @@ next action. Each fact is exactly one of:
 | --- | --- |
 | `observed` | Found in a read-only project or approved control record. |
 | `supplied` | Delivered by the responsible human with a durable destination. |
-| `unknown` | Not discoverable; request one specific owner deliverable. |
+| `unknown` | Not discoverable; identify the smallest missing fact or necessary human action. |
 | `not-applicable` | Deliberately outside this project's observed topology. |
 
 Stop after discovery unless the user explicitly requests the matching
@@ -42,13 +42,16 @@ integrations disabled with a recorded reason, while completing independent work.
 Index generated files, actual check results and remaining blockers in the status
 document. Local generation or passing checks do not establish live acceptance.
 
-Read role details only for the current dependency. The AI prepares technical
-configuration and value-free receipts from verifiable records. Tell the human,
-in plain language, one immediate action: where to go, what to do, and how
-completion will be checked. Request only facts or account/console actions that
-cannot be completed through available authorized access. Keep sensitive inputs
-in the designated private store. One person may hold several roles; enforce
-actor separation only as required by actual project policy. Approval remains a
+Read role details only for the current dependency. Roles identify accountable
+authorities; one person may hold several roles under actual project policy.
+The AI first prepares reviewable configuration, commands and value-free record
+drafts, then validates through available authorized tools and records. Ask the
+person only to perform or confirm the necessary real-world action: where to go,
+what to do, and how completion will be checked. The AI then records verified,
+authorized acceptance; a draft is never evidence of completion. When account
+access or a binding is missing, request that smallest prerequisite, not a
+completed technical receipt. Follow the [human handoff process](human-handoffs.md)
+and keep sensitive inputs in the designated private store. Approval remains a
 distinct candidate-bound decision and never executes production.
 
 ## Project document contract
@@ -89,8 +92,9 @@ facts before requesting only their undiscoverable inputs.
    require the existing policy's freshness, binding and recovery checks.
 4. Record exactly one next authorized action with its authorization source,
    owner, destination and acceptance condition. Perform it when its checks pass;
-   if none remains, record `none`. An unresolved prerequisite gets one specific
-   owner deliverable, not inferred permission for release or maintenance.
+   if none remains, record `none`. For an unresolved prerequisite, prepare the
+   reviewable draft and request only the missing fact, action or confirmation
+   through the human handoff process; it does not authorize release or maintenance.
 
 Refresh `docs/PROJECT_STATUS.md` after a release result, failure, recovery,
 policy decision, or handoff. Record the last verification time and evidence
@@ -134,7 +138,9 @@ Apply the same Skill independently in each business repository. Reuse verified
 configuration patterns and accepted shared-host capabilities, checking that their
 scope, freshness and compatibility still cover this project. Maintain separate
 project/environment identities, Secret bindings, image namespaces, routes, data,
-locks and release records. Authorization for one project does not cover another.
+project-specific release locks and release records. Shared Caddy still requires
+its shared host-wide lock under the [Shared Caddy contract](shared-caddy-v1/contract.md);
+project locks do not replace it. Authorization for one project does not cover another.
 
 Retain completed shared-host bootstrap and maintenance receipts; adding a project
 does not replay that work. Missing per-project provisioning is a separately
@@ -166,8 +172,9 @@ direct CAM identities with fixed readiness and apply Saved Commands; keep the
 read-only check separate from release execution. Follow the
 [fixed TAT execution contract](release-safety.md#credentials-and-execution): CNB
 must not supply arbitrary script text or caller-selected targets.
-Cross-account role/STS remains optional. Return missing setup work as one owner,
-destination, and acceptance result, never as secret-value questions.
+Cross-account role/STS remains optional. Prepare missing setup through the human
+handoff process, with one accountable owner, destination and acceptance condition;
+never request secret values in chat.
 
 ## Release lifecycle
 

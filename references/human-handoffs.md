@@ -2,9 +2,26 @@
 
 Last verified: 2026-09-03
 
-Use this reference when a release needs information or a console action that an
-AI cannot safely discover or perform. Ask once for the smallest durable
-artifact, not repeatedly for the same facts.
+Use this reference when a release needs information or an action that the AI
+cannot complete through available authorized access. Roles name accountable
+authorities; one owner may hold several roles subject to actual project policy.
+The role deliverables below are acceptance requirements, not instructions for
+the human to author manifests, commands or receipts.
+
+For the current dependency, the AI first prepares reviewable configuration,
+commands and record drafts from known facts, then validates what it can through
+available authorized tools and records. Give the person one necessary real-world
+action or confirmation in plain language: destination, action, and acceptance
+condition. After actual authorized acceptance, the AI records the evidence and
+updates the project index. Drafts remain pending until that acceptance is
+verified; never invent an approval, binding or successful check.
+
+If account access or a target/control-record binding is unavailable, request the
+smallest prerequisite needed to prepare or validate the action, such as opening
+the approved console and selecting the intended project environment. Keep
+sensitive details within its private control boundary. Do not ask the person to
+supply a completed technical receipt. Reuse already accepted facts and setup
+while their scope and validity hold.
 
 ## 按问题找负责人
 
