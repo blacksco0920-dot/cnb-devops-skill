@@ -48,8 +48,8 @@
 
 - [x] Review the combined diff and resolve material findings.
 - [x] Run `REQUIRE_FULL_JSONSCHEMA=1 python -m unittest discover -s tests -v`, compile the two Caddy scripts, run `python tests/quick_validate.py .`, and parse the sudoers example with `visudo -cf`.
-- [ ] Record exact results and review coverage, then fast-forward the clean local checkout to the verified commit.
-- [ ] Confirm the installed Skill resolves to the local checkout and reads its updated files; confirm clean Git state. No production validation is claimed.
+- [x] Record exact results and review coverage, then fast-forward the clean local checkout to the verified commit.
+- [x] Confirm the installed Skill resolves to the local checkout and reads its updated files; confirm clean Git state. No production validation is claimed.
 
 ## Verification record
 
@@ -60,3 +60,4 @@
 - Independent specification and quality review approved both tasks; the acceptance-stage wording and successful-lock deadline findings were resolved and re-reviewed.
 - Four adoption scenarios passed an independent review walkthrough. The evaluator was an existing agent with task history, so this is not a fresh-context experiment or a live project acceptance result.
 - No real Docker, cloud execution, host-helper installation, or production deployment was performed.
+- Local integration: the reviewed branch was fast-forwarded into `main`; the installed Skill symlink resolved to that checkout and read the updated SKILL.md. The integrated tree matched the reviewed branch, the working tree was clean, and Skill validation passed.
