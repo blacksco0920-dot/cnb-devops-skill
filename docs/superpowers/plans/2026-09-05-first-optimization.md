@@ -24,11 +24,11 @@
 
 **Interfaces:** Consume existing `DockerRuntime`, `_locked`, `SharedCaddyHelper` and fixture helpers. Produce a single bounded Docker runner, finite lock acquisition, explicit timeout outcome handling, and a shared upstream validator while retaining public signatures.
 
-- [ ] Add regressions for lock contention, all subprocess paths, pretransaction timeout cleanup, durable-transaction timeout retention, recovery timeout retention, and upstream positive/negative boundaries.
-- [ ] Run `python -m unittest discover -s tests -p 'test_shared_caddy_runtime_bounds.py' -v`; record expected failures before editing production code.
-- [ ] Implement the fixed deadlines and outcome handling, replacing every ordinary-helper Docker subprocess site with the common runner.
-- [ ] Run the new regressions plus shared-Caddy transaction, security, preflight and schema tests; inspect state, pointer, marker, receipt and lock assertions.
-- [ ] Record tests and self-review; obtain independent spec and quality review, then commit the scoped changes.
+- [x] Add regressions for lock contention, all subprocess paths, pretransaction timeout cleanup, durable-transaction timeout retention, recovery timeout retention, and upstream positive/negative boundaries.
+- [x] Run `python -m unittest discover -s tests -p 'test_shared_caddy_runtime_bounds.py' -v`; record expected failures before editing production code.
+- [x] Implement the fixed deadlines and outcome handling, replacing every ordinary-helper Docker subprocess site with the common runner.
+- [x] Run the new regressions plus shared-Caddy transaction, security, preflight and schema tests; inspect state, pointer, marker, receipt and lock assertions.
+- [x] Record tests and self-review; obtain independent spec and quality review, then commit the scoped changes.
 
 ### Task 2: Make adoption resumable and conditional on source topology
 
@@ -36,17 +36,27 @@
 
 **Interfaces:** Consume existing two-document contract, approved control receipts, governed source paths, and release policy. Produce a compact status example, deterministic resumption order, and CNB-native/GitHub-synchronized acceptance branches.
 
-- [ ] Add failing package assertions for a minimal status example, refresh events, conflict handling, and conditional synchronization; add stale-state, valid-resumption, CNB-native and synchronized-source scenarios.
-- [ ] Run `python -m unittest discover -s tests -p 'test_skill_package.py' -v`; record RED before editing references.
-- [ ] Extend the existing references with the example and ordered rules; replace unconditional GitHub requirements with observed-topology branches.
-- [ ] Run package assertions and Skill validation; have an independent reviewer exercise the scenarios and record the evaluation method and limitations.
-- [ ] Record tests and self-review; obtain independent spec and quality review, then commit the scoped changes.
+- [x] Add failing package assertions for a minimal status example, refresh events, conflict handling, and conditional synchronization; add stale-state, valid-resumption, CNB-native and synchronized-source scenarios.
+- [x] Run `python -m unittest discover -s tests -p 'test_skill_package.py' -v`; record RED before editing references.
+- [x] Extend the existing references with the example and ordered rules; replace unconditional GitHub requirements with observed-topology branches.
+- [x] Run package assertions and Skill validation; have an independent reviewer exercise the scenarios and record the evaluation method and limitations.
+- [x] Record tests and self-review; obtain independent spec and quality review, then commit the scoped changes.
 
 ### Task 3: Integrate and verify
 
 **Files:** Update this plan's completion checks and final validation record.
 
-- [ ] Review the combined diff and resolve material findings.
-- [ ] Run `REQUIRE_FULL_JSONSCHEMA=1 python -m unittest discover -s tests -v`, compile the two Caddy scripts, run `python tests/quick_validate.py .`, and parse the sudoers example with `visudo -cf`.
+- [x] Review the combined diff and resolve material findings.
+- [x] Run `REQUIRE_FULL_JSONSCHEMA=1 python -m unittest discover -s tests -v`, compile the two Caddy scripts, run `python tests/quick_validate.py .`, and parse the sudoers example with `visudo -cf`.
 - [ ] Record exact results and review coverage, then fast-forward the clean local checkout to the verified commit.
 - [ ] Confirm the installed Skill resolves to the local checkout and reads its updated files; confirm clean Git state. No production validation is claimed.
+
+## Verification record
+
+- Baseline: 319 tests passed before implementation.
+- Runtime regressions: expected failures observed before implementation; the final runtime module has 18 passing tests. The successful-lock deadline regression was independently reproduced and then closed in scoped review.
+- Adoption package: three new tests failed before reference edits; 26 package tests passed afterward.
+- Final code validation at `fba02bc`: 340 tests passed with `REQUIRE_FULL_JSONSCHEMA=1` under Python 3.12.9, jsonschema 4.25.1 and PyYAML 6.0.2. Python compile, Skill quick validation, sudoers syntax, and diff checks passed.
+- Independent specification and quality review approved both tasks; the acceptance-stage wording and successful-lock deadline findings were resolved and re-reviewed.
+- Four adoption scenarios passed an independent review walkthrough. The evaluator was an existing agent with task history, so this is not a fresh-context experiment or a live project acceptance result.
+- No real Docker, cloud execution, host-helper installation, or production deployment was performed.
