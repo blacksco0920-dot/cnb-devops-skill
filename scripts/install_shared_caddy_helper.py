@@ -44,16 +44,6 @@ HOSTNAME_PATTERN = (
 SOURCE_REPO_RE = re.compile(
     r"https://(?=[^/]{1,253}/)" + HOSTNAME_PATTERN + r"(?:/[A-Za-z0-9._~-]+)+"
 )
-LEGACY_BASELINE_PROJECT_ID = "sample-app"
-LEGACY_BASELINE_ENVIRONMENT = "legacy-edge"
-LEGACY_BASELINE_DEPLOYMENT_ID = "sample-app--legacy-edge"
-LEGACY_BASELINE_SOURCE_REPO = "https://example.invalid/sample-org/sample-app"
-LEGACY_BASELINE_COMPATIBILITY_PAIRS = (
-    ("app.sample.example.invalid", "www.upstream.example.invalid"),
-    ("admin.sample.example.invalid", "admin.upstream.example.invalid"),
-    ("api.sample.example.invalid", "api.upstream.example.invalid"),
-)
-LEGACY_BASELINE_HOSTS = tuple(pair[0] for pair in LEGACY_BASELINE_COMPATIBILITY_PAIRS)
 LEGACY_BASELINE_ARCHIVE_FILES = (
     "caddy/declaration.json", "caddy/site.caddy", "caddy/helper-requirement.json",
     "caddy/bundle-provenance.json", "runtime/compose.json",
@@ -171,19 +161,11 @@ def _validate_baseline_identity(value, name):
         raise ContractError(name + " identity fields disagree")
     validate_deployment_id(value["deployment_id"])
     _validate_source_repo(value["source_repo"])
-    expected = {
-        "project_id": LEGACY_BASELINE_PROJECT_ID,
-        "environment": LEGACY_BASELINE_ENVIRONMENT,
-        "deployment_id": LEGACY_BASELINE_DEPLOYMENT_ID,
-        "source_repo": LEGACY_BASELINE_SOURCE_REPO,
-    }
-    if {field: value[field] for field in expected} != expected:
-        raise ContractError(name + " identity is not the approved legacy baseline identity")
 
 
 def _validate_baseline_hosts(hosts, name):
-    if not isinstance(hosts, list) or tuple(hosts) != LEGACY_BASELINE_HOSTS:
-        raise ContractError(name + " hosts must be the approved legacy baseline owners")
+    if not isinstance(hosts, list) or not hosts:
+        raise ContractError(name + " hosts must be a non-empty approved owner list")
     normalized = [_normalize_hostname(host) for host in hosts]
     if normalized != hosts or len(normalized) != len(set(normalized)):
         raise ContractError(name + " hosts must be unique and normalized")
@@ -208,8 +190,8 @@ def validate_legacy_baseline_declaration(value):
     _validate_baseline_identity(value, "legacy baseline declaration")
     if value["compose_path"] != "runtime/compose.json":
         raise ContractError("compose_path is fixed by v1")
-    if not isinstance(value["routes"], list) or len(value["routes"]) != 3:
-        raise ContractError("legacy baseline requires exactly three HTTPS proxy routes")
+    if not isinstance(value["routes"], list) or not value["routes"]:
+        raise ContractError("legacy baseline requires at least one HTTPS proxy route")
     hosts = []
     targets = []
     for route in value["routes"]:
@@ -226,8 +208,6 @@ def validate_legacy_baseline_declaration(value):
         raise ContractError("duplicate normalized hostname")
     if set(hosts) & set(targets):
         raise ContractError("legacy baseline HTTPS targets must not be owned on this host")
-    if tuple(zip(hosts, targets)) != LEGACY_BASELINE_COMPATIBILITY_PAIRS:
-        raise ContractError("legacy baseline routes must be the approved ordered compatibility pairs")
     return value
 
 
@@ -458,6 +438,12 @@ def validate_legacy_baseline_artifact_chain(
         raise ContractError("committed baseline receipt requires a committed transaction")
     if compose_facts != {"services": {}, "networks": {}}:
         raise ContractError("legacy baseline Compose facts must be empty")
+    declaration_hosts = [route["host"] for route in declaration["routes"]]
+    for field in ("project_id", "environment", "deployment_id", "source_repo"):
+        if provenance[field] != declaration[field]:
+            raise ContractError("legacy baseline provenance identity disagrees with declaration: " + field)
+    if provenance["hosts"] != declaration_hosts:
+        raise ContractError("legacy baseline provenance hosts disagree with declaration")
     expected_members = {
         "caddy/declaration.json": _canonical_json(declaration),
         "caddy/site.caddy": raw_fragment,
@@ -2102,10 +2088,10 @@ def _verify_baseline_generation(walker, layout, transaction, snapshot, artifacts
         raise InstallError("baseline generation directory set is not exact")
     expected = {
         generation / "sites": {
-            LEGACY_BASELINE_DEPLOYMENT_ID + ".caddy": artifacts["fragment"],
+            transaction["deployment_id"] + ".caddy": artifacts["fragment"],
         },
         generation / "manifests": {
-            LEGACY_BASELINE_DEPLOYMENT_ID + ".json": _canonical_json(snapshot["manifest"]),
+            transaction["deployment_id"] + ".json": _canonical_json(snapshot["manifest"]),
         },
     }
     for directory, files in expected.items():
@@ -2695,6 +2681,7 @@ def import_baseline(layout, bundle_id, owner_uid=0, runtime=None, phase_hook=Non
                 artifacts, snapshot, transaction_id, old_generation, new_generation,
             )
             _validate_baseline_snapshot_chain(artifacts, snapshot, transaction)
+            deployment_id = transaction["deployment_id"]
             if walker.exists(_baseline_rollback_receipt_path(layout)):
                 _load_baseline_rollback_receipt(walker, layout)
                 walker.remove_file(_baseline_rollback_receipt_path(layout))
@@ -2705,11 +2692,11 @@ def import_baseline(layout, bundle_id, owner_uid=0, runtime=None, phase_hook=Non
                 walker.ensure_dir(generation / "sites", 0o700, create=True)
                 walker.ensure_dir(generation / "manifests", 0o700, create=True)
                 walker.write_file(
-                    generation / "sites" / (LEGACY_BASELINE_DEPLOYMENT_ID + ".caddy"),
+                    generation / "sites" / (deployment_id + ".caddy"),
                     artifacts["fragment"], 0o600,
                 )
                 walker.write_file(
-                    generation / "manifests" / (LEGACY_BASELINE_DEPLOYMENT_ID + ".json"),
+                    generation / "manifests" / (deployment_id + ".json"),
                     _canonical_json(snapshot["manifest"]), 0o600,
                 )
                 _freeze_baseline_generation(walker, generation)

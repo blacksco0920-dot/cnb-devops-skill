@@ -22,7 +22,7 @@ Skill.
 - State explicitly that source completion, staging deployment, candidate
   readiness, governed-branch merge, production readiness, approval, production
   execution, and external-client publication are distinct states.
-- Keep all E-CAT-specific accounts, hosts, paths, domains, credentials, topology,
+- Keep all pilot-specific accounts, hosts, paths, domains, credentials, topology,
   hashes, incidents, and business facts out of the public Skill.
 
 ## Project document contract

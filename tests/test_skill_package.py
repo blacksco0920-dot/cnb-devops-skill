@@ -1,6 +1,7 @@
 import ast
 from pathlib import Path
 import re
+import subprocess
 import unittest
 
 
@@ -10,6 +11,29 @@ ROOT = Path(__file__).resolve().parents[1]
 class SkillPackageTests(unittest.TestCase):
     def text(self, relative: str) -> str:
         return (ROOT / relative).read_text(encoding="utf-8")
+
+    def public_package_text(self) -> str:
+        texts = []
+        for path in sorted(ROOT.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(ROOT)
+            if ".git" in relative.parts or ".worktrees" in relative.parts:
+                continue
+            ignored = subprocess.run(
+                ["git", "check-ignore", "--quiet", "--no-index", "--", str(relative)],
+                cwd=ROOT, check=False,
+            )
+            if ignored.returncode == 0:
+                continue
+            raw = path.read_bytes()
+            if b"\0" in raw:
+                continue
+            try:
+                texts.append(raw.decode("utf-8"))
+            except UnicodeDecodeError:
+                continue
+        return "\n".join(texts)
 
     def test_entrypoint_is_concise_and_routes_heavy_detail(self):
         skill = self.text("SKILL.md")
@@ -337,6 +361,11 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("shared route ownership", skill)
         self.assertNotIn("legacy " + "HTTPS routes", skill)
 
+    def test_legacy_baseline_topology_is_separately_authorized_not_a_cnb_release_input(self):
+        handoff = " ".join(self.text("references/shared-caddy-v1/host-handoff.md").split())
+        self.assertIn("separately approved baseline/control material", handoff)
+        self.assertIn("CNB ordinary release cannot supply or alter", handoff)
+
     def test_fixed_tat_commands_keep_scripts_and_targets_out_of_cnb_inputs(self):
         release_safety = self.text("references/release-safety.md")
         deployment_ui = self.text("references/cnb-deployment-ui.md")
@@ -360,15 +389,10 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("tat:Run" + "Command", handoffs)
 
     def test_public_package_has_no_project_specific_fixture_facts(self):
-        public = "\n".join(
-            path.read_text(encoding="utf-8")
-            for directory in ("references", "scripts", "tests")
-            for path in sorted((ROOT / directory).rglob("*"))
-            if path.is_file()
-            and path.suffix in {".json", ".md", ".py", ".sh", ".yaml", ".yml"}
-        ).lower()
+        public = self.public_package_text().lower()
         for forbidden in (
             "e" + "cat",
+            "e" + "-cat",
             "swift" + "eng",
             "dianqi" + "mao",
             "blacksco" + "0920",
@@ -478,14 +502,7 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertTrue(resolved.exists(), f"{source}: {target}")
 
     def test_public_package_has_no_sensitive_identifier_shapes(self):
-        public = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in sorted(ROOT.rglob("*"))
-            if path.is_file()
-            and ".git" not in path.parts
-            and ".worktrees" not in path.parts
-            and path.suffix in {".json", ".md", ".py", ".sh", ".yaml", ".yml"}
-        )
+        public = self.public_package_text()
         for pattern in (
             r"/(?:Users|home)/[^/\s]+/",
             r"\b\d{10,12}\b",

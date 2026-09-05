@@ -87,6 +87,9 @@ mode-`0600` files:
 ```
 
 The archive SHA-256 must equal the ID and the manifest is canonical.
+This hierarchy is separately approved baseline/control material: a CNB ordinary
+release cannot supply or alter its project identity, source, hosts, routes, or
+target topology.
 `import-baseline` accepts only its exact action plus that bundle ID;
 `recover-baseline-maintenance` accepts only its exact action. Both reject
 caller paths, hosts, containers, smoke/source arguments, extra arguments, and

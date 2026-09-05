@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Update the existing `cnb-devops-skill`; do not create another Skill, product, portal, CLI, or `server-ops` repository.
-- Public files contain no E-CAT-specific repository, account, host, path, domain, secret, digest, incident, or business fact.
+- Public files contain no pilot-specific repository, account, host, path, domain, secret, digest, incident, or business fact.
 - The business repository is the sole source for project-specific code, pipelines, controller, topology, and deployment state.
 - Production reuses the exact staging-tested OCI digest map and never rebuilds.
 - Readiness, approval, and production execution remain separate fail-closed actions.

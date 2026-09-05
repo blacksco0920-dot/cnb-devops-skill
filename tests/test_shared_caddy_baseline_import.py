@@ -62,6 +62,23 @@ EXACT_FRAGMENT = (
 )
 
 
+def fragment_for(route_pairs):
+    blocks = []
+    for source, target in route_pairs:
+        blocks.append(
+            f"{source} {{\n"
+            "    encode zstd gzip\n"
+            f"    reverse_proxy https://{target} {{\n"
+            f"        header_up Host {target}\n"
+            "        transport http {\n"
+            f"            tls_server_name {target}\n"
+            "        }\n"
+            "    }\n"
+            "}"
+        )
+    return ("\n\n".join(blocks) + "\n").encode("utf-8")
+
+
 def load(path, name):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
@@ -100,22 +117,31 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
         cls.installer = load(INSTALLER_PATH, "legacy_baseline_installer")
         cls.normal_helper = load(HELPER_PATH, "legacy_baseline_normal_helper")
 
-    def declaration(self):
+    def declaration(
+        self,
+        project_id="sample-app",
+        environment="legacy-edge",
+        source_repo="https://example.invalid/sample-org/sample-app",
+        route_pairs=COMPATIBILITY_PAIRS,
+    ):
         return {
             "contract_version": "shared-caddy-contract/v1",
-            "project_id": "sample-app",
-            "environment": "legacy-edge",
-            "deployment_id": "sample-app--legacy-edge",
-            "source_repo": "https://example.invalid/sample-org/sample-app",
+            "project_id": project_id,
+            "environment": environment,
+            "deployment_id": project_id + "--" + environment,
+            "source_repo": source_repo,
             "compose_path": "runtime/compose.json",
             "routes": [
                 {"type": "https_proxy", "host": source, "target_host": target}
-                for source, target in COMPATIBILITY_PAIRS
+                for source, target in route_pairs
             ],
         }
 
-    def artifacts(self, helper_sha256="a" * 64, git_sha="1" * 40):
-        declaration = self.declaration()
+    def artifacts(self, helper_sha256="a" * 64, git_sha="1" * 40, declaration=None):
+        declaration = declaration or self.declaration()
+        fragment = fragment_for(
+            [(route["host"], route["target_host"]) for route in declaration["routes"]]
+        )
         declaration_bytes = canonical_bytes(declaration)
         compose_facts = {"services": {}, "networks": {}}
         compose_bytes = canonical_bytes(compose_facts)
@@ -134,22 +160,22 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
             "environment": declaration["environment"],
             "deployment_id": declaration["deployment_id"],
             "source_repo": declaration["source_repo"],
-            "hosts": [source for source, _ in COMPATIBILITY_PAIRS],
+            "hosts": [route["host"] for route in declaration["routes"]],
             "git_sha": git_sha,
             "declaration_sha256": digest(declaration_bytes),
-            "fragment_sha256": digest(EXACT_FRAGMENT),
+            "fragment_sha256": digest(fragment),
             "compose_facts": compose_facts,
             "compose_sha256": digest(compose_bytes),
             "helper_requirement_sha256": digest(helper_requirement_bytes),
             "source": {
                 "kind": "legacy_opaque",
-                "legacy_fragment_sha256": digest(EXACT_FRAGMENT),
+                "legacy_fragment_sha256": digest(fragment),
             },
         }
         provenance_bytes = canonical_bytes(provenance)
         archive = archive_bytes({
             "caddy/declaration.json": declaration_bytes,
-            "caddy/site.caddy": EXACT_FRAGMENT,
+            "caddy/site.caddy": fragment,
             "caddy/helper-requirement.json": helper_requirement_bytes,
             "caddy/bundle-provenance.json": provenance_bytes,
             "runtime/compose.json": compose_bytes,
@@ -226,6 +252,7 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
             "archive_id": archive_id,
             "compose_facts": compose_facts,
             "declaration": declaration,
+            "fragment": fragment,
             "helper_requirement": helper_requirement,
             "manifest": manifest,
             "provenance": provenance,
@@ -235,7 +262,7 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
 
     def validate_artifact_chain(self, artifacts):
         self.installer.validate_legacy_baseline_artifact_chain(
-            artifacts["declaration"], EXACT_FRAGMENT, artifacts["compose_facts"],
+            artifacts["declaration"], artifacts["fragment"], artifacts["compose_facts"],
             artifacts["helper_requirement"], artifacts["provenance"], artifacts["manifest"],
             artifacts["archive"], artifacts["transaction"], artifacts["receipt"],
         )
@@ -249,7 +276,26 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
             [route["host"] for route in declaration["routes"]],
         )
 
-    def test_rejects_nonbaseline_routes_owned_targets_and_arbitrary_caddy_bytes(self):
+    def test_accepts_an_independent_approved_legacy_topology_and_rejects_cross_artifact_mismatch(self):
+        alternate = self.declaration(
+            project_id="docs-portal",
+            environment="isolated-edge",
+            source_repo="https://code.example.invalid/platform/docs-portal",
+            route_pairs=(
+                ("docs.alt.example.invalid", "origin.alt.example.invalid"),
+                ("status.alt.example.invalid", "status-origin.alt.example.invalid"),
+            ),
+        )
+        artifacts = self.artifacts(declaration=alternate)
+        self.assertEqual(artifacts["fragment"], self.installer.render_legacy_baseline_fragment(alternate))
+        self.validate_artifact_chain(artifacts)
+
+        mismatch = copy.deepcopy(artifacts)
+        mismatch["manifest"]["hosts"] = ["other.alt.example.invalid"]
+        with self.assertRaises(self.installer.ContractError):
+            self.validate_artifact_chain(mismatch)
+
+    def test_rejects_invalid_routes_owned_targets_and_arbitrary_caddy_bytes(self):
         cases = []
         redirect = self.declaration()
         redirect["routes"][0] = {
@@ -269,24 +315,9 @@ class LegacyBaselineArtifactTests(unittest.TestCase):
         duplicate = self.declaration()
         duplicate["routes"][1]["host"] = "app.sample.example.invalid"
         cases.append(duplicate)
-        extra = self.declaration()
-        extra["routes"].append({
-            "type": "https_proxy", "host": "extra.sample.example.invalid", "target_host": "extra.upstream.example.invalid",
-        })
-        cases.append(extra)
-        reordered = self.declaration()
-        reordered["routes"].reverse()
-        cases.append(reordered)
-        alternate_target = self.declaration()
-        alternate_target["routes"][0]["target_host"] = "other.upstream.vip"
-        cases.append(alternate_target)
-        alternate_identity = self.declaration()
-        alternate_identity.update({
-            "project_id": "other-project", "environment": "other-edge",
-            "deployment_id": "other-project--other-edge",
-            "source_repo": "https://github.com/example/other-project",
-        })
-        cases.append(alternate_identity)
+        empty = self.declaration()
+        empty["routes"] = []
+        cases.append(empty)
         wildcard = self.declaration()
         wildcard["routes"][0]["host"] = "*.sample.com.cn"
         cases.append(wildcard)
@@ -778,6 +809,32 @@ class BaselineImportMaintenanceTests(unittest.TestCase):
         self.assertEqual(before_input, after_input)
         with self.assertRaisesRegex(self.installer.InstallError, "already imported"):
             self._import()
+
+    def test_import_uses_the_validated_deployment_id_for_active_generation_filenames(self):
+        declaration = self.artifact_factory.declaration(
+            project_id="docs-portal",
+            environment="isolated-edge",
+            source_repo="https://code.example.invalid/platform/docs-portal",
+            route_pairs=(
+                ("docs.alt.example.invalid", "origin.alt.example.invalid"),
+                ("status.alt.example.invalid", "status-origin.alt.example.invalid"),
+            ),
+        )
+        self.artifacts = self.artifact_factory.artifacts(self.approved_hash, declaration=declaration)
+        self.input_dir = self._write_input(self.artifacts)
+
+        receipt = self._import()
+        current = self.layout.current_generation()
+        deployment_id = receipt["deployment_id"]
+        self.assertEqual("docs-portal--isolated-edge", deployment_id)
+        self.assertEqual(
+            {deployment_id + ".caddy"},
+            {path.name for path in (current / "sites").iterdir()},
+        )
+        self.assertEqual(
+            {deployment_id + ".json"},
+            {path.name for path in (current / "manifests").iterdir()},
+        )
 
     def test_every_durable_phase_has_deterministic_recovery(self):
         rollback_phases = {"prepared", "current-switched", "reloaded"}

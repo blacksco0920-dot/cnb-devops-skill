@@ -118,6 +118,34 @@ class SharedCaddySchemaTests(unittest.TestCase):
         self.assertEqual(transaction["new_generation"], receipt["generation_id"])
         self.assertEqual(transaction["old_generation"], receipt["old_generation"])
 
+    def test_legacy_baseline_schemas_and_runtime_accept_normalized_nonfixture_topology(self):
+        runtime_validators = {
+            "baseline-provenance.json": self.installer.validate_baseline_provenance,
+            "baseline-transaction.json": self.installer.validate_baseline_transaction,
+            "baseline-receipt.json": self.installer.validate_baseline_receipt,
+        }
+        schema_names = {
+            "baseline-provenance.json": "baseline-provenance.schema.json",
+            "baseline-transaction.json": "baseline-transaction.schema.json",
+            "baseline-receipt.json": "baseline-receipt.schema.json",
+        }
+        for example_name, validator in runtime_validators.items():
+            with self.subTest(example=example_name):
+                artifact = self.load_json(EXAMPLE_ROOT / example_name)
+                artifact.update({
+                    "project_id": "docs-portal",
+                    "environment": "isolated-edge",
+                    "deployment_id": "docs-portal--isolated-edge",
+                    "source_repo": "https://code.example.invalid/platform/docs-portal",
+                    "hosts": [
+                        "docs.alt.example.invalid",
+                        "status.alt.example.invalid",
+                    ],
+                })
+                schema = self.load_json(SCHEMA_ROOT / schema_names[example_name])
+                self.helper.validate_json_schema_instance(schema, artifact)
+                validator(artifact)
+
     def test_examples_validate_with_full_draft_2020_12_validator(self):
         if importlib.util.find_spec("jsonschema") is None:
             if os.environ.get("REQUIRE_FULL_JSONSCHEMA") == "1":

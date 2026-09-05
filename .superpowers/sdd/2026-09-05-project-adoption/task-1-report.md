@@ -161,3 +161,84 @@ Skill is valid!
 python3 -m unittest discover -s tests -p 'test_*.py'
 Ran 314 tests ... OK (skipped=1)
 ```
+
+## Fix round 2: scoped-review findings
+
+### Changes
+
+- Replaced the compiled legacy-baseline project, repository, hostname, route,
+  and compatibility-pair constants with normalized declaration validation.
+  The helper now derives the canonical fragment and active-generation filenames
+  from the separately approved declaration, then requires exact identity,
+  ordered-host, and hash agreement across declaration, provenance, manifest,
+  transaction, receipt, and retained archive.
+- Generalized the three legacy baseline JSON schemas from fixture `const` and
+  fixed route-count fields to normalized identity/source/host patterns and a
+  non-empty unique host list. Cross-artifact agreement remains runtime
+  fail-closed validation rather than a schema fixture constant.
+- Added an unrelated two-route synthetic topology and a generation-filename
+  regression. Both prove reuse without allowing mismatched artifact evidence.
+- Documented that baseline/control topology is separately authorized and CNB
+  ordinary release cannot provide or alter it.
+- Expanded the project-fact/privacy scan to every text file in the package,
+  including root files, extensionless text, `.caddy`, and `.sudoers`. It skips
+  only Git/worktree paths, ignored scratch material, and binary/non-UTF-8 files.
+  The test source keeps prohibited strings split; the approved design and plan
+  now refer only to pilot-specific facts.
+
+### RED evidence
+
+Before the helper and schemas changed, the new topology regressions failed:
+
+```text
+python3 -m unittest \
+  tests.test_shared_caddy_baseline_import.LegacyBaselineArtifactTests.test_accepts_an_independent_approved_legacy_topology_and_rejects_cross_artifact_mismatch \
+  tests.test_shared_caddy_schemas.SharedCaddySchemaTests.test_legacy_baseline_schemas_and_runtime_accept_normalized_nonfixture_topology \
+  tests.test_skill_package.SkillPackageTests.test_public_package_has_no_project_specific_fixture_facts -v
+
+FAILED (errors=4)
+```
+
+The helper rejected the alternate declaration as not the approved fixed
+identity; each baseline schema rejected its alternate deployment ID because of
+the fixture `const`. The expanded privacy scan passed in that RED run. A later
+documentation-boundary test also failed until the handoff explicitly stated
+that CNB ordinary release cannot supply or alter baseline topology.
+
+### GREEN evidence
+
+```text
+python3 -m unittest tests.test_shared_caddy_baseline_import \
+  tests.test_shared_caddy_schemas tests.test_skill_package -v
+Ran 64 tests ... OK (skipped=1)
+```
+
+This covers baseline import/recovery, immutable active generations, a second
+approved topology, cross-artifact mismatch rejection, all three schemas, and
+the whole-package privacy and CNB-boundary regressions. `git diff --check`
+completed without output; a tracked-file scan found no pilot/private identifier
+outside the deliberately split regression source.
+
+### Self-review
+
+- The helper retains archive member limits, root-only actions, descriptor-safe
+  input handling, immutable generation verification, transaction recovery, and
+  source/target ownership restrictions.
+- CNB still cannot supply baseline topology at release time; the root-only
+  baseline-input hierarchy and control records remain the authorization source.
+- `SKILL.md` remains 55 lines.
+
+### Final validation and concerns
+
+```text
+PATH=/usr/bin:$PATH python3 tests/quick_validate.py .
+Skill is valid!
+
+python3 -m unittest discover -s tests -p 'test_*.py'
+Ran 318 tests ... OK (skipped=1)
+```
+
+The expected argparse diagnostics printed by negative CLI tests are test output,
+not failures. As in prior rounds, the default Homebrew Python lacks PyYAML, so
+the quick validator was run with the available system Python. No functional
+concerns remain.
