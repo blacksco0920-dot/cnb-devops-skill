@@ -167,6 +167,13 @@ shared-Caddy contract before any takeover. Do not begin a shared-Caddy
 bootstrap, baseline import, direct Caddy change, or ordinary release merely
 because a project is new.
 
+Inventory and pin runtime dependency images, including databases and caches,
+alongside application images; verify registry access from the target host.
+Successful CNB builds do not prove host pull access. If an actual pull fails,
+copy the selected upstream image to an approved reachable registry while
+preserving its digest, then verify the destination digest and platform before
+using it. Do not rebuild an image to repair a host-to-registry network failure.
+
 For both operator-owned testing and customer-owned production, use dedicated
 direct CAM identities with fixed readiness and apply Saved Commands; keep the
 read-only check separate from release execution. Follow the
