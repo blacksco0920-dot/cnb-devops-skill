@@ -31,6 +31,26 @@ Stop after discovery unless the user explicitly requests the matching
 configuration, build, deployment, or production action. A proposed production
 approval does not execute production.
 
+## AI-owned setup and human handoffs
+
+For an authorized setup request, complete the applicable local work from the
+actual project: deployment documents, pipeline/build and runtime configuration,
+value-free variable inventories, and reviewed project-owned controller and fixed
+execution integrations. Adapt the linked contracts to the observed topology;
+run the available project tests and configuration checks. Keep unavailable cloud
+integrations disabled with a recorded reason, while completing independent work.
+Index generated files, actual check results and remaining blockers in the status
+document. Local generation or passing checks do not establish live acceptance.
+
+Read role details only for the current dependency. The AI prepares technical
+configuration and value-free receipts from verifiable records. Tell the human,
+in plain language, one immediate action: where to go, what to do, and how
+completion will be checked. Request only facts or account/console actions that
+cannot be completed through available authorized access. Keep sensitive inputs
+in the designated private store. One person may hold several roles; enforce
+actor separation only as required by actual project policy. Approval remains a
+distinct candidate-bound decision and never executes production.
+
 ## Project document contract
 
 Maintain two living documents in the business repository:
@@ -108,6 +128,21 @@ next_authorized_action:
   acceptance: "Current transaction/recovery state and complete runtime/public evidence are indexed; unresolved checks remain blocked."
 ```
 
+## Add another project
+
+Apply the same Skill independently in each business repository. Reuse verified
+configuration patterns and accepted shared-host capabilities, checking that their
+scope, freshness and compatibility still cover this project. Maintain separate
+project/environment identities, Secret bindings, image namespaces, routes, data,
+locks and release records. Authorization for one project does not cover another.
+
+Retain completed shared-host bootstrap and maintenance receipts; adding a project
+does not replay that work. Missing per-project provisioning is a separately
+scoped maintenance dependency under the host handoff, not an ordinary release
+permission. Prepare independent local setup while it is pending. Each repository
+keeps its own deployment/status documents; no global operational repository or
+global secret store is needed. Customer-account deployment is optional.
+
 ## Source topology
 
 Identify the authoritative source repository and actual governed synchronization
@@ -134,19 +169,22 @@ must not supply arbitrary script text or caller-selected targets.
 Cross-account role/STS remains optional. Return missing setup work as one owner,
 destination, and acceptance result, never as secret-value questions.
 
-## Minimal release ladder
+## Release lifecycle
 
-1. Document and inspect without mutation.
+1. Inspect without mutation, then complete authorized local setup and checks.
+   Record source completion separately from deployment acceptance.
 2. Build once, record immutable OCI `repository@sha256:digest` images, deploy
    staging, and record separate build, runtime, and public evidence.
 3. Create a ready-last immutable candidate bound to the complete digest map.
 4. Confirm the candidate is in the governed branch without rebuilding.
 5. Run the fixed readiness Saved Command, refresh production readiness, and
-   obtain independent approval for that exact candidate.
+   obtain independent approval for that exact candidate under the project
+   policy, including its actor-separation requirements.
 6. Explicitly execute the fixed apply Saved Command with the same digest map;
    approval does not execute production.
 7. Record actual production runtime and public evidence before marking the
-   server delivery complete.
+   server delivery complete. On failure, index the transaction and recovery
+   state and follow [release safety](release-safety.md) before another release.
 
 ## Independent client delivery
 

@@ -5,7 +5,7 @@ description: Use when work involves CNB/cnb.cool pipelines, Secret repositories,
 
 # CNB DevOps
 
-Treat a release as promotion of tested evidence, not as a sequence of remembered commands.
+Help AI-assisted owners deliver one or several projects through CNB, from local setup to verified release and recovery. Own configuration and evidence work; give people concrete handoffs. Promote tested evidence.
 
 ## Decide before acting
 
@@ -46,10 +46,10 @@ Only the root host administrator performs bootstrap, helper maintenance, baselin
 
 ## Read only what the task needs
 
-- New project, project resumption, missing project documents, ordinary host
-  classification, or a first release ladder: [project adoption](references/project-adoption.md).
+- First setup, another project, resumption, missing local deliverables, or host classification: [project adoption](references/project-adoption.md).
 - Existing-host first release, controller upgrade, candidate, failure, recovery, audit, or retention: [release safety](references/release-safety.md).
 - Human setup or missing information: [human handoffs](references/human-handoffs.md).
-- CNB API, token, Secret repository, or deployment UI behavior: [CNB OpenAPI](references/cnb-openapi.md).
+- CNB candidate Tag, deployment page, or production buttons: [CNB deployment UI](references/cnb-deployment-ui.md).
+- CNB API, token, or Secret repository behavior: [CNB OpenAPI](references/cnb-openapi.md).
 - Multiple projects sharing one host Caddy, route ownership, helper attestation,
   or recovery: [shared Caddy v1](references/shared-caddy-v1/contract.md).

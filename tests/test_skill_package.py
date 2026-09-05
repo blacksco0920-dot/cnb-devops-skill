@@ -45,6 +45,7 @@ class SkillPackageTests(unittest.TestCase):
             "references/release-safety.md",
             "references/human-handoffs.md",
             "references/cnb-openapi.md",
+            "references/cnb-deployment-ui.md",
             "references/shared-caddy-v1/contract.md",
         ):
             self.assertIn(f"]({reference})", skill)

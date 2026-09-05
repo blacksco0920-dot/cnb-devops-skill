@@ -1,71 +1,56 @@
 # cnb-devops-skill
 
-An Agent Skill for teams that use CNB/cnb.cool and need repeatable releases
-without turning deployment into another command-line product.
+让 AI 帮你接好 CNB（cnb.cool）上的构建、测试部署和正式发布流程，并留下下次能接着用的项目记录。适合用 AI 写代码、希望把项目交付上线的新手，也适合一个人管理多个项目或小团队协作。
 
-It is written for independent developers, small delivery teams, and AI-assisted
-workflows that manage several projects or customer environments. The Skill
-teaches an AI to preserve authorization boundaries, collect durable handoffs,
-and promote the exact OCI images already verified in staging.
+你描述目标、决定发布范围；AI 在业务项目里完成适用的配置、检查和交付记录。每个项目独立使用同一套 Skill，已验收的公共主机能力可以复用，项目权限和数据保持隔离。
 
-## What it standardizes
+## 从这里开始
 
-- Separate build, runtime, and public evidence.
-- One immutable service-to-digest candidate manifest.
-- A CNB Tag-details release page with ready-last candidate state, separate
-  readiness/approval/execution, and fail-closed production defaults.
-- Explicit production approval without a production rebuild; the same tested
-  digests are promoted through a project-owned execution adapter.
-- A project-first adoption path: read-only discovery, living deployment/status
-  documents, value-free variable inventories, and a minimal release ladder.
-- Clear ordinary-repository, Secret-repository, and target-host boundaries.
-- Role-owned setup and recovery information that survives a change of AI tool.
-- A versioned shared-Caddy declaration, internal/external provenance chain,
-  ownership and release transaction, plus separately authorized bootstrap,
-  helper-pair maintenance, and project provisioning for multi-project hosts.
-- A recoverable legacy-host takeover: one filesystem-capacity inventory, an
-  externally verified snapshot and credential-rotation gate, then root-only
-  baseline maintenance before project provisioning and ordinary release.
+1. 把本仓库链接发给你使用的 AI 编程工具，说：
+   > 请按这个工具支持的方式安装或加载 cnb-devops-skill，并确认你能读取它。
+2. 在工具中打开你的业务项目目录，说：
+   > 请用 cnb-devops-skill 帮这个项目接入 CNB，先完成本地配置和能运行的检查。需要我操作账号或控制台时，告诉我去哪里、做什么、怎样确认完成。
+3. AI 会读取项目现状，完成当前授权范围内的工作，再告诉你已完成什么、实际验证了什么，以及下一步需要做什么。
 
-## Package map
+后续可以直接说：
 
-- [SKILL.md](SKILL.md) — concise decision and routing contract.
-- [Project adoption](references/project-adoption.md) — first-contact discovery,
-  project documents, host/account classification, and the ordinary release path.
-- [Release safety](references/release-safety.md) — evidence, candidate,
-  transaction, failure, and retention rules.
-- [Human handoffs](references/human-handoffs.md) — detailed role deliverables
-  and one-time console work.
-- [CNB OpenAPI](references/cnb-openapi.md) — current CNB-specific facts and
-  mutation boundaries.
-- [CNB native deployment page](references/cnb-deployment-ui.md) — candidate
-  Tag, static/dynamic production gates, versioned handoff, and safe examples.
-- [Shared Caddy contract v1](references/shared-caddy-v1/contract.md) — schemas,
-  canonical routes, persistent host locks, generation transactions, and recovery.
-- [Shared Caddy host handoff](references/shared-caddy-v1/host-handoff.md) —
-  non-secret inventory/snapshot/rotation deliverables, separately authorized
-  bootstrap, baseline import/recovery, provisioning, ownership, and
-  crash-recoverable helper maintenance.
+- **增加项目：**“请为当前项目接入同样的发布流程，复用已验收的主机能力，保留各项目的权限、路由和数据隔离。”
+- **接着做：**“请读取当前项目的部署和状态记录，核对最新证据，继续已授权但尚未完成的工作。”
+- **发布：**“请把当前项目部署到测试环境并验证。”正式发布时，再明确提出生产发布请求并完成项目要求的审批。
 
-## Data boundary
+## AI 做什么，你做什么
 
-Reviewable deployment definitions and Secret variable names belong in the
-ordinary project repository. Credentials and sensitive target data belong in a
-CNB Secret repository. Runtime-only values belong on the target host. The
-public Skill and its reports contain templates and non-secret evidence only.
+AI 负责识别项目架构，生成和检查流水线、部署配置与固定执行接口，维护部署说明、当前状态和证据索引；在授权范围内执行构建、部署、验证，并处理失败后的恢复流程。缺少云端条件时，AI 先完成不依赖它的本地工作，将未接通的集成保留为禁用并说明原因。
 
-## Compatibility and status
+你负责提供无法从项目中查到的业务选择、需要本人登录的账号或控制台操作，以及项目规定的发布审批。AI 会在确实需要时给出一个具体动作和验收方式；配置文件与技术记录由 AI 整理。敏感值只进入指定的私密存储，不发到聊天或普通代码仓库。
 
-The package uses the portable Agent Skills Markdown format and has no runtime
-client dependency. It can be referenced by Codex and by other AI products that
-load Agent Skills or Markdown instructions. CNB, TCR, and TAT are the current
-adapters; the release contract itself remains provider-neutral.
+同一个人可以承担多个角色；是否必须由不同人员审批，以项目政策为准。审批是绑定具体候选版本的独立动作，审批通过后仍需执行发布。已经有效授权或验收的工作，在范围不变时继续沿用。
 
-Repository CI runs the deterministic public-package test suite. Behavioral
-pressure scenarios are recorded in [tests/skill-scenarios.md](tests/skill-scenarios.md).
-The reference helper and installer are security-oriented examples that require
-host filesystem and runtime-adapter review before maintenance installation.
+## 交付到哪里算完成
 
-## License
+流程覆盖项目接入、构建、测试环境验证、候选版本、合入受控分支、生产就绪检查、审批、生产执行和上线验证。生产使用测试环境验证过的同一组镜像，不重新构建；发生失败时保留现场与恢复记录。客户端打包、商店审核和发布单独跟踪。
+
+本地文件生成、测试通过、云端接通和实际上线是不同结果。AI 应分别报告，只有取得对应环境的运行与访问验证证据后，才确认该环境交付完成。
+
+## 兼容性与验证范围
+
+本包使用 Agent Skills Markdown 格式，没有运行时客户端依赖。需要能加载 Skill 或 Markdown 指令、并能在业务项目中工作的 AI 工具；安装方式以工具实际能力为准，不支持时由 AI 说明具体限制。当前适配 CNB、TCR 和腾讯云 TAT；实际权限、网络与主机条件仍需逐项目验证。
+
+仓库 CI 运行确定性的包测试；[行为场景](tests/skill-scenarios.md)记录另行开展的评估范围与结果。这些检查不代表你的云端流水线已经验收。附带的 helper 和 installer 是参考实现，安装前需核对目标主机文件系统与执行接口。
+
+## 给 AI 与维护者的参考
+
+技术契约与配置示例供 AI 按需读取，不要求使用者逐篇阅读。
+
+- [SKILL.md](SKILL.md)：任务判断与入口路由。
+- [项目接入与恢复](references/project-adoption.md)：本地交付、状态记录与多项目使用。
+- [发布安全](references/release-safety.md)：镜像、证据、审批、事务与恢复契约。
+- [人员交接](references/human-handoffs.md)：各角色的控制台操作与验收材料。
+- [CNB OpenAPI](references/cnb-openapi.md)：CNB 行为与操作边界。
+- [CNB 原生部署页面](references/cnb-deployment-ui.md)：候选 Tag、生产门禁与示例。
+- [Shared Caddy v1](references/shared-caddy-v1/contract.md)：共享主机路由、锁与事务契约。
+- [共享主机交接](references/shared-caddy-v1/host-handoff.md)：盘点、备份、初始化、维护与项目开通。
+
+## 许可证
 
 [MIT](LICENSE)
