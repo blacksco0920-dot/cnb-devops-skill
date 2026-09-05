@@ -226,12 +226,18 @@ Official guidance:
 
 ### Acceptance
 
-Apply the matching source acceptance branch above. Every topology requires
-the authoritative full SHA, a real clean build, the complete service map and
-separate build/runtime/public release evidence; source acceptance alone does
-not establish a candidate or deployment. Candidate naming, UI roles, and
-execution-adapter ownership are explicit rather than inherited from another
-project. An existing host also has an accepted
+For the initial source handoff, apply the matching source acceptance branch
+above: require the authoritative full SHA, a real clean build, the complete
+service map, and the owner/contract facts listed under Deliver. Candidate naming,
+UI roles, and execution-adapter ownership are explicit rather than inherited
+from another project. Runtime/public evidence from a deployment that has not
+occurred is not an initial source-handoff prerequisite.
+
+At candidate and deployment acceptance, require separate build/runtime/public
+evidence for the exact complete service digest map under
+[release safety](release-safety.md). Source acceptance alone does not establish
+a candidate or deployment. Before the first managed release, an existing host
+also has an accepted
 `compatibility receipt` for the exact controller and path contract; a blocked
 receipt is resolved only through separately authorized maintenance, never by
 the ordinary release.
