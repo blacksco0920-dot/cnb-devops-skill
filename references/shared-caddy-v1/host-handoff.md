@@ -26,6 +26,16 @@ deliverables:
   new release: name/class, storage boundary, owner, rotation completion/date,
   expiry, and validation result—never its value.
 
+Inventory v2 materials: [read-only collector](../../scripts/inspect_docker_host_v2.py),
+[request example](../docker-host-inventory-v2/request.example.json), and
+[inventory Schema](../docker-host-inventory-v2/inventory.schema.json).
+Generate the scoped request from approved control records; do not mix v1 and v2
+requests or evidence. The collector supplies observable host evidence only.
+Its secret-free output is owner-only operational evidence, not a public handoff
+or a route-ownership decision. Keep it in the approved evidence boundary;
+route ownership, snapshot/rotation gates, and human acceptance still follow
+this handoff.
+
 These are hard gates. Do not use `docker volume rm`, any volume prune, or bind
 source deletion to create capacity. Compatibility ownership is separate from a
 new project's declaration, and neither baseline authority nor these gates may
@@ -202,6 +212,12 @@ and full host set must first match exactly. Any change is a transfer, not an
 ordinary update.
 
 ## Acceptance record
+
+Acceptance requires one owner per live hostname, full-tree validation/reload/smoke,
+helper self-attestation matching the server contract and bootstrap attestation,
+and agreement across Git/archive/internal-provenance/manifest/transaction/receipt
+evidence. Completed generations remain read-only and `legacy_opaque` content
+remains byte/hash identical until a separately approved takeover.
 
 Record only non-secret evidence:
 

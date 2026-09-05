@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import subprocess
 import unittest
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -175,7 +176,7 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, handoffs)
 
     def test_handoffs_cover_lighthouse_and_the_fixed_tat_command_contract(self):
-        handoffs = self.text("references/human-handoffs.md")
+        handoffs = " ".join(self.text("references/human-handoffs.md").split())
         for phrase in (
             "CVM",
             "Lighthouse",
@@ -441,12 +442,19 @@ class SkillPackageTests(unittest.TestCase):
         handoffs = self.text("references/human-handoffs.md")
         adoption = self.text("references/project-adoption.md")
 
-        for source in (release_safety, deployment_ui, handoffs, adoption):
-            source = " ".join(source.lower().split())
-            self.assertIn("fixed, pre-created tat saved commands", source)
-            self.assertIn("approved project-owned adapter/control record", source)
+        authoritative = " ".join(release_safety.lower().split())
+        for phrase in (
+            "fixed, pre-created tat saved commands",
+            "approved project-owned adapter/control record",
+            "arbitrary script text", "exact target instanceids",
+            "normalized non-secret release identity", "complete digest map",
+            "fixed reviewed command content/controller", "invocation evidence",
+        ):
+            self.assertIn(phrase, authoritative)
+        for source in (deployment_ui, handoffs, adoption):
+            self.assertIn("](release-safety.md#credentials-and-execution)", source)
             self.assertIn("arbitrary script text", source)
-            self.assertIn("exact target instanceids", source)
+            self.assertIn("targets", source)
 
         for phrase in (
             "tat:DescribeCommands",
@@ -555,20 +563,52 @@ class SkillPackageTests(unittest.TestCase):
             sudoers,
         )
 
+    def test_handoff_role_routes(self):
+        handoffs = self.text("references/human-handoffs.md")
+        index = handoffs.split("## Shared artifacts", 1)[0]
+        for anchor in (
+            "shared-artifacts", "target-host-owneroperator",
+            "shared-caddy-host-administrator", "application-owner",
+            "cnb-and-tcr-administrator", "customer-tencent-cloud-administrator",
+            "dns-and-icp-administrator", "data-owner", "production-approver",
+            "cnb-secret-repository-operation",
+        ):
+            self.assertIn(f"](#{anchor})", index)
+
+    def test_inventory_material_routes(self):
+        host = self.text("references/shared-caddy-v1/host-handoff.md")
+        for target in (
+            "../../scripts/inspect_docker_host_v2.py",
+            "../docker-host-inventory-v2/request.example.json",
+            "../docker-host-inventory-v2/inventory.schema.json",
+        ):
+            self.assertIn(f"]({target})", host)
+
+    def test_link_checker_rejects_missing_targets_and_renamed_anchors(self):
+        from markdown_link_support import local_link_errors
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.md"
+            target = root / "target.md"
+            target.write_text("# New heading\n## Repeated\n## Repeated\n```md\n# Fake\n```\n")
+            for link in ("missing.md", "target.md#old-heading", "#absent", "target.md#fake"):
+                with self.subTest(link=link):
+                    source.write_text(f"# Source\n[route]({link})\n")
+                    self.assertEqual(1, len(local_link_errors(source)))
+            source.write_text(
+                "# Source\n[local](#source)\n[heading](target.md#new-heading)\n"
+                "[duplicate](target.md#repeated-1)\n[external](https://example.test/x#y)\n"
+            )
+            self.assertEqual([], local_link_errors(source))
+
     def test_markdown_local_links_resolve(self):
+        from markdown_link_support import local_link_errors
         markdown_files = [
-            ROOT / "SKILL.md",
-            ROOT / "README.md",
+            ROOT / "SKILL.md", ROOT / "README.md",
             *sorted((ROOT / "references").rglob("*.md")),
         ]
         for source in markdown_files:
-            for target in re.findall(
-                r"\[[^]]+\]\(([^)]+)\)", source.read_text(encoding="utf-8")
-            ):
-                if "://" in target or target.startswith("#"):
-                    continue
-                resolved = (source.parent / target.split("#", 1)[0]).resolve()
-                self.assertTrue(resolved.exists(), f"{source}: {target}")
+            self.assertEqual([], local_link_errors(source), str(source))
 
     def test_public_package_has_no_sensitive_identifier_shapes(self):
         public = self.public_package_text()

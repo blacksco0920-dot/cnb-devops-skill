@@ -21,7 +21,7 @@ A candidate manifest is immutable release evidence. It contains:
 - manifest format and version;
 - project and environment identity;
 - full application commit and exact controller commit;
-- build identity and candidate identity;
+- build identity, creation time, and candidate identity;
 - a complete service map whose every value is
   `repository@sha256:digest`;
 - the three evidence-plane results, timestamps, and non-secret evidence links.
@@ -33,10 +33,13 @@ customer target identifiers that are not needed to identify the evidence.
 
 Parse the candidate manifest strictly. Reject unknown, duplicate, missing,
 empty, malformed, or mismatched fields. Reject a partial service map and any
-mutable image reference. Create the candidate only after the real staging
+mutable image reference. Reject non-I-JSON input and evidence from a different
+build or runtime attempt. An implementation unable to reproduce the canonical
+framing must fail closed. Create the candidate only after the real staging
 deployment has passed build, runtime, and public evidence checks.
 
-Define the hash domain without circularity: serialize the manifest using RFC 8785,
+For `candidate-manifest/v1`, define the hash domain without circularity:
+serialize the manifest using RFC 8785,
 append the contract's single LF framing byte, and hash those exact bytes.
 Store the resulting SHA-256 in a candidate annotation outside the manifest;
 never insert the digest into the payload it identifies.

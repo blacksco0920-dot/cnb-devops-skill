@@ -52,28 +52,13 @@ the candidate pipeline and deployment events execute from the selected Tag.
 
 ### Candidate manifest
 
-The canonical manifest records:
-
-- versioned schema, project identity, target environment, candidate Tag,
-  application commit, and controller commit;
-- build identity and creation time;
-- the complete project-defined map of service role to
-  `repository@sha256:digest`;
-- separate passed build, runtime, and public evidence with non-secret
-  references.
-
-`candidate-manifest/v1` uses an unambiguous hash domain: reject duplicate
-object keys and non-I-JSON input, serialize the manifest with **RFC 8785**,
-then append exactly one LF byte. That result is the canonical payload. Compute
-SHA-256 over the exact canonical payload bytes and store it in the
-`candidate_manifest_sha256` annotation **outside the manifest**. Never embed a
-manifest's own digest inside the bytes being hashed. An implementation that
-cannot reproduce this framing and canonicalization must fail closed.
-
-Strictly reject unknown, duplicate, missing, empty, malformed, or mismatched
-fields, a partial service map, a role mapped to any repository other than the
-project's configured allowed repository, mutable image references, and evidence
-from a different build or runtime attempt. The [candidate example](cnb-deployment-ui/examples/candidate-manifest.json)
+Use the [candidate manifest contract](release-safety.md#candidate-manifest) and
+[strict input and RFC 8785 canonical hash rules](release-safety.md#candidate-creation).
+For CNB, the manifest's `candidate_tag` identifies the immutable Tag; store its
+canonical payload in the annotated Tag message and its SHA-256 in the
+`candidate_manifest_sha256` annotation outside the manifest. Reject a service
+role mapped to any repository other than the project's configured allowed
+repository. The [candidate example](cnb-deployment-ui/examples/candidate-manifest.json)
 is illustrative data, not a replacement for a project validator.
 
 ### Candidate Tag
@@ -107,15 +92,12 @@ verify it equals `manifest.candidate_tag`. Use that value for every candidate
 annotation operation in a branch pipeline. `CNB_BRANCH` names the triggering
 branch in that context and must not be substituted for the new candidate Tag.
 
-For pinned `cnbcool/annotations:v1.0.0`, an empty GET returns successfully
-without creating `toFile`. Immediately before that first GET, use `umask 077`
-and pre-create its exact path as canonical `{}` with mode `0600`; existing data
-will overwrite it. This is not a general missing-file fallback. Every GET after
-an ADD uses a fresh, non-precreated path and fails closed if the file is absent
-or empty. The [annotation readback example](cnb-deployment-ui/examples/annotation-readback.yml)
-shows only the freshly created candidate boundary without adding a reusable CLI
-or server script. An existing exact candidate must first use the retry-state
-classification above; do not route it through the fresh-empty assertion.
+For a fresh candidate's first GET, follow the
+[empty annotation GET compatibility rule](cnb-openapi.md#empty-annotation-get-compatibility)
+and [annotation readback example](cnb-deployment-ui/examples/annotation-readback.yml).
+After an ADD, a missing or empty snapshot still fails closed. An existing exact
+candidate must first use the retry-state classification above; do not route it
+through the fresh-empty assertion.
 
 ## Two production gates
 
@@ -193,14 +175,10 @@ preflight. Unknown schemas, a pending handoff, a disabled adapter, or an
 adapter/handoff mismatch blocks before credentials are loaded or an external
 production call is made.
 
-For TAT, the project-owned adapter selects fixed, pre-created TAT Saved Commands
-named for readiness and apply. Each Saved Command owns fixed reviewed command
-content/controller. Exact target InstanceIds come only from an approved
-project-owned adapter/control record and CAM resource scope, never from CNB.
-CNB passes only normalized non-secret release identity and the complete digest
-map. It must not pass arbitrary script text, paths, targets, credentials, or an
-alternate image map. The adapter reads back the fixed command, invokes its
-CommandId, and records invocation evidence.
+For TAT, bind the accepted candidate and adapter to the
+[fixed readiness/apply execution contract](release-safety.md#credentials-and-execution).
+CNB must not pass arbitrary script text, caller-selected targets, or an alternate
+image map; only the selected candidate's permitted inputs reach the adapter.
 
 Start projects from the [pending handoff](cnb-deployment-ui/examples/production-handoff.pending.json)
 and [disabled adapter](cnb-deployment-ui/examples/execution-adapter.disabled.json)

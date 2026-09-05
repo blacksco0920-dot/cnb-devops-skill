@@ -127,17 +127,12 @@ bootstrap, baseline import, direct Caddy change, or ordinary release merely
 because a project is new.
 
 For both operator-owned testing and customer-owned production, use dedicated
-direct CAM identities with two fixed, pre-created TAT Saved Commands: one for
-readiness and one for apply. Each Saved Command owns fixed reviewed command
-content/controller. Exact target InstanceIds come only from an approved
-project-owned adapter/control record and CAM resource scope, never from CNB.
-CNB supplies only normalized non-secret release identity and the complete digest
-map; it never supplies arbitrary script text, paths, targets, or credentials.
-The adapter reads back the fixed command, invokes its CommandId, and records
-invocation evidence. Cross-account role/STS is optional when an organization
-needs a separate delegation boundary and invokes the same fixed commands. Return
-missing setup work as one owner, destination, and acceptance result, never as
-secret-value questions.
+direct CAM identities with fixed readiness and apply Saved Commands; keep the
+read-only check separate from release execution. Follow the
+[fixed TAT execution contract](release-safety.md#credentials-and-execution): CNB
+must not supply arbitrary script text or caller-selected targets.
+Cross-account role/STS remains optional. Return missing setup work as one owner,
+destination, and acceptance result, never as secret-value questions.
 
 ## Minimal release ladder
 

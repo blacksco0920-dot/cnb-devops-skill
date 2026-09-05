@@ -6,6 +6,22 @@ Use this reference when a release needs information or a console action that an
 AI cannot safely discover or perform. Ask once for the smallest durable
 artifact, not repeatedly for the same facts.
 
+## 按问题找负责人
+
+先按当前阻塞项定位角色；共用交付格式见[交付物与回执](#shared-artifacts)。
+
+| 当前问题 | 负责人及操作 |
+| --- | --- |
+| 现有主机或控制器路径不兼容 | [目标主机负责人](#target-host-owneroperator) |
+| 多项目共用 Caddy、接管或主机维护 | [共享 Caddy 主机管理员](#shared-caddy-host-administrator) |
+| 应用拓扑、源码接入或控制器合同 | [应用负责人](#application-owner) |
+| CNB 流水线或 TCR 推拉权限 | [CNB 与 TCR 管理员](#cnb-and-tcr-administrator) |
+| 客户腾讯云账号、TAT 命令或执行权限 | [客户腾讯云管理员](#customer-tencent-cloud-administrator) |
+| DNS、证书或备案阻塞 | [DNS 与 ICP 管理员](#dns-and-icp-administrator) |
+| 数据迁移、备份或恢复验收 | [数据负责人](#data-owner) |
+| 候选已就绪，需生产审批 | [生产审批人](#production-approver) |
+| Secret 配置、授权或凭据轮换 | [Secret 仓库维护者](#cnb-secret-repository-operation) |
+
 ## Shared artifacts
 
 ### handoff manifest
@@ -113,36 +129,23 @@ legacy takeover, or recovery-marker repair.
 
 ### Deliver
 
-- A complete live-host inventory and owner mapping: Caddy writers/routes,
-  containers, named and anonymous volumes, bind sources, listeners, and
-  capacity/inodes grouped once per `st_dev`; proof old writers are stopped; the
-  approved helper version/hash; fixed release identity; root-owned persistent
-  `/var/lib/deploydesk/locks` device/inode/ctime evidence; current/previous
-  generation; and per-host smoke results.
-- An externally stored, restore-verified snapshot receipt covering Caddy state
-  and persistent application data, plus value-free credential-rotation receipts
-  for takeover/release credentials. Record storage boundary, owner, integrity,
-  restore result, and dates—not snapshot identifiers, values, addresses, or
-  payloads. A local copy does not qualify.
-- A separately approved maintenance action. Ordinary staging or production
-  release approval does not authorize baseline, ownership, or helper changes.
-- One explicit maintenance authority. Baseline takeover uses only
-  `import-baseline` (with its one archive ID) or `recover-baseline-maintenance`
-  (with no mutation arguments); neither is an application-release or sudoers
-  authority. Provision only after accepted baseline recovery/receipt.
-- A value-free acceptance record following the
-  [shared Caddy host handoff](shared-caddy-v1/host-handoff.md).
+- Inventory and owner mapping, external restore-verified snapshot receipts,
+  and value-free credential-rotation receipts, accepted under the
+  [host inventory gates](shared-caddy-v1/host-handoff.md#inventory-snapshot-and-credential-gates).
+- Approved helper and host inputs from the [host input contract](shared-caddy-v1/host-handoff.md#inputs),
+  with one separately authorized maintenance action. Ordinary staging or
+  production release approval does not authorize baseline, ownership, or helper
+  changes. Follow the fixed [baseline import/recovery order](shared-caddy-v1/host-handoff.md#baseline-import-and-recovery)
+  before provisioning.
+- A value-free [host acceptance record](shared-caddy-v1/host-handoff.md#acceptance-record).
 
 ### Acceptance
 
-Every live host has one owner, full-tree validation/reload/smoke passed, helper
-self-attestation matches the server contract and bootstrap attestation, the
-Git/archive/internal-provenance/manifest/transaction/receipt chain agrees,
-completed generations are read-only, and no application or helper-maintenance
-recovery marker exists. `legacy_opaque` content remains
-byte/hash identical until a separately approved takeover. Snapshot restore and
-credential-rotation receipts are accepted before destructive or live release
-work; no volume/bind deletion or capacity double-count supplied the evidence.
+Accept the dedicated host handoff's gates and acceptance record before a live
+application release. Pending restore/rotation evidence, unaccepted maintenance,
+or any recovery marker keeps release blocked. Route ownership, helper and
+provenance checks remain governed by that handoff; application release authority
+cannot substitute for host maintenance authority.
 
 ### Never deliver
 
@@ -344,11 +347,9 @@ ready, and whenever its role, instance, region, or maintenance window changes.
   OS/architecture, outbound connectivity, TAT agent state, and maintenance
   window directly into the approved control locations—not into chat or the
   `handoff manifest`.
-- A dedicated direct CAM identity scoped to this project's fixed, pre-created
-  TAT Saved Commands for readiness and apply. Each Saved Command owns fixed
-  reviewed command content/controller. Exact target InstanceIds come only from
-  an approved project-owned adapter/control record and CAM resource scope; CNB
-  receives no arbitrary script text, path, target, or credential input.
+- A dedicated direct CAM identity for fixed readiness/apply commands, accepted
+  against the [TAT execution contract](release-safety.md#credentials-and-execution).
+  CNB receives no arbitrary script text or caller-selected targets.
 - A `secret receipt` for the required variable names, approved storage
   locations, owner, and validation state—never their values.
 - If organizational delegation requires it, a customer-controlled
@@ -383,9 +384,8 @@ ready, and whenever its role, instance, region, or maintenance window changes.
    not require exposing port 22.
 6. In CNB Web, enter only the approved variable values directly into the
    project's Secret boundary. Report only variable names and `secret receipt`s;
-   CNB supplies normalized non-secret release identity and the complete digest
-   map to the fixed Saved Command, never arbitrary scripts, paths, targets, or
-   credentials.
+   validate the fixed command inputs against the
+   [execution contract](release-safety.md#credentials-and-execution).
    The dedicated direct CAM identity credential is a pipeline secret in that
    approved boundary with a value-free rotation receipt; it does not require an
    STS temporary credential triple.
@@ -600,15 +600,12 @@ Only an authorized human Secret maintainer performs these steps:
 1. In CNB Web, create or select the intended **Secret repository**.
 2. Open the intended YAML file in the Web editor; Secret repositories cannot be
    cloned or pushed from a local checkout.
-3. Inspect the consuming job before writing permission fields. For an ordinary
-   `script` or `commands` task, add the narrowest applicable `allow_slugs`,
-   `allow_events`, and `allow_branches`, and omit `allow_images`. A job that
-   specifies both `image` and `script` remains a script task; a pipeline-level
-   `image` is likewise only an execution environment.
-4. For a plugin task, also declare `allow_images` for the exact pinned plugin
-   image. Plugin-level `imports` participates in image authorization but does
-   not pass custom variables automatically; `settingsFrom` loads plugin
-   parameters directly. A non-plugin task cannot match `allow_images`.
+3. Classify the consuming job using the
+   [Secret task and variable rules](cnb-openapi.md#secret-repositories). For a
+   script/commands task, set the narrow applicable repository/event/branch
+   permissions and omit `allow_images`.
+4. For a plugin task, authorize the exact pinned image and choose the variable
+   loading mechanism from that same rule before saving.
 5. Enter values directly in CNB Web and save through the audited flow. If a
    value was pasted into chat, a log, or another ordinary artifact, treat it as
    exposed, never echo the value, and have the authorized owner rotate it at
