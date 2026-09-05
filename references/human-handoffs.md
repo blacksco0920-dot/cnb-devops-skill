@@ -161,7 +161,9 @@ to an existing host, and before a candidate is approved.
 
 ### Deliver
 
-- Repository URL and governed source/release branches.
+- Authoritative source repository, governed source/release branches, and actual
+  synchronization paths; mark external synchronization `not-applicable` for
+  CNB-native source.
 - Docker build contexts, target architectures, complete service roles and
   count, ports, health endpoints, dependency order, migrations, and persistent
   volumes.
@@ -180,7 +182,21 @@ to an existing host, and before a candidate is approved.
 - The selected project-owned execution adapter, adapter owner, and default
   disabled status until its handoff is accepted.
 
-### Exact console steps
+### Source setup and acceptance
+
+Select the branch matching the observed authoritative source and governed
+synchronization path. Do not add a synchronization system to satisfy a handoff.
+
+#### CNB-native source
+
+When CNB is authoritative and there is no external synchronization path, record
+synchronization as `not-applicable`. Do not request a GitHub repository, Actions
+setup, or `CNB_PUSH_TOKEN`. Record the governed CNB branch's full SHA and accept
+source/build evidence only when the repository's real clean build succeeds.
+
+#### GitHub-to-CNB synchronization
+
+Only for an observed governed GitHub-to-CNB synchronization path:
 
 1. In GitHub, open the repository, then **Settings → Secrets and variables →
    Actions**. Create or confirm the per-repository `CNB_PUSH_TOKEN`. If its
@@ -189,11 +205,17 @@ to an existing host, and before a candidate is approved.
    the minimum code-write scope needed by synchronization.
 3. Configure synchronization only for governed branches. Do not use a
    destructive `--mirror` flow that could delete CNB candidate tags.
-4. Record the GitHub and CNB full commit IDs after synchronization.
-5. Deliver the controller path contract to the target-host owner/operator named
-   in the handoff manifest. Have that role run the read-only compatibility
-   preflight with the exact incoming controller and return only the value-free
-   `compatibility receipt`.
+4. Record the GitHub and CNB full commit IDs after synchronization. Accept this
+   path only when both governed branch records show the same full SHA and the
+   real clean build succeeds. Retain the accepted `CNB_PUSH_TOKEN` secret receipt
+   without exposing or requesting its value again.
+
+### Common controller handoff
+
+Deliver the controller path contract to the named target-host owner/operator.
+For an existing host or incoming controller requiring compatibility checks,
+have that role run the read-only preflight with the exact controller and return
+only the value-free `compatibility receipt`.
 
 Official guidance:
 
@@ -204,11 +226,12 @@ Official guidance:
 
 ### Acceptance
 
-The handoff is accepted only when GitHub and CNB resolve the governed branch to
-the same full SHA and the repository's real clean build succeeds. The receipt
-for `CNB_PUSH_TOKEN` exists without exposing its value. The service map,
-candidate naming, UI roles, and execution-adapter ownership are explicit rather
-than inherited from another project. An existing host also has an accepted
+Apply the matching source acceptance branch above. Every topology requires
+the authoritative full SHA, a real clean build, the complete service map and
+separate build/runtime/public release evidence; source acceptance alone does
+not establish a candidate or deployment. Candidate naming, UI roles, and
+execution-adapter ownership are explicit rather than inherited from another
+project. An existing host also has an accepted
 `compatibility receipt` for the exact controller and path contract; a blocked
 receipt is resolved only through separately authorized maintenance, never by
 the ordinary release.

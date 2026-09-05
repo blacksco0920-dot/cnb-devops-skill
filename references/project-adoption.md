@@ -50,6 +50,73 @@ put a value or complete environment file in chat, an ordinary repository, a
 handoff manifest, or a public report. Draft missing documents from observed
 facts before requesting only their undiscoverable inputs.
 
+## Resume an existing project
+
+1. Read the local instructions and both project documents. Treat the documents
+   as an index: check the current approved control records and accepted receipts
+   for source/controller commits, candidate identity, complete service digests,
+   evidence bindings and expiry, and transaction/recovery state. Use only the
+   supplied records and authorized read-only access.
+2. Resolve old decisions against their current durable sources. Mark conflicting,
+   expired, invalidated, or unverified evidence and the affected action `blocked`
+   until the current records resolve it. Update the index; a new policy decision
+   does not rewrite an immutable candidate. Preserve unresolved transaction and
+   recovery evidence and follow [release safety](release-safety.md).
+3. Retain completed maintenance receipts and valid secret receipts. Do not
+   repeat completed maintenance by inference or ask for already accepted setup.
+   Reuse existing authorization while its recorded scope remains valid; do not
+   ask for the same permission again. Production readiness and approval still
+   require the existing policy's freshness, binding and recovery checks.
+4. Record exactly one next authorized action with its authorization source,
+   owner, destination and acceptance condition. Perform it when its checks pass;
+   if none remains, record `none`. An unresolved prerequisite gets one specific
+   owner deliverable, not inferred permission for release or maintenance.
+
+Refresh `docs/PROJECT_STATUS.md` after a release result, failure, recovery,
+policy decision, or handoff. Record the last verification time and evidence
+sources even when an attempted action remains blocked.
+
+This compact synthetic example is a PROJECT_STATUS index, not a new receipt
+schema. Replace it with observed project facts; use explicit `unknown` or
+`not-applicable` when appropriate. Evidence/decision references resolve in the
+project's approved records; never copy credential values or sensitive targets.
+
+```yaml
+last_verified_at: "2026-09-05T08:00:00+00:00"
+source:
+  application_commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  controller_commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+candidate: {state: "not-created: staging verification pending", identity: not-applicable}
+services:
+  web: registry.example.test/example/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+evidence:
+  build: "passed: build-receipt-example-1"
+  runtime: "unknown: current readback pending"
+  public: "unknown: current readback pending"
+effective_decisions:
+  - {source: decision-example-1, scope: "reconcile staging records into docs/PROJECT_STATUS.md", status: accepted}
+completed_maintenance_receipts: [maintenance-receipt-example-1]
+invalidated_evidence: [] # None found in the records checked so far.
+unresolved_state:
+  transaction: "unknown: current readback pending"
+  recovery: "unknown: current readback pending"
+  source: control-record-example-1
+next_authorized_action:
+  action: "Reconcile staging records into docs/PROJECT_STATUS.md"
+  authorization_source: decision-example-1
+  owner: release-operator
+  acceptance: "Current transaction/recovery state and complete runtime/public evidence are indexed; unresolved checks remain blocked."
+```
+
+## Source topology
+
+Identify the authoritative source repository and actual governed synchronization
+paths from read-only evidence. CNB-native source needs no external synchronization;
+GitHub-to-CNB requirements apply only to an observed synchronization path. Use
+the [application-owner handoff](human-handoffs.md#application-owner) for each
+path's setup and acceptance. Full commits, real clean builds, complete digest
+maps and release evidence remain required for every topology.
+
 ## Host and account classification
 
 Classify a single-project target as a `simple host` unless read-only evidence

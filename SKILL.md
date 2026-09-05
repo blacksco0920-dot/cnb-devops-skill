@@ -46,8 +46,8 @@ Only the root host administrator performs bootstrap, helper maintenance, baselin
 
 ## Read only what the task needs
 
-- New project, missing project documents, ordinary host classification, or a
-  first release ladder: [project adoption](references/project-adoption.md).
+- New project, project resumption, missing project documents, ordinary host
+  classification, or a first release ladder: [project adoption](references/project-adoption.md).
 - Existing-host first release, controller upgrade, candidate, failure, recovery, audit, or retention: [release safety](references/release-safety.md).
 - Human setup or missing information: [human handoffs](references/human-handoffs.md).
 - CNB API, token, Secret repository, or deployment UI behavior: [CNB OpenAPI](references/cnb-openapi.md).

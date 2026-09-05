@@ -1,4 +1,5 @@
 import ast
+from datetime import datetime
 from pathlib import Path
 import re
 import subprocess
@@ -340,6 +341,74 @@ class SkillPackageTests(unittest.TestCase):
             "NEW_PROJECT_CUSTOMER_PRODUCTION",
         ):
             self.assertIn(scenario, scenarios)
+
+    def test_status_example_carries_a_usable_value_free_resume_checkpoint(self):
+        import yaml
+
+        adoption = self.text("references/project-adoption.md")
+        match = re.search(r"```yaml\n(.*?)\n```", adoption, re.DOTALL)
+        self.assertIsNotNone(match, "adoption needs one usable PROJECT_STATUS example")
+        status = yaml.safe_load(match.group(1))
+        required = {
+            "last_verified_at", "source", "candidate", "services", "evidence",
+            "effective_decisions", "completed_maintenance_receipts",
+            "invalidated_evidence", "unresolved_state", "next_authorized_action",
+        }
+        self.assertTrue(required <= status.keys())
+        self.assertIsNotNone(datetime.fromisoformat(status["last_verified_at"]).tzinfo)
+        for field in ("application_commit", "controller_commit"):
+            self.assertRegex(status["source"][field], r"^[0-9a-f]{40}$")
+        self.assertTrue(status["candidate"]["state"])
+        self.assertTrue(status["services"])
+        for image in status["services"].values():
+            self.assertRegex(image, r"^registry\.example\.test/[^@]+@sha256:[0-9a-f]{64}$")
+        self.assertEqual({"build", "runtime", "public"}, status["evidence"].keys())
+        self.assertTrue(all(status["evidence"].values()))
+        decisions = status["effective_decisions"]
+        self.assertTrue(decisions)
+        for decision in decisions:
+            self.assertTrue({"source", "scope", "status"} <= decision.keys())
+        self.assertTrue(status["completed_maintenance_receipts"])
+        self.assertIsInstance(status["invalidated_evidence"], list)
+        self.assertTrue({"transaction", "recovery", "source"} <= status["unresolved_state"].keys())
+        action = status["next_authorized_action"]
+        self.assertEqual({"action", "authorization_source", "owner", "acceptance"}, action.keys())
+        self.assertTrue(all(action.values()))
+        self.assertIn(action["authorization_source"], {item["source"] for item in decisions})
+        self.assertNotRegex(match.group(1), r"(?i)TODO|SecretKey|InstanceIds|RoleArn|https?://")
+
+    def test_resume_contract_covers_refresh_conflicts_and_existing_authority(self):
+        adoption = self.text("references/project-adoption.md")
+        resume = re.search(r"## Resume an existing project\n(.*?)(?=\n## |\Z)", adoption, re.DOTALL)
+        self.assertIsNotNone(resume, "resumption needs an ordered evidence reconciliation contract")
+        text = " ".join(resume.group(1).lower().split())
+        for term in (
+            "index", "control records", "receipts", "expiry", "blocked",
+            "immutable candidate", "completed maintenance", "existing authorization",
+            "readiness", "approval", "release result", "failure", "recovery",
+            "policy decision", "handoff",
+        ):
+            with self.subTest(term=term):
+                self.assertIn(term, text)
+        self.assertGreaterEqual(len(re.findall(r"(?m)^\d+\. ", resume.group(1))), 3)
+        scenarios = self.text("tests/skill-scenarios.md")
+        for scenario in ("RESUME_STALE_STATUS", "RESUME_VALID_AUTHORIZATION"):
+            self.assertIn("### " + scenario, scenarios)
+
+    def test_source_handoff_has_native_and_observed_sync_acceptance_branches(self):
+        handoffs = self.text("references/human-handoffs.md")
+        for heading, terms in (
+            ("CNB-native source", ("not-applicable", "CNB_PUSH_TOKEN", "full SHA", "clean build")),
+            ("GitHub-to-CNB synchronization", ("governed", "CNB_PUSH_TOKEN", "same full SHA", "--mirror")),
+        ):
+            with self.subTest(branch=heading):
+                branch = re.search(r"#### " + re.escape(heading) + r"\n(.*?)(?=\n###|\Z)", handoffs, re.DOTALL)
+                self.assertIsNotNone(branch, "source topology needs separate scoped acceptance")
+                for term in terms:
+                    self.assertIn(term, " ".join(branch.group(1).split()))
+        scenarios = self.text("tests/skill-scenarios.md")
+        for scenario in ("CNB_NATIVE_SOURCE", "GITHUB_SYNC_SOURCE"):
+            self.assertIn("### " + scenario, scenarios)
 
     def test_direct_cam_default_does_not_require_optional_sts(self):
         handoffs = " ".join(self.text("references/human-handoffs.md").split())
