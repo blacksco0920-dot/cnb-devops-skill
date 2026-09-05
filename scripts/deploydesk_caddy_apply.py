@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -32,6 +33,8 @@ import uuid
 
 CONTRACT_VERSION = "shared-caddy-contract/v1"
 HELPER_VERSION = "1.0.0"
+DOCKER_TIMEOUT_SECONDS = 30
+LOCK_TIMEOUT_SECONDS = 30
 ID_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 ENVIRONMENT_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?")
 DEPLOYMENT_RE = re.compile(
@@ -88,6 +91,10 @@ class MaintenanceRequired(OwnershipError):
 
 class TransactionError(RuntimeError):
     pass
+
+
+class DockerTimeout(TransactionError):
+    """The client deadline expired; a daemon-side outcome may be unknown."""
 
 
 class RecoveryRequired(TransactionError):
@@ -427,6 +434,15 @@ def _validate_source_repo(value):
     return value
 
 
+def validate_upstream(value):
+    if (
+        not isinstance(value, str)
+        or len(value) > 253
+        or not SAFE_PROXY_HOST_RE.fullmatch(value)
+    ):
+        raise ContractError("unsafe docker proxy host")
+
+
 def validate_declaration(value):
     allowed = {
         "contract_version", "project_id", "environment", "deployment_id",
@@ -460,11 +476,7 @@ def validate_declaration(value):
             for key in ("service", "network"):
                 if not SAFE_RUNTIME_NAME_RE.fullmatch(str(route[key])):
                     raise ContractError("unsafe docker route identifier")
-            if (
-                not SAFE_PROXY_HOST_RE.fullmatch(str(route["upstream"]))
-                or len(route["upstream"]) > 253
-            ):
-                raise ContractError("unsafe docker proxy host")
+            validate_upstream(route["upstream"])
             if not isinstance(route["port"], int) or isinstance(route["port"], bool) or not 1 <= route["port"] <= 65535:
                 raise ContractError("invalid upstream port")
         elif route_type == "https_proxy":
@@ -904,16 +916,32 @@ def _open_fixed_lock(path, trust):
 @contextlib.contextmanager
 def _locked(path, trust):
     descriptor = _open_fixed_lock(path, trust)
+    acquired = False
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TransactionError("shared-Caddy lock acquisition timed out") from exc
+                time.sleep(min(0.1, remaining))
+                if time.monotonic() >= deadline:
+                    raise TransactionError("shared-Caddy lock acquisition timed out") from exc
         current = os.lstat(path)
         opened = os.fstat(descriptor)
         if _lock_identity(current) != _lock_identity(opened):
             raise SecurityError("lock identity was replaced")
         yield descriptor
     finally:
-        with contextlib.suppress(OSError):
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        if acquired:
+            with contextlib.suppress(OSError):
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
 
 
@@ -1018,10 +1046,17 @@ class DockerRuntime:
         self.config_root = config_root.rstrip("/")
         self.layout = layout
 
-    def _run(self, arguments):
-        result = subprocess.run(arguments, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        if result.returncode:
+    def _run(self, arguments, *, check=True):
+        try:
+            result = subprocess.run(
+                arguments, check=False, text=True, timeout=DOCKER_TIMEOUT_SECONDS,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise DockerTimeout("fixed Caddy operation timed out") from exc
+        if check and result.returncode:
             raise TransactionError("fixed Caddy operation failed: " + result.stdout[-1000:])
+        return result
 
     def validate(self, generation):
         generation_id = Path(generation).name
@@ -1081,11 +1116,12 @@ class DockerRuntime:
                     shutil.rmtree(candidate)
 
     def ensure_network(self, network, upstream, deployment_id, persist_intent):
-        if not SAFE_RUNTIME_NAME_RE.fullmatch(network) or not SAFE_RUNTIME_NAME_RE.fullmatch(upstream):
+        if not SAFE_RUNTIME_NAME_RE.fullmatch(network):
             raise ContractError("unsafe derived Docker network identity")
-        inspect = subprocess.run(
+        validate_upstream(upstream)
+        inspect = self._run(
             ["/usr/bin/docker", "network", "inspect", network],
-            check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False,
         )
         if inspect.returncode:
             raise TransactionError("declared project Docker network is absent")
@@ -1097,9 +1133,9 @@ class DockerRuntime:
         attached_names = {item.get("Name") for item in containers.values() if isinstance(item, dict)}
         if upstream not in attached_names:
             raise TransactionError("declared upstream is not live on its project network")
-        container_inspect = subprocess.run(
+        container_inspect = self._run(
             ["/usr/bin/docker", "inspect", upstream],
-            check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False,
         )
         if container_inspect.returncode:
             raise TransactionError("declared upstream container inspection failed")
@@ -1115,9 +1151,9 @@ class DockerRuntime:
             persist_intent(network)
             self._run(["/usr/bin/docker", "network", "connect", network, self.container])
             connected_now = True
-            verify = subprocess.run(
+            verify = self._run(
                 ["/usr/bin/docker", "network", "inspect", network],
-                check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                check=False,
             )
             if verify.returncode:
                 raise TransactionError("Caddy network attachment verification failed")
@@ -1132,11 +1168,12 @@ class DockerRuntime:
         return connected_now
 
     def verify_network(self, network, upstream, deployment_id):
-        if not SAFE_RUNTIME_NAME_RE.fullmatch(network) or not SAFE_PROXY_HOST_RE.fullmatch(upstream):
+        if not SAFE_RUNTIME_NAME_RE.fullmatch(network):
             raise ContractError("unsafe derived Docker network identity")
-        inspect = subprocess.run(
+        validate_upstream(upstream)
+        inspect = self._run(
             ["/usr/bin/docker", "network", "inspect", network],
-            check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False,
         )
         if inspect.returncode:
             raise TransactionError("declared project Docker network is absent during recovery")
@@ -1151,9 +1188,9 @@ class DockerRuntime:
             raise TransactionError("Docker network recovery inspection is malformed") from exc
         if upstream not in names or self.container not in names:
             raise TransactionError("committed runtime network membership drift")
-        container_inspect = subprocess.run(
+        container_inspect = self._run(
             ["/usr/bin/docker", "inspect", upstream],
-            check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False,
         )
         if container_inspect.returncode:
             raise TransactionError("declared upstream recovery inspection failed")
@@ -1165,9 +1202,9 @@ class DockerRuntime:
             raise OwnershipError("live upstream ownership drift during recovery")
 
     def detach_network(self, network):
-        inspect = subprocess.run(
+        inspect = self._run(
             ["/usr/bin/docker", "network", "inspect", network],
-            check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False,
         )
         if inspect.returncode:
             raise TransactionError("network inspection failed during rollback")
@@ -1183,9 +1220,9 @@ class DockerRuntime:
         if self.container not in names:
             return
         self._run(["/usr/bin/docker", "network", "disconnect", network, self.container])
-        verify = subprocess.run(
+        verify = self._run(
             ["/usr/bin/docker", "network", "inspect", network],
-            check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False,
         )
         if verify.returncode:
             raise TransactionError("network detach verification failed")
@@ -2045,6 +2082,11 @@ class SharedCaddyHelper:
                         self._phase(transaction, "verified")
                         self._phase(transaction, "committed")
                         return self._finish_committed(transaction)
+                    except DockerTimeout as exc:
+                        # Killing the client cannot prove Docker did not mutate.
+                        # Preserve the durable intent; do not start rollback.
+                        self._mark_recovery("Docker deadline expired; daemon outcome requires administrator recovery")
+                        raise RecoveryRequired("shared Caddy Docker outcome is uncertain") from exc
                     except Exception as exc:
                         if _lexists(self.layout.transaction_path):
                             try:

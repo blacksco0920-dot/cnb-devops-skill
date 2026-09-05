@@ -214,6 +214,12 @@ The only route kinds are:
 - `redirect`: target host is owned by the same deployment, URI is preserved,
   and the status is permanent.
 
+Docker upstreams use lowercase DNS labels of at most 63 characters and a total
+length of at most 253 characters. Declaration validation, network attachment,
+and recovery verification use the same rule; valid multi-label upstreams may
+exceed 63 characters. Docker network and fixed Caddy container identities keep
+their separate runtime-name constraints.
+
 The helper renders the one canonical v1 fragment from the declaration and
 requires byte equality. Proxy blocks always use `encode zstd gzip`. Arbitrary
 headers, `handle`, `route`, `respond`, `file_server`, `import`, global options,
@@ -241,6 +247,14 @@ evidence outside the helper before accepting the release.
 
 ## Durable transaction and recovery
 
+Every ordinary-helper Docker command has a fixed 30-second execution deadline,
+including validation, inspection, connection, disconnection, and reload during
+normal execution or recovery. Each project/shared lock acquisition has its own
+30-second monotonic deadline, with nonblocking contention checks; expiration
+releases the opened descriptor without entering the protected operation. Lock
+identity verification and release → project → shared ordering remain required.
+These bounds add no privileged CLI arguments or server-contract fields.
+
 Under the shared lock the helper first resolves any retained transaction, then:
 
 1. copies the full current generation and changes only the invoking project;
@@ -253,6 +267,16 @@ Under the shared lock the helper first resolves any retained transaction, then:
    `verified`, then records `committed`;
 5. writes the receipt and history idempotently by transaction ID and removes
    the live transaction.
+
+Before a durable transaction exists, a read-only Docker validation timeout
+cleans only the invocation's private preflight/staging artifacts and releases
+its locks. Once a transaction is durable, any Docker timeout has an uncertain
+daemon-side outcome: the helper retains the transaction, generation and intake,
+writes `caddy-recovery-required`, and blocks normal publication. It neither
+retries the Docker operation nor starts automatic rollback for that timeout.
+Terminating the Docker client does not prove the daemon did not act. A timeout
+during recovery likewise retains the evidence and blocker for administrator
+review. Known command failures retain the existing recovery behavior below.
 
 Recovery compares phase with the actual `current` target. `prepared` with the
 old target discards staging. A switched, reloaded, or verified transaction
