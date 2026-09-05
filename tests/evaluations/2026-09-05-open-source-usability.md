@@ -22,6 +22,6 @@ The local-artifact cases are bound to their listed revisions. The final small a0
 
 ## Raw evidence and repeatability
 
-Local reports and generated project trees are retained outside the public Skill in this assessment directory and the recorded temporary directories. Neutral reusable inputs are linked from the [current catalog](../skill-scenarios.md). It must distinguish test mappings from historical fresh-context results, retain the failed first handoffs and their correction, and avoid implying that a Python health-function test proves runtime/public evidence.
+Original reports and generated project trees are maintainer-local evidence and are not bundled in the public Skill. The public package contains this bounded summary and the neutral inputs linked from the [current catalog](../skill-scenarios.md). Readers can repeat the exercise with those inputs, but cannot independently inspect the original raw reports or generated outputs from this package. This record distinguishes automated test mappings from historical fresh-context results and retains the failed first handoffs alongside their corrections. A Python health-function test does not prove runtime/public evidence.
 
 No evaluator performed network, Docker, cloud, host, Git push, purchase, maintenance, production approval or production execution. No real secrets were used. The final handoff clarification is an additional scoped exercise, not a fourth complete pipeline deployment.

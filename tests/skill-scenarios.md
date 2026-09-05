@@ -120,9 +120,11 @@ records, receipt bindings and expiry. Index the effective decision's durable
 source, invalidate the stale evidence, and retain the unresolved transaction
 and recovery state as blocked. Preserve the immutable candidate, accepted
 secret receipt, and completed maintenance receipt; do not repeat bootstrap or
-infer recovery permission. Name one authorized read-only action with owner,
-destination, and acceptance. Record the latest verification time and follow
-the existing readiness/new-approval rules after recovery.
+infer recovery permission. Finish the authorized status reconciliation and
+record the latest verification time. Name a next action with owner, destination
+and acceptance only if one remains authorized; for this fixture record `none`.
+Keep recovery and production blocked. The existing readiness/new-approval rules
+continue to apply after separately authorized recovery.
 
 ## RESUME_VALID_AUTHORIZATION
 
