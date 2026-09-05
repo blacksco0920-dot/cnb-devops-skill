@@ -154,6 +154,12 @@ maps and release evidence remain required for every topology.
 
 ## Host and account classification
 
+Newly purchased hosts may include cloud-provider preinstalled components; their
+presence alone does not establish a need to reinstall. First use read-only
+evidence to identify actual port, resource, and ownership conflicts, and preserve
+components the user asks to retain. Reinstallation or wiping requires separate
+explicit authorization; if the user withdraws it, stop that operation immediately.
+
 Classify a single-project target as a `simple host` unless read-only evidence
 shows shared route ownership, opaque Caddy, or multiple independently managed
 projects. Classify those observed conditions as `shared Caddy` and route to the
