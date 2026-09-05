@@ -405,6 +405,47 @@ class LockBoundsTests(unittest.TestCase):
                     with self.h._locked(self.path, self.trust):
                         self.fail("lock became available after the acquisition deadline")
 
+    def test_successful_acquisition_rechecks_deadline_before_critical_section(self):
+        real_flock = fcntl.flock
+        real_fstat = os.fstat
+        for delay_at in ("acquisition", "identity-verification"):
+            with self.subTest(delay_at=delay_at):
+                now = [100]
+                acquired = []
+                entered = False
+
+                def acquire(descriptor, operation):
+                    result = real_flock(descriptor, operation)
+                    if operation == fcntl.LOCK_EX | fcntl.LOCK_NB:
+                        acquired.append(descriptor)
+                        if delay_at == "acquisition":
+                            now[0] = 131
+                    return result
+
+                def verify(descriptor):
+                    result = real_fstat(descriptor)
+                    if descriptor in acquired and delay_at == "identity-verification":
+                        now[0] = 131
+                    return result
+
+                error = None
+                with (
+                    mock.patch.object(self.h.fcntl, "flock", side_effect=acquire),
+                    mock.patch.object(self.h.os, "fstat", side_effect=verify),
+                    mock.patch("time.monotonic", side_effect=lambda: now[0]),
+                ):
+                    try:
+                        with self.h._locked(self.path, self.trust):
+                            entered = True
+                    except Exception as exc:
+                        error = exc
+                self.assertFalse(entered, "success after deadline must not enter the critical section")
+                self.assertIsInstance(error, self.h.TransactionError)
+                with self.assertRaises(OSError):
+                    real_fstat(acquired[0])
+                with self.path.open("r+") as descriptor:
+                    real_flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
     def test_noncontention_lock_errors_are_not_retried(self):
         with mock.patch.object(self.h.fcntl, "flock", side_effect=OSError(errno.EIO, "io error")) as flock:
             with self.assertRaises(OSError) as caught:

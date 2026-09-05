@@ -933,10 +933,14 @@ def _locked(path, trust):
                 time.sleep(min(0.1, remaining))
                 if time.monotonic() >= deadline:
                     raise TransactionError("shared-Caddy lock acquisition timed out") from exc
+        if time.monotonic() >= deadline:
+            raise TransactionError("shared-Caddy lock acquisition timed out")
         current = os.lstat(path)
         opened = os.fstat(descriptor)
         if _lock_identity(current) != _lock_identity(opened):
             raise SecurityError("lock identity was replaced")
+        if time.monotonic() >= deadline:
+            raise TransactionError("shared-Caddy lock acquisition timed out")
         yield descriptor
     finally:
         if acquired:
