@@ -242,3 +242,42 @@ The expected argparse diagnostics printed by negative CLI tests are test output,
 not failures. As in prior rounds, the default Homebrew Python lacks PyYAML, so
 the quick validator was run with the available system Python. No functional
 concerns remain.
+
+## Final-review fix wave: schema/runtime normalization parity
+
+### Changes
+
+- Added `maxLength: 253` to every legacy-baseline hostname item schema.
+- Tightened all three legacy-baseline `source_repo` patterns so `.` and `..`
+  cannot be complete path segments, matching the existing runtime parser.
+- Added schema/runtime parity regressions for overlong hosts and both dot-only
+  repository path segments in provenance, transaction, and receipt artifacts.
+
+### RED evidence
+
+```text
+python3 -m unittest \
+  tests.test_shared_caddy_schemas.SharedCaddySchemaTests.test_legacy_baseline_schemas_match_runtime_hostname_and_source_repo_normalization -v
+FAILED (failures=9)
+```
+
+The schema validator accepted all three malformed values for each baseline
+artifact while its runtime validator rejected them, isolating the missing
+schema constraints.
+
+### GREEN evidence
+
+```text
+python3 -m unittest tests.test_shared_caddy_schemas \
+  tests.test_shared_caddy_baseline_import -v
+Ran 43 tests ... OK (skipped=1)
+
+PATH=/usr/bin:$PATH python3 tests/quick_validate.py .
+Skill is valid!
+
+python3 -m unittest discover -s tests -p 'test_*.py'
+Ran 319 tests ... OK (skipped=1)
+```
+
+Expected argparse diagnostics are negative-test output. The system Python was
+used for the quick validator because the default Homebrew Python lacks PyYAML.

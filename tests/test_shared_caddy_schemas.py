@@ -146,6 +146,34 @@ class SharedCaddySchemaTests(unittest.TestCase):
                 self.helper.validate_json_schema_instance(schema, artifact)
                 validator(artifact)
 
+    def test_legacy_baseline_schemas_match_runtime_hostname_and_source_repo_normalization(self):
+        runtime_validators = {
+            "baseline-provenance.json": self.installer.validate_baseline_provenance,
+            "baseline-transaction.json": self.installer.validate_baseline_transaction,
+            "baseline-receipt.json": self.installer.validate_baseline_receipt,
+        }
+        schema_names = {
+            "baseline-provenance.json": "baseline-provenance.schema.json",
+            "baseline-transaction.json": "baseline-transaction.schema.json",
+            "baseline-receipt.json": "baseline-receipt.schema.json",
+        }
+        overlong_host = "a." * 127 + "a"
+        mutations = (
+            ("hosts", [overlong_host]),
+            ("source_repo", "https://code.example.invalid/platform/./docs-portal"),
+            ("source_repo", "https://code.example.invalid/platform/../docs-portal"),
+        )
+        for example_name, validator in runtime_validators.items():
+            schema = self.load_json(SCHEMA_ROOT / schema_names[example_name])
+            for field, value in mutations:
+                with self.subTest(example=example_name, field=field, value=value):
+                    artifact = self.load_json(EXAMPLE_ROOT / example_name)
+                    artifact[field] = value
+                    with self.assertRaises(self.helper.ContractError):
+                        self.helper.validate_json_schema_instance(schema, artifact)
+                    with self.assertRaises(self.installer.ContractError):
+                        validator(artifact)
+
     def test_examples_validate_with_full_draft_2020_12_validator(self):
         if importlib.util.find_spec("jsonschema") is None:
             if os.environ.get("REQUIRE_FULL_JSONSCHEMA") == "1":
