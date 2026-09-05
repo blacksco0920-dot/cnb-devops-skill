@@ -28,6 +28,13 @@ role, creation date, expiry or rotation date, and validation state. It never
 records the value. A valid receipt prevents the next AI or operator from asking
 for an already configured secret again.
 
+Classify each secret by where it is consumed: build secrets authorize source or
+registry build work; pipeline secrets authorize the CNB execution boundary; and
+runtime secrets are entered only at the target-host boundary. Keep the inventory
+value-free in `.env.example` and, when CNB Secret data is used,
+`.cnb/secret.example.yml`; each configured value has a `secret receipt` rather
+than a chat transcript or complete environment file.
+
 ### release evidence
 
 `release evidence` is the non-secret chain:
@@ -308,33 +315,49 @@ ready, and whenever its role, instance, region, or maintenance window changes.
   OS/architecture, outbound connectivity, TAT agent state, and maintenance
   window directly into the approved control locations—not into chat or the
   `handoff manifest`.
-- A customer-controlled `cross-account role` trusted to one dedicated
-  programmatic CAM subuser or role in the operator account.
-- A `secret receipt` for RoleArn, external ID, target region, and target
-  instance ID.
+- A dedicated direct CAM identity scoped to this project's fixed, pre-created
+  TAT Saved Commands for readiness and apply. Its command definitions hold the
+  approved target and action; CNB receives no arbitrary script, path, target,
+  or credential input.
+- A `secret receipt` for the required variable names, approved storage
+  locations, owner, and validation state—never their values.
+- If organizational delegation requires it, a customer-controlled
+  `cross-account role` and STS receipt may be supplied as an optional pattern.
 
 ### Exact console steps
 
-1. Open **CAM → Roles → New role** and choose **Tencent Cloud account** as the
-   carrier. Select the operator account as another main account, then narrow the
-   carrier to the dedicated programmatic CAM subuser or role. Never trust a
-   human administrator's general identity or every identity in the account.
-2. Enable external-ID validation. Keep console access disabled unless a
-   separately approved human workflow requires it.
-3. Attach a custom least-privilege policy matching the calls made by the exact
+1. In **CAM → Users**, create a dedicated direct programmatic identity for this
+   project's readiness and apply Saved Commands. Attach only the least-privilege
+   policy for those pre-created command and target resources; do not grant a
+   generic remote-command policy or console access.
+2. In TAT, pre-create one fixed readiness Saved Command and one fixed apply
+   Saved Command. Test readiness without mutation; keep apply unavailable until
+   the immutable candidate, fresh readiness, and independent approval exist.
+3. If the organization needs delegation, open **CAM → Roles → New role**, choose
+   **Tencent Cloud account**, narrow trust to the dedicated programmatic
+   identity, and enable external-ID validation. This cross-account role/STS path
+   is optional; never trust a human administrator's general identity or every
+   identity in the account.
+4. Attach a custom least-privilege policy matching the calls made by the exact
    pinned execution artifact. The verified `tcloud-cmd` runtime calls
    `tat:RunCommand`, polls with `tat:DescribeInvocations`, and, when instance
    output is requested, calls `tat:DescribeInvocationTasks`. Scope these calls
    to the intended command and target-instance resources. A CVM ID beginning
    `ins-` uses a `qcs::cvm:...:instance/...` resource; a Lighthouse ID beginning
    `lhins-` uses `qcs::lighthouse:...:instance/...`. Do not interchange them.
-4. In the corresponding CVM or Lighthouse console, confirm the TAT agent is
+5. In the corresponding CVM or Lighthouse console, confirm the TAT agent is
    online. TAT is the remote execution boundary; production deployment does
    not require exposing port 22.
-5. In CNB Web, enter RoleArn, external ID, target region, and target instance ID
-   directly into the project's production Secret file. Report only the four
-   variable names and their `secret receipt`s.
-6. Grant the dedicated operator identity `AssumeRole` only for this role. A
+6. In CNB Web, enter only the approved variable values directly into the
+   project's Secret boundary. Report only variable names and `secret receipt`s;
+   CNB supplies normalized non-secret release identity and the complete digest
+   map to the fixed Saved Command, never arbitrary scripts, paths, targets, or
+   credentials.
+   The dedicated direct CAM identity credential is a pipeline secret in that
+   approved boundary with a value-free rotation receipt; it does not require an
+   STS temporary credential triple.
+7. When the optional role path is used, grant the dedicated operator identity
+   `AssumeRole` only for that role. A
    reviewed client must exchange it for temporary SecretId, SecretKey, and
    Token. Record the returned credential expiration in a value-free receipt.
    Choose the shortest `DurationSeconds` that still covers the declared
@@ -343,7 +366,9 @@ ready, and whenever its role, instance, region, or maintenance window changes.
    its remaining lifetime no longer covers that bound, then execute a harmless
    TAT preflight before any release.
 
-Current compatibility gate: do not infer STS support from the plugin README.
+The full temporary credential triple is required only when the optional role
+path is used. Its current compatibility gate: do not infer STS support from the
+plugin README.
 The artifact inspected on 2026-08-30 was
 `tencentcom/tcloud-cmd:v1.2.0@sha256:04824cba6a59858a2c78d6ddfc75c63a30941c219c85f414b379f425c43e8845`.
 After confirming that exact RepoDigest, inspection of `/app/index.js` inside the
@@ -354,11 +379,11 @@ is requested. Repeat this inspection whenever the selected digest changes; a
 tag name or README claim is not transferable capability evidence.
 
 Treat that implementation check as capability evidence, not release evidence.
-Production remains blocked until the selected digest receives the complete
-temporary credential triple through an approved Secret boundary and passes a
-harmless TAT preflight. If a selected artifact does not support all three
-fields, use a separate reviewed adapter or SDK client; never fall back to a
-long-lived customer key.
+For the optional role path, production remains blocked until the selected digest
+receives the complete temporary credential triple through an approved Secret
+boundary and passes a harmless TAT preflight. If a selected artifact does not
+support all three fields, use a separate reviewed adapter or SDK client; never
+fall back to a non-dedicated customer key.
 
 Official guidance:
 
@@ -371,16 +396,17 @@ Official guidance:
 
 ### Acceptance
 
-The role trusts only the dedicated programmatic identity, external-ID checking
-is enabled, TAT is online, the policy is least privilege, the four static
-receipts exist, and the current temporary credential receipt shows enough
-remaining lifetime. Until the reviewed STS-capable execution path passes the
-harmless preflight with the full temporary credential triple, acceptance is
-explicitly **blocked for production**.
+The dedicated direct identity is limited to the project's fixed readiness/apply
+commands, TAT is online, the policy is least privilege, and value-free receipts
+exist. If the optional role path is selected, its trust is narrow, external-ID
+checking is enabled, and the current temporary credential receipt shows enough
+remaining lifetime. Until the selected execution path passes its harmless TAT
+preflight, acceptance is explicitly **blocked for production**.
 
 ### Never deliver
 
-The customer's main-account password or API key, any long-lived customer key,
+The customer's main-account password or API key, a non-dedicated customer key,
+a direct-identity credential outside its approved Secret boundary,
 RoleArn/external ID/UIN/instance/region values in chat or the ordinary manifest,
 or a request to expose SSH for the pipeline.
 
@@ -485,19 +511,18 @@ that rolling back an image will roll back a database or persistent volume.
 ### When
 
 After all staging evidence passes and immediately before one immutable
-candidate may be promoted. For customer-account production, this also requires
-an accepted customer-administrator handoff and a successful harmless preflight
-through a reviewed STS-capable execution path; without them, do not enter
-approval.
+candidate may be promoted. Customer-account production also requires an accepted
+customer-administrator handoff and a successful harmless preflight through the
+selected fixed TAT execution path; without them, do not enter approval.
 
 ### Deliver
 
 - Candidate manifest, staging acceptance, change summary, complete service
   digest map, migration/backup decision, maintenance window, recovery owner,
   and exact approval target.
-- For customer-account production, the accepted STS execution/preflight evidence
-  showing the complete temporary credential triple was supported without
-  exposing it.
+- For customer-account production, the accepted fixed-command preflight
+  evidence; when the optional role path is selected, include its value-free STS
+  temporary-credential receipt.
 - An approval or rejection naming one candidate identity; merge approval is not
   production approval.
 - A passed candidate-bound `readiness receipt` no older than the configured
@@ -507,8 +532,9 @@ approval.
 ### Exact console steps
 
 1. Confirm every environment-level blocker is clear. For customer-account
-   production, explicitly verify the exact pinned runtime, full temporary
-   credential triple, and harmless preflight; an unverified two-field
+   production, explicitly verify the selected fixed Saved Command and harmless
+   preflight. When the optional role path is used, also verify its exact pinned
+   runtime and full temporary credential triple; an unverified two-field
    configuration is not sufficient.
 2. Open the selected candidate's **Tag details page** and its deployment page
    generated by `.cnb/tag_deploy.yml`; do not use a branch page as the approval
@@ -537,8 +563,9 @@ Official guidance: <https://docs.cnb.cool/zh/build/deploy.html>.
 The named candidate has explicit approval, production uses the same complete
 digest map, and the final `release evidence` is recorded atomically. Missing
 evidence, changed service membership, or a recovery-required state blocks
-approval. Customer-account production also remains blocked until its reviewed
-STS-capable execution path and harmless preflight are accepted.
+approval. Customer-account production also remains blocked until its selected
+fixed-command execution path and harmless preflight are accepted; an optional
+STS path has the additional temporary-credential receipt requirement.
 
 ### Never deliver
 

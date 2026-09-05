@@ -16,6 +16,8 @@ and promote the exact OCI images already verified in staging.
   readiness/approval/execution, and fail-closed production defaults.
 - Explicit production approval without a production rebuild; the same tested
   digests are promoted through a project-owned execution adapter.
+- A project-first adoption path: read-only discovery, living deployment/status
+  documents, value-free variable inventories, and a minimal release ladder.
 - Clear ordinary-repository, Secret-repository, and target-host boundaries.
 - Role-owned setup and recovery information that survives a change of AI tool.
 - A versioned shared-Caddy declaration, internal/external provenance chain,
@@ -28,6 +30,8 @@ and promote the exact OCI images already verified in staging.
 ## Package map
 
 - [SKILL.md](SKILL.md) — concise decision and routing contract.
+- [Project adoption](references/project-adoption.md) — first-contact discovery,
+  project documents, host/account classification, and the ordinary release path.
 - [Release safety](references/release-safety.md) — evidence, candidate,
   transaction, failure, and retention rules.
 - [Human handoffs](references/human-handoffs.md) — detailed role deliverables

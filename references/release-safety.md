@@ -88,6 +88,14 @@ Use separate least-privilege identities for build-push, staging TAT, production
 role assumption, Git read, and business builds. Do not reuse one credential
 across trust domains. Pin executable and plugin images by digest.
 
+For ordinary operator-owned testing and customer-owned production, the pragmatic
+default is dedicated direct CAM identities with fixed, pre-created TAT Saved Commands: one value-free readiness command and one value-free apply command.
+Each command has a project-reviewed target and fixed action; it accepts no
+caller-supplied script, path, target, or credential. A cross-account role/STS is optional when an organization needs that delegation boundary, not a prerequisite
+for a simple project. CNB supplies only normalized non-secret release identity
+and the complete digest map to the selected Saved Command boundary; it does not
+send arbitrary scripts, paths, targets, credentials, or an alternate image map.
+
 Load credentials from their approved secure location only for the operation
 that needs them. Remove temporary Git and registry authentication before
 entering the next trust domain. Never place a token in a URL, remote, argument,

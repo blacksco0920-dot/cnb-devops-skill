@@ -193,6 +193,12 @@ preflight. Unknown schemas, a pending handoff, a disabled adapter, or an
 adapter/handoff mismatch blocks before credentials are loaded or an external
 production call is made.
 
+For TAT, the project-owned adapter selects fixed, pre-created Saved Commands
+named for readiness and apply. CNB passes only normalized non-secret release
+identity and the complete digest map to that boundary. It must not pass
+arbitrary scripts, paths, targets, credentials, or an alternate image map; the
+Saved Command's reviewed definition owns those details.
+
 Start projects from the [pending handoff](cnb-deployment-ui/examples/production-handoff.pending.json)
 and [disabled adapter](cnb-deployment-ui/examples/execution-adapter.disabled.json)
 examples. They deliberately cannot deploy.

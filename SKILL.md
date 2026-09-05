@@ -13,6 +13,7 @@ Treat a release as promotion of tested evidence, not as a sequence of remembered
 - Configure, build, or deploy only when the user requested that environment-level change.
 - A staging request never authorizes production.
 - Production requires an explicit production request plus the project's configured approval.
+- Keep source completion, staging deployment, candidate readiness, governed-branch merge, production readiness, approval, execution, and client publication as distinct states.
 
 ## Release contract
 
@@ -28,21 +29,13 @@ Missing commit, digest, staging evidence, approval, or a required human delivera
 
 ## Legacy shared-host takeover
 
-For a multi-container Docker host with opaque Caddy, legacy HTTPS routes, or a
-first managed project, use [Shared Caddy v1](references/shared-caddy-v1/contract.md) and its [host handoff](references/shared-caddy-v1/host-handoff.md). Keep this order:
+Only when read-only evidence shows opaque Caddy, legacy HTTPS routes, shared route ownership, or multiple independently managed projects, use [Shared Caddy v1](references/shared-caddy-v1/contract.md) and its [host handoff](references/shared-caddy-v1/host-handoff.md). Keep this order:
 
 ```text
 route inventory (read-only/canonical; no ad-hoc mutation) → external restore-verified snapshot → credential-rotation receipt → root bootstrap → helper-pair maintenance → baseline import/recovery → provision → ordinary release
 ```
 
-Only the root host administrator performs bootstrap, helper maintenance, baseline import/recovery, and provisioning; ordinary release uses only the exact preflight/apply boundary, never a direct Caddy change. Inventory is read-only,
-deterministic, stable/canonical evidence; no ad-hoc or mutating discovery
-precedes external recovery proof. Count each device once; preserve every volume
-and bind source. Fixed baseline inputs are a root-owned `0700` hierarchy with two root-owned regular single-link `0600` files; use only the exact actions in
-the handoff. Snapshot/restore then credential-rotation receipts are hard gates
-before destructive/live work. Keep compatibility ownership separate from the
-incoming project declaration; never merge opaque Caddy or delegate baseline/import
-authority through an application release or its sudo boundary.
+Only the root host administrator performs bootstrap, helper maintenance, baseline import/recovery, and provisioning; ordinary release uses only the exact preflight/apply boundary, never a direct Caddy change. Inventory is read-only, canonical evidence; count each device once and preserve every volume and bind source. Snapshot/restore then credential-rotation receipts are hard gates before destructive/live work. Never merge opaque Caddy or delegate baseline/import authority through an application release or its sudo boundary.
 
 ## Data boundaries
 
@@ -53,6 +46,8 @@ authority through an application release or its sudo boundary.
 
 ## Read only what the task needs
 
+- New project, missing project documents, ordinary host classification, or a
+  first release ladder: [project adoption](references/project-adoption.md).
 - Existing-host first release, controller upgrade, candidate, failure, recovery, audit, or retention: [release safety](references/release-safety.md).
 - Human setup or missing information: [human handoffs](references/human-handoffs.md).
 - CNB API, token, Secret repository, or deployment UI behavior: [CNB OpenAPI](references/cnb-openapi.md).

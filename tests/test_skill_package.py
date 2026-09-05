@@ -265,6 +265,71 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("## CNB native deployment page regression", scenarios)
         self.assertIn("CNB_NATIVE_DEPLOYMENT_GATE", scenarios)
 
+    def test_project_adoption_contract_routes_documents_and_safe_defaults(self):
+        skill = self.text("SKILL.md")
+        readme = self.text("README.md")
+        adoption = self.text("references/project-adoption.md")
+        safety = self.text("references/release-safety.md")
+        deployment_ui = self.text("references/cnb-deployment-ui.md")
+        handoffs = self.text("references/human-handoffs.md")
+        scenarios = self.text("tests/skill-scenarios.md")
+
+        for source in (skill, readme):
+            self.assertIn("](references/project-adoption.md)", source)
+
+        for phrase in (
+            "docs/DEPLOYMENT.md",
+            "docs/PROJECT_STATUS.md",
+            ".env.example",
+            ".cnb/secret.example.yml",
+            "observed",
+            "supplied",
+            "unknown",
+            "not-applicable",
+            "simple host",
+            "shared Caddy",
+            "Saved Command",
+            "readiness",
+            "apply",
+            "approval does not execute production",
+            "server publication does not imply client publication",
+            "server-ops is prohibited",
+        ):
+            self.assertIn(phrase, adoption)
+
+        for phrase in (
+            "dedicated direct CAM identities",
+            "fixed, pre-created TAT Saved Commands",
+            "readiness",
+            "apply",
+            "cross-account role/STS is optional",
+            "normalized non-secret release identity",
+            "complete digest map",
+            "arbitrary scripts, paths, targets, credentials",
+        ):
+            self.assertIn(phrase, "\n".join((safety, deployment_ui, handoffs)))
+
+        for scenario in (
+            "NEW_PROJECT_REPO_ONLY",
+            "NEW_PROJECT_EXISTING_SHARED_HOST",
+            "NEW_PROJECT_CUSTOMER_PRODUCTION",
+        ):
+            self.assertIn(scenario, scenarios)
+
+    def test_direct_cam_default_does_not_require_optional_sts(self):
+        handoffs = " ".join(self.text("references/human-handoffs.md").split())
+        for phrase in (
+            "dedicated direct CAM identity",
+            "does not require an STS temporary credential triple",
+            "full temporary credential triple is required only when the optional role path is used",
+        ):
+            self.assertIn(phrase, handoffs)
+
+    def test_shared_caddy_routing_requires_shared_route_evidence(self):
+        skill = self.text("SKILL.md")
+        self.assertIn("multiple independently managed projects", skill)
+        self.assertNotIn("multi-container Docker host", skill)
+
     def test_public_runtime_has_no_network_cli_or_vendor_wrapper(self):
         forbidden = (
             "scripts/" + "cnb.py",
