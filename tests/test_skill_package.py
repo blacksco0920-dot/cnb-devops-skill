@@ -1,4 +1,4 @@
-import ast
+import json
 from datetime import datetime
 from pathlib import Path
 import re
@@ -213,8 +213,7 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, normalized_openapi)
 
         self.assertIn("omit `allow_images`", handoffs)
-        self.assertIn("GREEN evaluation date: 2026-09-02", scenarios)
-        self.assertIn("fresh-context evaluator", scenarios)
+        self.assertIn("CNB_SECRET_TASK_TYPE", scenarios)
 
         self.assertNotIn(
             "`allow_slugs`, `allow_events`, `allow_branches`, and `allow_images` fields",
@@ -287,7 +286,6 @@ class SkillPackageTests(unittest.TestCase):
             "new approval",
         ):
             self.assertIn(phrase, normalized_handoffs)
-        self.assertIn("## CNB native deployment page regression", scenarios)
         self.assertIn("CNB_NATIVE_DEPLOYMENT_GATE", scenarios)
 
     def test_project_adoption_contract_routes_documents_and_safe_defaults(self):
@@ -395,7 +393,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertGreaterEqual(len(re.findall(r"(?m)^\d+\. ", resume.group(1))), 3)
         scenarios = self.text("tests/skill-scenarios.md")
         for scenario in ("RESUME_STALE_STATUS", "RESUME_VALID_AUTHORIZATION"):
-            self.assertIn("### " + scenario, scenarios)
+            self.assertIn(scenario, scenarios)
 
     def test_source_handoff_has_native_and_observed_sync_acceptance_branches(self):
         handoffs = self.text("references/human-handoffs.md")
@@ -410,7 +408,7 @@ class SkillPackageTests(unittest.TestCase):
                     self.assertIn(term, " ".join(branch.group(1).split()))
         scenarios = self.text("tests/skill-scenarios.md")
         for scenario in ("CNB_NATIVE_SOURCE", "GITHUB_SYNC_SOURCE"):
-            self.assertIn("### " + scenario, scenarios)
+            self.assertIn(scenario, scenarios)
 
     def test_direct_cam_default_does_not_require_optional_sts(self):
         handoffs = " ".join(self.text("references/human-handoffs.md").split())
@@ -489,28 +487,71 @@ class SkillPackageTests(unittest.TestCase):
         for relative in forbidden:
             self.assertFalse((ROOT / relative).exists(), relative)
 
-    def test_shared_caddy_pressure_scenarios_map_to_real_behavior_tests(self):
-        scenarios = self.text("tests/skill-scenarios.md")
-        mappings = re.findall(
-            r"(?m)^\| `[A-Z_]+` \| `([^`]+)` \| (?:PASS|FAIL) \|$",
-            scenarios,
-        )
-        self.assertEqual(13, len(mappings))
-        self.assertEqual(len(mappings), len(set(mappings)))
-        for test_id in mappings:
-            module_name, class_name, method_name = test_id.rsplit(".", 2)
-            source = ROOT / (module_name.replace(".", "/") + ".py")
-            self.assertTrue(source.is_file(), test_id)
-            tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
-            classes = {
-                node.name: node for node in tree.body if isinstance(node, ast.ClassDef)
-            }
-            self.assertIn(class_name, classes, test_id)
-            methods = {
-                node.name for node in classes[class_name].body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            }
-            self.assertIn(method_name, methods, test_id)
+    def test_scenario_catalog_mappings_resolve(self):
+        from scenario_support import validate_catalog
+        validate_catalog(self.text("tests/skill-scenarios.md"),
+                         json.loads(self.text("tests/scenario-mappings.json")), ROOT)
+
+    def test_scenario_mapping_rejects_missing_duplicate_and_unresolved_entries(self):
+        from scenario_support import validate_catalog
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "tests").mkdir()
+            (root / "tests/test_example.py").write_text(
+                "class ExampleTests:\n    def test_example(self): pass\n")
+            catalog = "## EXAMPLE\n\n```text\nprompt\n```\n\nExpected: refuse.\n"
+            reference = "tests.test_example.ExampleTests.test_example"
+            good = [{"scenario_id": "EXAMPLE", "tests": [reference]}]
+            validate_catalog(catalog, good, root)
+            for bad_catalog, bad_mapping in (
+                (catalog, []),
+                (catalog + catalog, good),
+                (catalog.replace("EXAMPLE", ""), good),
+                (catalog, good + good),
+                (catalog, [{"scenario_id": "OTHER", "tests": [reference]}]),
+                (catalog, [{"scenario_id": "EXAMPLE", "tests": []}]),
+                (catalog, [{"scenario_id": "EXAMPLE", "tests": [reference, reference]}]),
+                (catalog, [{"scenario_id": "EXAMPLE", "tests": ["tests.test_missing.C.test_x"]}]),
+                (catalog, [{"scenario_id": "EXAMPLE", "tests": ["tests.test_example.Missing.test_example"]}]),
+                (catalog, [{"scenario_id": "EXAMPLE", "tests": ["tests.test_example.ExampleTests.test_missing"]}]),
+                (catalog.replace("```text", "```python"), good),
+                (catalog.replace("Expected:", "Result:"), good),
+                (catalog.replace("prompt", ""), good),
+                (catalog.replace("refuse.", ""), good),
+                (catalog, [{"scenario_id": "EXAMPLE"}]),
+            ):
+                with self.subTest(catalog=bad_catalog, mapping=bad_mapping):
+                    with self.assertRaises(ValueError):
+                        validate_catalog(bad_catalog, bad_mapping, root)
+
+    def test_usage_fixtures_have_safe_paths_and_linked_scenario_ids(self):
+        from scenario_support import validate_fixture
+        mappings = json.loads(self.text("tests/scenario-mappings.json"))
+        scenario_ids = {entry["scenario_id"] for entry in mappings}
+        fixtures = list((ROOT / "tests/fixtures/skill-usage").glob("*.json"))
+        self.assertTrue(fixtures)
+        seen = set()
+        catalog = self.text("tests/skill-scenarios.md")
+        for path in fixtures:
+            fixture = json.loads(path.read_text())
+            validate_fixture(fixture, scenario_ids)
+            self.assertNotIn(fixture["scenario_id"], seen)
+            seen.add(fixture["scenario_id"])
+            self.assertIn("fixtures/skill-usage/" + path.name, catalog)
+
+    def test_usage_fixture_rejects_escaping_paths_and_unknown_scenarios(self):
+        from scenario_support import validate_fixture
+        good = {"scenario_id": "EXAMPLE", "task_root": ".", "read_only_paths": [],
+                "user_request": "Inspect only", "files": {"app.py": "pass"}}
+        validate_fixture(good, {"EXAMPLE"})
+        for changes in ({"scenario_id": "UNKNOWN"}, {"task_root": "/absolute"},
+                        {"files": {"../escape": "pass"}},
+                        {"read_only_paths": ["../escape"]},
+                        {"read_only_paths": ["missing"]},
+                        {"task_root": "missing"}, {"user_request": ""}):
+            with self.subTest(changes=changes):
+                with self.assertRaises(ValueError):
+                    validate_fixture(dict(good, **changes), {"EXAMPLE"})
 
     def test_shared_caddy_preflight_guidance_requires_the_exact_safe_boundary(self):
         skill = self.text("SKILL.md")
@@ -607,6 +648,9 @@ class SkillPackageTests(unittest.TestCase):
         markdown_files = [
             ROOT / "SKILL.md", ROOT / "README.md",
             *sorted((ROOT / "references").rglob("*.md")),
+            ROOT / "tests/skill-scenarios.md",
+            *sorted((ROOT / "tests/evaluations").rglob("*.md")),
+            *sorted((ROOT / "docs/history").rglob("*.md")),
         ]
         for source in markdown_files:
             self.assertEqual([], local_link_errors(source), str(source))
