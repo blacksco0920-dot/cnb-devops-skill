@@ -124,6 +124,20 @@ class BootstrapTests(unittest.TestCase):
         self.assertNotIn(credentials["BOOTSTRAP_PG_APP_PASSWORD"], script)
         self.assertEqual(commands[1][0][-2:], ["--command", "\\password " + self.policy["database"]["user"]])
 
+    def test_readonly_authentication_uses_project_network_not_localhost_trust(self):
+        calls = []
+        def run(command, **kwargs):
+            calls.append(command)
+            if "bootstrap_role_verified" in " ".join(command):
+                return b"bootstrap_role_verified\n"
+            return self.policy["database"]["user"].encode() + b"\n"
+        self.b.provision_database(self.policy, self.b.generate_credentials(self.spec), run, create=False)
+        auth = calls[-1]
+        self.assertEqual(auth[-3:], [self.policy["database"][k] for k in ("host", "user", "name")])
+        self.assertIn('-h "$1" -U "$2" -d "$3"', auth[-5])
+        self.assertNotIn("127.0.0.1", " ".join(auth))
+        self.assertEqual(len(calls), 2, "只读重复检查不得重设密码或角色")
+
     def test_existing_compatible_engine_never_installs_or_upgrades_packages(self):
         calls = []
         def run(command, **kwargs):

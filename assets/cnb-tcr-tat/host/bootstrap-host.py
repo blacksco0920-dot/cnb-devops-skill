@@ -254,8 +254,9 @@ def provision_database(policy, credentials, execute=run, *, create=True):
                        "AND NOT r.rolsuper AND NOT r.rolcreatedb AND NOT r.rolcreaterole AND NOT r.rolreplication")
     if execute(admin + ["-Atc", privilege_check]).strip() != b"bootstrap_role_verified":
         raise BootstrapError("database_role_mismatch")
-    auth = 'IFS= read -r PGPASSWORD; export PGPASSWORD; exec psql --no-psqlrc -h 127.0.0.1 -U "$1" -d "$2" -Atc "SELECT current_user"'
-    result = execute(docker(policy) + ["exec", "-i", db["container"], "sh", "-ceu", auth, "sh", db["user"], db["name"]], input=(password + "\n").encode())
+    # 官方 PostgreSQL 镜像的 loopback 规则可能是 trust；使用应用实际访问的项目网络。
+    auth = 'IFS= read -r PGPASSWORD; export PGPASSWORD; exec psql --no-psqlrc -h "$1" -U "$2" -d "$3" -Atc "SELECT current_user"'
+    result = execute(docker(policy) + ["exec", "-i", db["container"], "sh", "-ceu", auth, "sh", db["host"], db["user"], db["name"]], input=(password + "\n").encode())
     if result.strip() != db["user"].encode():
         raise BootstrapError("database_authentication_failed")
 
