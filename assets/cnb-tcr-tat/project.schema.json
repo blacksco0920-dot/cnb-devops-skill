@@ -1,0 +1,372 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.test/cnb-devops/project-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "maxLength": 32
+    },
+    "environment": {
+      "const": "test"
+    },
+    "cnb_repository": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+$"
+    },
+    "test_branch": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_/-]*$"
+    },
+    "production_branch": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_/-]*$"
+    },
+    "services": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 16,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dockerfile": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9_./-]+$"
+          },
+          "context": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9_./-]+$"
+          },
+          "image_repository": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^ccr\\.ccs\\.tencentyun\\.com/[a-z0-9-]+/[a-z0-9][a-z0-9._/-]*$"
+          },
+          "runtime_env": {
+            "type": "boolean"
+          },
+          "environment": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Z][A-Z0-9_]*$"
+            },
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "environment_refs": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Z][A-Z0-9_]*$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Z][A-Z0-9_]*$"
+            }
+          },
+          "healthcheck": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "test": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "interval": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[0-9]+s$"
+              },
+              "timeout": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[0-9]+s$"
+              },
+              "retries": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 30
+              }
+            },
+            "required": [
+              "test"
+            ]
+          },
+          "expose": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "minItems": 0,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "dockerfile",
+          "context",
+          "image_repository"
+        ]
+      }
+    },
+    "ci": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "verify": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9./_-]+(?::[a-zA-Z0-9._-]+)?@sha256:[a-f0-9]{64}$"
+        },
+        "npm_registry": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^https://[a-zA-Z0-9.-]+(?::[0-9]+)?/[A-Za-z0-9_./?=&%-]*$"
+        }
+      },
+      "required": [
+        "verify",
+        "image",
+        "npm_registry"
+      ]
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tcr_import": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^https://cnb\\.cool/[a-zA-Z0-9_/-]+/-/blob/[a-zA-Z0-9_/-]+\\.ya?ml$"
+        },
+        "tat_import": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^https://cnb\\.cool/[a-zA-Z0-9_/-]+/-/blob/[a-zA-Z0-9_/-]+\\.ya?ml$"
+        }
+      },
+      "required": [
+        "tcr_import",
+        "tat_import"
+      ]
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "release_user": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z_][a-z0-9_-]*$",
+          "not": {
+            "const": "root"
+          }
+        },
+        "networks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9_.-]+$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "required_env": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "database": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "url_env": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Z][A-Z0-9_]*$"
+            },
+            "host": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_.-]+$"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_]*$"
+            },
+            "user": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_]*$"
+            },
+            "container": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_.-]+$"
+            },
+            "admin_user": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_]*$"
+            }
+          },
+          "required": [
+            "url_env",
+            "host",
+            "port",
+            "name",
+            "user",
+            "container",
+            "admin_user"
+          ]
+        },
+        "migration": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "service": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "argv": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "service",
+                "argv"
+              ]
+            }
+          ]
+        },
+        "availability_probes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^https://[a-zA-Z0-9.-]+(?::[0-9]+)?/[A-Za-z0-9_./?=&%-]*$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "identity_probes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "url": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^https://[a-zA-Z0-9.-]+(?::[0-9]+)?/[A-Za-z0-9_./?=&%-]*$"
+              },
+              "service": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              },
+              "api_envelope": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "url",
+              "service",
+              "api_envelope"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "proxy_container": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_.-]+$"
+        }
+      },
+      "required": [
+        "database",
+        "required_env",
+        "migration",
+        "availability_probes",
+        "identity_probes"
+      ]
+    },
+    "github_sync": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "project",
+    "environment",
+    "cnb_repository",
+    "test_branch",
+    "production_branch",
+    "services",
+    "ci",
+    "secrets",
+    "host"
+  ]
+}

@@ -1,0 +1,139 @@
+"""Deterministic project material. Runtime algorithms live in ci/ and host/."""
+import copy
+import hashlib
+import json
+import shlex
+
+import yaml
+
+VENDOR = 'deploy/vendor/cnb-devops'
+ANNOTATIONS_IMAGE = 'cnbcool/annotations:v1.0.0@sha256:bfd02b627f3b49082aa7dbbac1999560b4d66c7d85682084d0747eabecd75818'
+
+
+def json_bytes(value):
+    return (json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + '\n').encode()
+
+
+def yaml_bytes(value):
+    return yaml.safe_dump(value, sort_keys=False, allow_unicode=True, width=120).encode()
+
+
+def model(config, controller_sha):
+    project, environment = config['project'], config['environment']
+    scope = f'{project}-{environment}'
+    host = config['host']
+    networks = host.get('networks', [scope])
+    user = host.get('release_user', 'ubuntu')
+    install = f'/opt/cnb-devops/{project}/{environment}/v1'
+    services = {}
+    compose_services = {}
+    for role, spec in sorted(config['services'].items()):
+        image_env = 'IMAGE_' + role.upper().replace('-', '_')
+        service = {'image_repository': spec['image_repository'], 'image_env': image_env,
+                   'container': f'{scope}-{role}', 'networks': networks,
+                   'environment': spec.get('environment', {}),
+                   'environment_refs': spec.get('environment_refs', {}),
+                   'runtime_env': spec.get('runtime_env', False),
+                   'healthcheck': bool(spec.get('healthcheck')), 'mounts': []}
+        services[role] = service
+        composed = {'image': '${' + image_env + '}', 'container_name': service['container'],
+                    'restart': 'unless-stopped', 'networks': networks}
+        if service['runtime_env']:
+            composed['env_file'] = ['${CNB_RUNTIME_ENV_FILE:?required}']
+        env = dict(service['environment'])
+        env.update({key: '${' + ref + ':?required}' for key, ref in service['environment_refs'].items()})
+        if env:
+            composed['environment'] = env
+        if spec.get('healthcheck'):
+            composed['healthcheck'] = spec['healthcheck']
+        if spec.get('expose'):
+            composed['expose'] = [str(port) for port in spec['expose']]
+        compose_services[role] = composed
+    compose = {'name': scope, 'services': compose_services,
+               'networks': {name: {'external': True, 'name': name} for name in networks}}
+    compose_bytes = yaml_bytes(compose)
+    policy = {'schema': 'cnb-devops-host-policy/v1', 'project': project, 'environment': environment,
+              'controller_id': scope + '-controller-v1', 'install_dir': install,
+              'release_user': user, 'release_home': '/root' if user == 'root' else '/home/' + user,
+              'app_dir': '/opt/apps/' + scope, 'docker_config': '/home/' + user + '/.docker/config.json',
+              'recovery_root': '/opt/cnb-devops/' + project + '/recovery',
+              'compose_sha256': hashlib.sha256(compose_bytes).hexdigest(),
+              'services': services, 'networks': networks, 'required_env': host['required_env'],
+              'database': host['database'], 'migration': host['migration'],
+              'availability_probes': host['availability_probes'], 'identity_probes': host['identity_probes']}
+    if host.get('proxy_container'):
+        policy['proxy_container'] = host['proxy_container']
+    config_ci = {'schema': 'cnb-devops-ci/v1', 'project': project, 'environment': environment,
+                 'controller_id': policy['controller_id'], 'candidate_prefix': project + '-candidate-',
+                 'cnb_repository': config['cnb_repository'],
+                 'services': {name: {key: value[key] for key in ('image_repository', 'image_env')}
+                              for name, value in services.items()},
+                 'probes': [{'url': url} for url in host['availability_probes']] + host['identity_probes'],
+                 'controller_program_sha256': controller_sha,
+                 'controller_compose_sha256': policy['compose_sha256'],
+                 'policy_sha256': hashlib.sha256(json_bytes(policy)).hexdigest()}
+    return policy, config_ci, compose_bytes
+
+
+def pipeline(config):
+    project = config['project']
+    q = shlex.quote
+    cfg = f'{VENDOR}/ci-config.json'
+    manifest = '.cnb-release/candidate.json'
+    config_arg = '--config ' + cfg
+    gate = f'python3 {VENDOR}/ci/candidate_gate.py publication {config_arg} --manifest {manifest} --expected-tag "$RELEASE_CANDIDATE_TAG" --expected-commit "$CNB_COMMIT"'
+    stages = [
+        {'name': 'validate release identity', 'script': ['set -eu\ntest "$CNB_BRANCH" = ' + q(config['test_branch']) + '\ncase "$CNB_COMMIT" in *[!0-9a-f]*|\'\') exit 1;; esac\ntest "${#CNB_COMMIT}" -eq 40\ncase "$CNB_BUILD_ID" in cnb-[a-z0-9]*) ;; *) exit 1;; esac\numask 077\nmkdir -p .cnb-release']},
+        {'name': 'install pinned deployment dependencies', 'script': ['set -eu\nif ! command -v python3 >/dev/null || ! command -v git >/dev/null; then\n  apt-get update\n  apt-get install --yes --no-install-recommends ca-certificates git python3\nfi\nnpm ci --prefix ' + VENDOR + '/dependencies --ignore-scripts --prefer-offline --registry ' + q(config['ci']['npm_registry'])]},
+        {'name': 'verify project', 'script': ['set -eu\n' + '\n'.join(config['ci']['verify'])]},
+        {'name': 'configure TCR push credentials', 'imports': config['secrets']['tcr_import'],
+         'script': ['set -eu\n: "${TCR_USERNAME:?required}" "${TCR_PASSWORD:?required}"\numask 077\nmkdir -p "$HOME/.cnb-devops-docker"\nprintf \'%s\' "$TCR_PASSWORD" | DOCKER_CONFIG="$HOME/.cnb-devops-docker" docker login ccr.ccs.tencentyun.com --username "$TCR_USERNAME" --password-stdin']},
+    ]
+    for role, service in sorted(config['services'].items()):
+        var = 'RELEASE_IMAGE_' + role.upper().replace('-', '_')
+        script = 'set -eu\nrepository=' + q(service['image_repository']) + '\nimage="$repository:$CNB_BUILD_ID"\n'
+        script += 'DOCKER_CONFIG="$HOME/.cnb-devops-docker" docker build --file ' + q(service['dockerfile']) + ' --tag "$image" --build-arg "GIT_SHA=$CNB_COMMIT" --build-arg "BUILD_ID=$CNB_BUILD_ID" ' + q(service['context']) + '\n'
+        script += 'push_output="$(DOCKER_CONFIG="$HOME/.cnb-devops-docker" docker push "$image")"\nprintf \'%s\\n\' "$push_output"\ndigest="$(printf \'%s\\n\' "$push_output" | bash ' + VENDOR + '/ci/extract-docker-push-digest.sh)"\nprintf \'##[set-output image=%s@%s]\\n\' "$repository" "$digest"'
+        stages.append({'name': 'build and push ' + role, 'script': [script], 'exports': {'image': var}})
+    image_env = {role: 'RELEASE_IMAGE_' + role.upper().replace('-', '_') for role in sorted(config['services'])}
+    script = "set -eu\npython3 - <<'PY'\nimport json, os\nfrom pathlib import Path\nkeys = " + repr(image_env) + "\nPath('.cnb-release/images.json').write_text(json.dumps({key: os.environ[value] for key, value in keys.items()}) + '\\n')\nPY\nrm -f -- \"$HOME/.cnb-devops-docker/config.json\""
+    stages.append({'name': 'record digests and remove push credentials', 'script': [script]})
+    stages.append({'name': 'deploy and verify test through TAT', 'imports': config['secrets']['tat_import'],
+                   'script': ['set -eu\n: "${CNB_TAT_BINDING_JSON:?required}"\numask 077\nprintf \'%s\\n\' "$CNB_TAT_BINDING_JSON" > .cnb-release/tat-binding.json\nnode ' + VENDOR + '/ci/run-tat-release.mjs --config=' + cfg + ' --binding=.cnb-release/tat-binding.json --images=.cnb-release/images.json --receipt=.cnb-release/receipt.json'],
+                   'exports': {'invocation_id': 'RELEASE_TEST_INVOCATION_ID', 'completed_at': 'RELEASE_TEST_COMPLETED_AT', 'receipt_sha256': 'RELEASE_TEST_RECEIPT_SHA256'}})
+    stages.append({'name': 'assemble verified candidate', 'script': [f'python3 {VENDOR}/ci/candidate_manifest.py assemble --config {cfg} --receipt .cnb-release/receipt.json --receipt-sha256 "$RELEASE_TEST_RECEIPT_SHA256" --invocation-id "$RELEASE_TEST_INVOCATION_ID" --completed-at "$RELEASE_TEST_COMPLETED_AT" --build-id "$CNB_BUILD_ID" --commit "$CNB_COMMIT" --output {manifest}'],
+                   'exports': {'candidate_tag': 'RELEASE_CANDIDATE_TAG', 'manifest_sha256': 'RELEASE_CANDIDATE_MANIFEST_SHA256', 'application_commit': 'RELEASE_CANDIDATE_COMMIT'}})
+    stages.append({'name': 'publish immutable candidate Tag', 'script': [f'bash {VENDOR}/ci/publish-candidate-tag.sh --config={cfg} --manifest={manifest} --tag="$RELEASE_CANDIDATE_TAG" --commit="$CNB_COMMIT" --remote=https://cnb.cool/{config["cnb_repository"]}.git']})
+    stages.append({'name': 'initialize annotation readback', 'script': ["umask 077\nprintf '{}\\n' > .cnb-release/before.json"]})
+    def annotations(name, settings):
+        return {'name': name, 'image': ANNOTATIONS_IMAGE,
+                'settings': {'tag': '${RELEASE_CANDIDATE_TAG}', **settings}}
+    stages += [annotations('read existing annotations', {'type': 'GET', 'toFile': '.cnb-release/before.json'}),
+               {'name': 'verify existing annotation state', 'script': [gate + ' --annotations .cnb-release/before.json']},
+               annotations('write non-ready evidence', {'type': 'ADD', 'data': 'candidate_format=cnb-candidate/v1\ncandidate_manifest_sha256=${RELEASE_CANDIDATE_MANIFEST_SHA256}\ncandidate_commit=${RELEASE_CANDIDATE_COMMIT}\ntest_build_status=passed\ntest_runtime_status=passed\ntest_public_status=passed'}),
+               annotations('read non-ready evidence', {'type': 'GET', 'toFile': '.cnb-release/non-ready.json'}),
+               {'name': 'verify non-ready evidence', 'script': [gate + ' --annotations .cnb-release/non-ready.json --require-non-ready-complete']},
+               annotations('mark candidate ready last', {'type': 'ADD', 'data': 'candidate_status=ready'}),
+               annotations('read ready evidence', {'type': 'GET', 'toFile': '.cnb-release/ready.json'}),
+               {'name': 'verify ready evidence', 'script': [gate + ' --annotations .cnb-release/ready.json --require-ready-complete']}]
+    job = {'name': f'cnb-devops-{project}-test', 'breakIfModify': True,
+           'lock': {'key': f'{project}-test-release', 'expires': 14400, 'timeout': 14400, 'wait': True},
+           'runner': {'tags': 'cnb:arch:amd64', 'cpus': 4}, 'docker': {'image': config['ci']['image']},
+           'services': ['docker'], 'stages': stages}
+    blocked = {'name': f'cnb-devops-{project}-production-blocked', 'docker': {'image': config['ci']['image']},
+               'stages': [{'name': 'production adapter pending verification',
+                           'script': ['echo "Production is not enabled in this bundle version; staging candidates remain available." >&2\nexit 1']}]}
+    return {config['test_branch']: {'push': [job]}, project + '-candidate-*': {
+        'web_trigger_production_readiness': [copy.deepcopy(blocked)], 'tag_deploy': {'production': [blocked]}}}
+
+
+def tag_deploy():
+    return {'environments': [{'name': 'production',
+        'description': '生产执行尚未接通，当前仅交付测试候选。',
+        'permissions': {'roles': ['owner']},
+        'button': [{'name': '检查生产就绪', 'event': 'web_trigger_production_readiness',
+                    'permissions': {'roles': ['owner']}}],
+        'deploy': [{'name': '生产执行（尚未启用）'}],
+        'require': [{'annotation': 'candidate_status', 'expect': {'eq': 'ready'}},
+                    {'annotation': 'production_readiness_status', 'expect': {'eq': 'passed'}},
+                    {'approver': {'roles': ['owner']}, 'title': '确认本候选的生产发布'}]}]}

@@ -7,7 +7,7 @@ description: Use when work involves CNB/cnb.cool pipelines, Secret repositories,
 
 Help AI-assisted owners deliver one or several projects through CNB, from local setup to verified release and recovery. Own configuration and evidence work; give people concrete handoffs. Promote tested evidence.
 
-For setup or another project, start with the [standard workflow](references/standard-workflow.md): reuse the CNB → TCR → TAT path and existing release artifacts, then adapt project differences. Use files, shell, Git and HTTP/API; browser automation is optional. Do not replace pipeline stages with repeated interactive AI operations.
+For setup or another project, start with the [standard workflow](references/standard-workflow.md): use the [bundle entry](references/bootstrap.md) to generate the CNB → TCR → TAT artifacts from project differences; preserve accepted existing deployments. Use files, shell, Git and HTTP/API; browser automation is optional. Do not replace pipeline stages with repeated interactive AI operations.
 
 ## Decide before acting
 

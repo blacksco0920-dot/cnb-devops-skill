@@ -1,0 +1,51 @@
+# AI maintains project differences here. Never put secret values or cloud IDs here.
+schema_version: 1
+project: sample
+environment: test
+cnb_repository: example-team/sample
+test_branch: test
+production_branch: main
+# Enable only when GitHub is the source of truth.
+github_sync: false
+ci:
+  image: node:22-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
+  npm_registry: https://mirrors.cloud.tencent.com/npm/
+  verify:
+    - npm ci
+    - npm test
+secrets:
+  tcr_import: https://cnb.cool/example-team/deploy-secret/-/blob/main/tcr.yml
+  tat_import: https://cnb.cool/example-team/deploy-secret/-/blob/main/sample-test.yml
+services:
+  web:
+    dockerfile: Dockerfile
+    context: .
+    image_repository: ccr.ccs.tencentyun.com/example-team/sample-web
+    runtime_env: true
+    environment_refs:
+      DATABASE_URL: DATABASE_URL
+    expose: [3000]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+host:
+  release_user: ubuntu
+  # Existing shared networks can be named here; otherwise the project name is used.
+  required_env: [DATABASE_URL]
+  database:
+    url_env: DATABASE_URL
+    host: sample-postgres
+    port: 5432
+    name: sample_test
+    user: sample_test
+    container: sample-postgres
+    admin_user: postgres
+  migration: null
+  availability_probes:
+    - https://test.example.test/health
+  identity_probes:
+    - url: https://test.example.test/release.json
+      service: web
+      api_envelope: false

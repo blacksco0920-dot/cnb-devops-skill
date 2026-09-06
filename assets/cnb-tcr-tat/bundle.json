@@ -1,0 +1,73 @@
+{
+  "compatibility": {
+    "controller_source": "same application repository and commit",
+    "database": "existing PostgreSQL container; distinct database/user per project",
+    "environment": "test only; production blocked",
+    "generator": "Python 3.12+, PyYAML 6.0.2, jsonschema 4.25.1",
+    "host": "Ubuntu 24.04, Linux amd64, Docker Engine and Compose v2, non-root ubuntu Docker user",
+    "installation": "project installer only; dependency provisioning and active-version upgrade not included",
+    "runtime": "Python 3.12+ standard library; Node.js 22; Bash; Git"
+  },
+  "files": {
+    "ci/candidate_gate.py": "04ee9581c4664d85e71ee4ab552f2ba9dad7de5edb82a2c8ec682bfdcba83908",
+    "ci/candidate_manifest.py": "7a0d2b0df0f7c76dae4964ea93f994ef181dd40be2668d9761246d1a2c6b9d2c",
+    "ci/extract-docker-push-digest.sh": "369ef30856bc3832cb9705ccb25f5ff36984760aed6363cfbd0d7037a006c5e2",
+    "ci/publish-candidate-tag.sh": "343bf74a972bac9ff84d7f5de296a62c387776af33218bb8e6aa287ad09fabc3",
+    "ci/release-identity.mjs": "1b3b115cc84d7c09d340e2ed35fc2276f823b376ff9e4f473ee59921885b705b",
+    "ci/release-request.mjs": "82e5116f716d594d32f2f1b00a5be9940a207d6ce4654d6d52c338cfd7a3350a",
+    "ci/run-tat-release.mjs": "a312a03c99c1dac6eb4f2bdd1846c70a901adbdfbfdd8fce640f862612b8165f",
+    "dependencies/SOURCES.md": "143bf1182b23c34ed55d1b29731fab4e76f874d64de7a5b0b9b095e439061f05",
+    "dependencies/THIRD_PARTY.md": "1a64e8bd121e3241d119e6412d92c6e8f0e7e06b63f26dba107c68d660ddad62",
+    "dependencies/package-lock.json": "2e480e70f7652ac7e0753af6e11445a7f93fa4ed911dcf485d28c562a295ffda",
+    "dependencies/package.json": "b52f23c648264c0afae3163f6bf0c3f5ccf573331103adf3c0bbf300c9d38b3f",
+    "host/README.md": "08e340aff342bf73373d188ec2e5f6de79c46e9125b02a63ebbc6df331830c0d",
+    "host/install-project.py": "98f3de48eed1edb3164a0c2d7ac7e4c27785d95c56faad94b91812597cd279ab",
+    "host/tat-command.sh.tmpl": "c6b310a7af1abd85bc834393595b82dab16481a5fbcae0f1a9a04a8f8ce06e9d",
+    "host/tat-deploy-test.py": "d123111d2fddb26320c6ec428b69066e424b06edd98ea8875a3b9efe47dd35af",
+    "project.example.yml": "2f38bf5e99279eb9e5732e15273be0d21432e59a0959efffdf03c938fcfa4e8e",
+    "project.schema.json": "5ef97432d2ead039b8f58e32d6529f8f9b37efe52fddb2baef999ddf6ece38c9",
+    "templates/github-sync.yml.tmpl": "7e3b7700d9e8c8e26588348f6cf623b22c96d9b40931d2157657abf19cd09b86",
+    "templates/render.py": "6119e111d3eb62fde28d2e3efa8fed801e51aba0ddf0b8d5afe4ecc771874acb"
+  },
+  "provenance": [
+    {
+      "code_rights": "Owner requested local reuse; source has no recorded redistribution license. Verify copyright permission before external publication.",
+      "commit": "f52eb1ddf928729b3a4db23d8b0de9211984c4d9",
+      "historical_validation": "Test deployment and candidate publication recorded in source project; new CNB production execution was not enabled. Historical evidence does not validate this extracted version.",
+      "missing_source": [
+        "complete first-install scripts",
+        "production execution adapter",
+        "production readonly-preflight.py"
+      ],
+      "project": "ecat-energy",
+      "source_paths": [
+        ".cnb.yml",
+        ".cnb/tag_deploy.yml",
+        "scripts/extract-docker-push-digest.sh",
+        "deploy/scripts/tat-deploy-test.py",
+        "deploy/runtime/test/tat-command.sh",
+        "deploy/runtime/test/docker-compose.yml",
+        "deploy/scripts/run-tat-release.mjs",
+        "deploy/scripts/release-request.mjs",
+        "deploy/scripts/release-identity.mjs",
+        "deploy/scripts/candidate_manifest.py",
+        "deploy/scripts/publish-candidate-tag.sh",
+        "deploy/scripts/candidate_gate.py",
+        "package.json",
+        ".github/workflows/sync-cnb.yml"
+      ]
+    }
+  ],
+  "schema": "cnb-devops-bundle/v1",
+  "status": "local-preview",
+  "validation": {
+    "clean_host_install": "not_run",
+    "external_restore": "not_run",
+    "local_contract_tests": "passed locally: generated stages, Docker Compose config, canonical host request, candidate and TAT binding with mocked cloud boundary",
+    "local_two_project_generation": "passed: one and three services, identical copied core hashes",
+    "new_bundle_cloud_deployment": "not_run",
+    "production": "not_enabled",
+    "project_installation": "passed locally with real filesystem and simulated root/Docker/PostgreSQL; clean-host execution not run"
+  },
+  "version": "0.1.0-preview.1"
+}

@@ -1,0 +1,17 @@
+#!/bin/sh
+set -u
+umask 077
+[ "$(/usr/bin/id -u)" = "$(/usr/bin/id -u @RELEASE_USER@)" ] || exit 90
+[ "$(/bin/pwd -P)" = "@RELEASE_HOME@" ] || exit 91
+controller_sha256='@CONTROLLER_SHA256@'
+policy_sha256='@POLICY_SHA256@'
+[ "$(/usr/bin/stat -c '%u:%g:%a' @INSTALL_DIR@)" = "0:0:755" ] || exit 92
+[ "$(/usr/bin/stat -c '%u:%g:%a' @INSTALL_DIR@/tat-deploy-test.py)" = "0:0:555" ] || exit 93
+[ "$(/usr/bin/sha256sum @INSTALL_DIR@/tat-deploy-test.py | /usr/bin/cut -d ' ' -f 1)" = "$controller_sha256" ] || exit 94
+[ "$(/usr/bin/stat -c '%u:%g:%a' @INSTALL_DIR@/host-policy.json)" = "0:0:444" ] || exit 95
+[ "$(/usr/bin/sha256sum @INSTALL_DIR@/host-policy.json | /usr/bin/cut -d ' ' -f 1)" = "$policy_sha256" ] || exit 96
+/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=@RELEASE_HOME@ LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC /usr/bin/python3 -I @INSTALL_DIR@/tat-deploy-test.py --tat-script "$0"
+rc=$?
+exit "$rc"
+__CNB_RELEASE_REQUEST_V1__
+{{release_request_b64url}}

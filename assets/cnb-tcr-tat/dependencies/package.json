@@ -1,0 +1,8 @@
+{
+  "name": "cnb-devops-bundle-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pinned SDK runtime for the locally extracted deployment bundle",
+  "engines": {"node": ">=22 <23"},
+  "dependencies": {"tencentcloud-sdk-nodejs-tat": "4.1.241"}
+}

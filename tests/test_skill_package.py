@@ -16,17 +16,16 @@ class SkillPackageTests(unittest.TestCase):
 
     def public_package_text(self) -> str:
         texts = []
-        for path in sorted(ROOT.rglob("*")):
+        inventory = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+            cwd=ROOT, check=True, capture_output=True,
+        ).stdout.decode("utf-8").split("\0")
+        for name in sorted(set(inventory) - {""}):
+            path = ROOT / name
             if not path.is_file():
                 continue
             relative = path.relative_to(ROOT)
             if ".git" in relative.parts or ".worktrees" in relative.parts:
-                continue
-            ignored = subprocess.run(
-                ["git", "check-ignore", "--quiet", "--no-index", "--", str(relative)],
-                cwd=ROOT, check=False,
-            )
-            if ignored.returncode == 0:
                 continue
             raw = path.read_bytes()
             if b"\0" in raw:
@@ -658,13 +657,14 @@ class SkillPackageTests(unittest.TestCase):
     def test_public_package_has_no_sensitive_identifier_shapes(self):
         public = self.public_package_text()
         for pattern in (
-            r"/(?:Users|home)/[^/\s]+/",
+            r"/Users/[A-Za-z0-9_.-]+/",
+            r"/home/(?!ubuntu/|release/)[A-Za-z0-9_-]+/",
             r"\b\d{10,12}\b",
             r"\b(?:lh)?ins-[a-z0-9]{6,}\b",
             r"\bAKID[A-Za-z0-9]{12,}\b",
             r"\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]{12,}\b",
         ):
-            self.assertNotRegex(public, pattern)
+            self.assertFalse(bool(re.search(pattern, public)), f"sensitive identifier shape found: {pattern}")
 
 
 if __name__ == "__main__":

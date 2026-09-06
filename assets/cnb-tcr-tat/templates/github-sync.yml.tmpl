@@ -1,0 +1,63 @@
+name: Sync Managed Branches To CNB
+
+on:
+  push:
+    branches:
+      - @TEST_BRANCH@
+      - @PRODUCTION_BRANCH@
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-cnb-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Sync GitHub branch to matching CNB branch
+    if: github.ref == 'refs/heads/@TEST_BRANCH@' || github.ref == 'refs/heads/@PRODUCTION_BRANCH@'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Push to CNB
+        env:
+          CNB_PUSH_TOKEN: ${{ secrets.CNB_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CNB_PUSH_TOKEN"
+          case "$GITHUB_REF" in
+            refs/heads/@TEST_BRANCH@) target_branch=@TEST_BRANCH@ ;;
+            refs/heads/@PRODUCTION_BRANCH@) target_branch=@PRODUCTION_BRANCH@ ;;
+            *) echo "ref is not managed" >&2; exit 1 ;;
+          esac
+          test "$GITHUB_REF" = "refs/heads/$target_branch"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+          umask 077
+          askpass_file="$(mktemp)"
+          cleanup() {
+            rm -f -- "$askpass_file"
+          }
+          trap cleanup EXIT
+          {
+            printf '%s\n' '#!/usr/bin/env bash'
+            printf '%s\n' 'case "$1" in'
+            printf '%s\n' '  *Username*) printf '\''%s\n'\'' oauth2 ;;'
+            printf '%s\n' '  *Password*) printf '\''%s\n'\'' "$CNB_PUSH_TOKEN" ;;'
+            printf '%s\n' '  *) exit 1 ;;'
+            printf '%s\n' 'esac'
+          } > "$askpass_file"
+          chmod 0700 "$askpass_file"
+          export GIT_ASKPASS="$askpass_file"
+          export GIT_TERMINAL_PROMPT=0
+
+          git remote add cnb "https://cnb.cool/@CNB_REPOSITORY@.git"
+          git -c credential.helper= push cnb "HEAD:$target_branch"
