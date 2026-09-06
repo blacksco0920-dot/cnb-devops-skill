@@ -20,8 +20,9 @@
     "dependencies/THIRD_PARTY.md": "1a64e8bd121e3241d119e6412d92c6e8f0e7e06b63f26dba107c68d660ddad62",
     "dependencies/package-lock.json": "2e480e70f7652ac7e0753af6e11445a7f93fa4ed911dcf485d28c562a295ffda",
     "dependencies/package.json": "b52f23c648264c0afae3163f6bf0c3f5ccf573331103adf3c0bbf300c9d38b3f",
-    "host/README.md": "08e340aff342bf73373d188ec2e5f6de79c46e9125b02a63ebbc6df331830c0d",
+    "host/README.md": "85a4f925bacdce8c6781715bff4b9d4b146a014f178e9257881b1b448d2021bd",
     "host/bootstrap-host.py": "3efc0d995e5e681c92959c8583ec3cea7676900e073598a700858e3ce89ab193",
+    "host/configure-native-caddy.py": "fd280046bab2628b27846369e79c094349544b7d9844cc9142c4ee8949c4a447",
     "host/install-project.py": "effd1889a5410f7073a016f3739dfb1d950f570cf60b8a7ca2e65a8d20adefed",
     "host/tat-command.sh.tmpl": "c6b310a7af1abd85bc834393595b82dab16481a5fbcae0f1a9a04a8f8ce06e9d",
     "host/tat-deploy-test.py": "c18f2d06551c81e72051f9d47d271a4e9bcad2e40ca1819a3f108f2ad10ceb1b",
@@ -67,6 +68,7 @@
     "first_host_bootstrap": "local simulated tests passed; cloud execution pending",
     "local_contract_tests": "passed locally: generated stages, Docker Compose config, canonical host request, candidate and TAT binding with mocked cloud boundary",
     "local_two_project_generation": "passed: one and three services, identical copied core hashes",
+    "native_caddy_setup": "local simulated failure/repeat checks and real Caddy 2.11.4 adapt/validate/admin readback passed; cloud execution pending",
     "new_bundle_cloud_deployment": "not_run",
     "production": "not_enabled",
     "project_installation": "passed locally with real filesystem and simulated root/Docker/PostgreSQL; clean-host execution not run"

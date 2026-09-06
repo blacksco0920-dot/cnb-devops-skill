@@ -65,6 +65,19 @@ sudo python3 "$HOST_BUNDLE_DIR/host/install-project.py" \
 
 安装器校验依赖、完整工件、权限和数据库起点，再安装固定程序与显式空库记录；不会创建数据库、重装公共组件或接管已有应用。重复调用不会覆盖运行中的项目配置，内容漂移停止。迁移后的失败保留事务现场，不能自动改回旧镜像假装恢复。以上新增安装路径仅有本地模拟验证，干净云主机实测仍未完成。
 
+### 原生 Caddy 的首次域名接入
+
+若盘点确认 Ubuntu 24.04 使用系统服务 Caddy、现有配置没有 import 或环境替换，可在项目安装后使用包内固定入口。它从已安装策略读取 HTTPS 域名和回环端口，保留原配置，追加本项目的独立配置文件；现有域名冲突或运行配置漂移时停止。其他共享入口按共享 Caddy 契约处理。
+
+```sh
+sudo python3 "$HOST_BUNDLE_DIR/host/configure-native-caddy.py" \
+  --project "$PROJECT_ID" --policy-sha256 "$REVIEWED_POLICY_SHA256" \
+  --baseline-sha256 "$INVENTORIED_CADDYFILE_SHA256"
+# 预览符合已授权范围后加 --apply；只在首次接入执行，普通发布不调用。
+```
+
+此入口已用 Caddy 2.11.4 验证配置转换和校验，尚未完成云端接入；配置成功也不代表 HTTPS 或应用验收成功，仍需真实访问检查。
+
 ## 3．配置固定 TAT 命令
 
 将生成的 `tat-spec.template.json` 复制到本机任务私密目录，AI 从已授权盘点结果填写 `target.region` 和 `target.instance_id`。模板故意没有真实云目标；不能直接拿空模板创建命令。其正文、程序/策略/Compose 摘要已生成，避免人工拼接。
