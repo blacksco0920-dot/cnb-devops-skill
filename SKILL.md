@@ -7,6 +7,8 @@ description: Use when work involves CNB/cnb.cool pipelines, Secret repositories,
 
 Help AI-assisted owners deliver one or several projects through CNB, from local setup to verified release and recovery. Own configuration and evidence work; give people concrete handoffs. Promote tested evidence.
 
+For setup or another project, start with the [standard workflow](references/standard-workflow.md): reuse the CNB → TCR → TAT path and existing release artifacts, then adapt project differences. Use files, shell, Git and HTTP/API; browser automation is optional. Do not replace pipeline stages with repeated interactive AI operations.
+
 ## Decide before acting
 
 - Explanation and inspection are read-only. Do not mutate remote state for them.
@@ -46,7 +48,7 @@ Only the root host administrator performs bootstrap, helper maintenance, baselin
 
 ## Read only what the task needs
 
-- First setup, another project, resumption, missing local deliverables, or host classification: [project adoption](references/project-adoption.md).
+- Default setup sequence, actor responsibilities and artifact reuse: [standard workflow](references/standard-workflow.md); project state, resumption and host classification: [project adoption](references/project-adoption.md).
 - Existing-host first release, controller upgrade, candidate, failure, recovery, audit, or retention: [release safety](references/release-safety.md).
 - Human setup or missing information: [human handoffs](references/human-handoffs.md).
 - CNB candidate Tag, deployment page, or production buttons: [CNB deployment UI](references/cnb-deployment-ui.md).

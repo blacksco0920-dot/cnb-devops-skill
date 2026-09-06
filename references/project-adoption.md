@@ -10,6 +10,12 @@ isolation; verify the [actual execution boundary](release-safety.md#credentials-
 
 ## First read
 
+For initial setup, first follow the [standard workflow](standard-workflow.md).
+Reuse its CNB → TCR → TAT route and available artifacts before designing new
+execution code. Keep an existing accepted topology unless the user requests a
+change or an observed incompatibility requires one; adopting this default does
+not authorize migrating a working registry or deployment system.
+
 Read repository-local instructions, then `docs/DEPLOYMENT.md` and
 `docs/PROJECT_STATUS.md` when present. Do not ask a human to repeat a fact that
 the repository, its accepted receipts, or a supplied control record can show.

@@ -466,9 +466,9 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_public_package_has_no_project_specific_fixture_facts(self):
         public = self.public_package_text().lower()
+        # The user explicitly requested ecat workflow provenance; account and
+        # unrelated fixture identifiers remain excluded from the public package.
         for forbidden in (
-            "e" + "cat",
-            "e" + "-cat",
             "swift" + "eng",
             "dianqi" + "mao",
             "blacksco" + "0920",
