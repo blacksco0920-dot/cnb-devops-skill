@@ -14,6 +14,12 @@ Last verified: 2026-09-03
 None of these planes implies another. Record each result and its verifier
 separately; a build result alone is never a deployment result.
 
+Record application acceptance separately: the authorized user journeys, external
+integrations, and access boundaries actually exercised. Healthy containers and
+HTTPS do not establish tenant isolation or real integration behavior. A mock
+integration or a temporary registration restriction must remain an explicit
+limit of a controlled rehearsal, not evidence of unrestricted business readiness.
+
 ## Candidate manifest
 
 A candidate manifest is immutable release evidence. It contains:
@@ -90,6 +96,19 @@ the candidate before recording success.
 Use separate least-privilege identities for build-push, staging TAT, production
 role assumption, Git read, and business builds. Do not reuse one credential
 across trust domains. Pin executable and plugin images by digest.
+
+Check the effective permissions of the actual event and execution identity,
+including automatically injected tokens. Adding a narrow credential does not
+remove existing permissions. Record the tested identity and configuration;
+repository separation and Git service discovery do not prove write isolation.
+A write-permission claim needs an authorized bounded write and independent
+readback; read-only discovery does not authorize such a probe.
+
+If CI can modify release control records, the execution endpoint must validate
+an authorization source CI cannot forge. When a project uses signatures, keep
+the signing key outside CI and protect the endpoint's verification key. Select
+this boundary from observed permissions and project policy; a separate control
+repository or a particular signature algorithm is not required for every project.
 
 For ordinary operator-owned testing and customer-owned production, the pragmatic
 default is dedicated direct CAM identities with fixed, pre-created TAT Saved
@@ -189,6 +208,23 @@ Update current, previous, and append-only history records atomically. A failed
 record update means the release is not complete. Preserve every digest
 referenced by current staging, current production, or any retained candidate.
 Registry retention does not replace a tested, off-host database backup.
+
+## Backup and restore acceptance
+
+Record backup purpose and data state. A pre-initialization empty-database
+snapshot preserves that starting state; it does not prove business-data recovery.
+For an observed empty first deployment, keep the rehearsal explicitly scoped,
+then back up its representative synthetic business data and perform an actual
+off-host restore before accepting business recovery. Existing data and shared-host
+takeovers retain their required restore gates before mutation.
+
+Verify the transferred backup's checksum, restore into an isolated empty target,
+and reconcile the schema and relevant data against the source snapshot. Listing
+an archive or checking its readability is insufficient. Record the source
+release, backup hash, target engine/version, restore result, reconciliation, and
+retained evidence. State which stores were restored: database success does not
+prove recovery of uploads, caches, external stores, or the whole host. Follow the
+[data-owner handoff](human-handoffs.md#data-owner) for RPO, RTO and recovery ownership.
 
 ## Diagnosis order
 

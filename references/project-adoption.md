@@ -1,9 +1,12 @@
 # Project Adoption
 
-Use this reference to adopt an ordinary project without creating another
-repository, portal, CLI, Skill, or operational sidecar: `server-ops is prohibited`.
-The business repository remains the sole home for project code,
-pipelines, controller, topology, and deployment state.
+Default to the business repository for project code, pipelines, controller,
+topology, and deployment records. Respect an existing or explicitly authorized
+project-specific control repository when the project's access requirements
+justify it; record the reason and link it from both project documents. Do not
+create a global operations repository, portal, CLI, Skill, or operational sidecar
+as a setup prerequisite. A separate repository is not proof of permission
+isolation; verify the [actual execution boundary](release-safety.md#credentials-and-execution).
 
 ## First read
 
@@ -93,6 +96,12 @@ facts before requesting only their undiscoverable inputs.
 Refresh `docs/PROJECT_STATUS.md` after a release result, failure, recovery,
 policy decision, or handoff. Record the last verification time and evidence
 sources even when an attempted action remains blocked.
+
+Keep this document as the current index; move phase history into linked records
+instead of accumulating competing resume files. Index private evidence by its
+approved location, custodian, and checksum. A new session or machine must verify
+access to those files; a path in the index does not make them available. Append
+later acceptance evidence without rewriting an earlier immutable receipt.
 
 This compact synthetic example is a PROJECT_STATUS index, not a new receipt
 schema. Replace it with observed project facts; use explicit `unknown` or

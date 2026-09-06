@@ -23,6 +23,20 @@ sensitive details within its private control boundary. Do not ask the person to
 supply a completed technical receipt. Reuse already accepted facts and setup
 while their scope and validity hold.
 
+When confirmation is actually needed, distinguish an AI permission question
+from a cloud console's login, CAPTCHA or identity check. For AI permission,
+state the prepared operation, scope and reply method directly in the conversation;
+do not send the person looking for a browser authorization dialog. If a question
+card is not visible, restate the same question in plain text without restarting
+setup. An explicit reply covering that scope completes the confirmation; do not
+ask again through another interface.
+
+Candidate approval is a third, separate action on the selected Tag's deployment
+page. Name that exact page and candidate when it is needed. If project policy
+also requires a machine authorization record, the AI must prepare and verify it
+before directing the person to execute publication; a visible button alone does
+not establish that the execution prerequisites are complete.
+
 ## 按问题找负责人
 
 先按当前阻塞项定位角色；共用交付格式见[交付物与回执](#shared-artifacts)。
@@ -67,6 +81,23 @@ runtime secrets are entered only at the target-host boundary. Keep the inventory
 value-free in `.env.example` and, when CNB Secret data is used,
 `.cnb/secret.example.yml`; each configured value has a `secret receipt` rather
 than a chat transcript or complete environment file.
+
+Record the actual expiry with a timezone and every consuming location. Before
+an operation, check that the credential and any time-limited access policy cover
+its execution window. For renewal, update the approved consumers, validate the
+new credential at each required boundary, and record retirement of the old one.
+Do not treat a receipt's existence as proof that a short-lived credential remains
+usable; keep the responsible owner and next renewal action in the project index.
+
+### Private file transfer
+
+When downloading a credential or backup, verify the actual destination file,
+ordinary-file type, restricted permissions, size, and source/destination checksum.
+A console's transfer-success message or a download-event timeout does not settle
+whether the file arrived. Locate the expected artifact before retrying; if absent,
+record transfer as incomplete. Move any download staging copy into the approved
+private store promptly, then record metadata only. Do not ask a human to paste
+file contents into chat or recreate a credential merely to repair a transfer.
 
 ### release evidence
 

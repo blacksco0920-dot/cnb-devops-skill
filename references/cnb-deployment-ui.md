@@ -76,6 +76,17 @@ force, move, or silently replace a candidate Tag.
 keys returned by the annotation backend. Parse the result as a map and compare
 its exact key/value set with one allowed completed state.
 
+CNB also writes platform annotations when a person approves a deployment. In
+the 2026-09-06 rehearsal, approval added `cnb-deploy-approve-1-1="1"`.
+Observe the keys and values produced by the project's configured approval
+steps; this example is not a universal key. Accept recognized exact platform
+key/value pairs only after the complete candidate fields pass strict validation;
+continue rejecting unrecognized records. Never delete the approval record to
+make validation pass or bypass additional execution authorization required by
+project policy. Exercise a
+read-only native deployment check **after approval**, since readiness before
+approval does not cover the newly added metadata.
+
 Write candidate annotations in this order:
 
 1. For a freshly created candidate only, before its very first GET, account for

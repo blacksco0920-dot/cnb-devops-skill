@@ -316,7 +316,7 @@ class SkillPackageTests(unittest.TestCase):
             "apply",
             "approval does not execute production",
             "server publication does not imply client publication",
-            "server-ops is prohibited",
+            "Default to the business repository",
         ):
             self.assertIn(phrase, adoption)
 
