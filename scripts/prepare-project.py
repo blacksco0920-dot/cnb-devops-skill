@@ -220,7 +220,9 @@ def prepare(root, config_path):
                                         'Description': 'Pinned project test release', 'CommandType': 'SHELL',
                                         'Content': shim, 'Username': policy['release_user'],
                                         'WorkingDirectory': policy['release_home'], 'Timeout': 3600,
-                                        'EnableParameter': True, 'DefaultParameters': {'release_request_b64url': 'INVALID'}}}
+                                        'EnableParameter': True, 'DefaultParameters': {'release_request_b64url': 'INVALID'},
+                                        'DefaultParameterConfs': [{'ParameterName': 'release_request_b64url',
+                                                                   'ParameterValue': 'INVALID', 'ParameterDescription': ''}]}}
     outputs[str(VENDOR / 'tat-spec.template.json')] = json_bytes(command_spec)
     artifacts = {str(Path(name).relative_to(VENDOR)): digest(data) for name, data in outputs.items()}
     outputs[str(VENDOR / 'artifact-lock.json')] = json_bytes({'schema': 'cnb-devops-artifacts/v1',

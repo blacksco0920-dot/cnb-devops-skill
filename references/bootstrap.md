@@ -94,6 +94,7 @@ node "$SKILL_DIR/scripts/configure-tat.mjs" \
 ```
 
 工具先 Describe：同版本同内容复用，不一致停止；不存在才 Create，再回读内容和全部相关元数据。创建结果不确定时不重试写入；下一次先查询。输出文件不覆盖已有文件，重查时使用新的证据文件名。绑定中的三项摘要是**预期工件**，命令配置成功仍不等于主机已安装或部署成功。
+模板显式约束唯一参数 `release_request_b64url=INVALID` 及空描述；按[官方 CreateCommand 接口](https://cloud.tencent.com/document/api/1340/52684)的互斥要求，创建只发送 `DefaultParameterConfs`，回读仍精确校验它与规范 `DefaultParameters`，额外参数、默认值或描述变化均拒绝。
 
 ## 4．人只完成必须的控制台步骤
 

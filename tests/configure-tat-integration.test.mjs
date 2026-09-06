@@ -30,6 +30,7 @@ test('actual generated spec, exact mock query, and generated CI binding validati
     policy_sha256: sha(fs.readFileSync(path.join(vendor, 'host-policy.json'))),
   };
   assert.deepEqual(spec.expected_artifacts, expected);
+  assert.deepEqual(spec.expectedCommand.DefaultParameterConfs, [{ ParameterName: 'release_request_b64url', ParameterValue: 'INVALID', ParameterDescription: '' }]);
   assert.equal(JSON.parse(fs.readFileSync(path.join(vendor, 'host-policy.json'))).compose_sha256, expected.compose_sha256);
   assert.equal(spec.expectedCommand.Content, fs.readFileSync(path.join(vendor, 'tat-command.sh'), 'utf8'));
   // Shape-valid, visibly synthetic IDs constructed only in the test; no cloud target.
@@ -43,7 +44,7 @@ test('actual generated spec, exact mock query, and generated CI binding validati
       CommandId: commandId, CreatedBy: 'USER',
       Content: Buffer.from(spec.expectedCommand.Content).toString('base64'),
       DefaultParameters: '{"release_request_b64url":"INVALID"}',
-      DefaultParameterConfs: [], Tags: [], Scenes: [], OutputCOSBucketUrl: '', OutputCOSKeyPrefix: '' }],
+      DefaultParameterConfs: [{ ParameterName: 'release_request_b64url', ParameterValue: 'INVALID', ParameterDescription: '' }], Tags: [], Scenes: [], OutputCOSBucketUrl: '', OutputCOSKeyPrefix: '' }],
     RequestId: 'synthetic-query-only' };
   } };
   const binding = await configureTat({ spec, apply: true, client, output: path.join(project, 'binding.json') });

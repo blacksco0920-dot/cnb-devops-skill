@@ -16,13 +16,13 @@ const spec = () => ({
   target: { region: 'ap-example', instance_id: 'lhins-demo' },
   expectedCommand: { CommandName: 'example-staging-v0.1.0', Description: 'Reviewed staging entry',
     CommandType: 'SHELL', Content: text, Username: 'ubuntu', WorkingDirectory: '/home/ubuntu',
-    Timeout: 3600, EnableParameter: true, DefaultParameters: { release_request_b64url: 'INVALID' } },
+    Timeout: 3600, EnableParameter: true, DefaultParameters: { release_request_b64url: 'INVALID' }, DefaultParameterConfs: [{ ParameterName: 'release_request_b64url', ParameterValue: 'INVALID', ParameterDescription: '' }] },
 });
 const remote = (changes = {}) => ({
   CommandId: 'cmd-example1', CommandName: 'example-staging-v0.1.0', Description: 'Reviewed staging entry',
   CommandType: 'SHELL', Content: Buffer.from(text).toString('base64'), Username: 'ubuntu',
   WorkingDirectory: '/home/ubuntu', Timeout: 3600, EnableParameter: true,
-  DefaultParameters: '{"release_request_b64url":"INVALID"}', DefaultParameterConfs: [],
+  DefaultParameters: '{"release_request_b64url":"INVALID"}', DefaultParameterConfs: [{ ParameterName: 'release_request_b64url', ParameterValue: 'INVALID', ParameterDescription: '' }],
   CreatedBy: 'USER', Tags: [], Scenes: [], FormattedDescription: '',
   OutputCOSBucketUrl: '', OutputCOSKeyPrefix: '', CreatedTime: '2026-01-01T00:00:00Z',
   UpdatedTime: '2026-01-01T00:00:00Z', ...changes,
@@ -108,6 +108,20 @@ test('matching existing name is reused without mutation and produces a private b
   assert.equal(fs.statSync(output).mode & 0o777, 0o600);
 });
 
+test('parameter readback permits only the declared name, INVALID value and empty description', async t => {
+  const expected = [{ ParameterName: 'release_request_b64url', ParameterValue: 'INVALID', ParameterDescription: '' }];
+  for (const confs of [[], null, undefined, [...expected, ...expected],
+    [{ ...expected[0], ParameterName: 'extra' }], [{ ...expected[0], ParameterValue: 'live-request' }],
+    [{ ...expected[0], ParameterDescription: 'changed' }], [{ ...expected[0], Unknown: '' }]]) {
+    const client = clientWith([response([remote({ DefaultParameterConfs: confs })])]);
+    await assert.rejects(module.configureTat({ spec: spec(), apply: true, client,
+      output: path.join(folder(t), 'binding.json') }), { message: 'TAT_COMMAND_DRIFT' });
+    assert.equal(client.requests.length, 1);
+    const input = spec(); input.expectedCommand.DefaultParameterConfs = confs;
+    await assert.rejects(module.configureTat({ spec: input }), { message: 'TAT_SPEC_INVALID' });
+  }
+});
+
 test('new version sends exact Base64/API metadata then verifies ID and unique name', async t => {
   const input = spec();
   input.version = '0.2.0';
@@ -120,7 +134,7 @@ test('new version sends exact Base64/API metadata then verifies ID and unique na
   assert.deepEqual(client.requests[1], ['CreateCommand', {
     CommandName: 'example-staging-v0.2.0', Description: 'Reviewed staging entry', CommandType: 'SHELL',
     Content: Buffer.from(text).toString('base64'), Username: 'ubuntu', WorkingDirectory: '/home/ubuntu',
-    Timeout: 3600, EnableParameter: true, DefaultParameters: '{"release_request_b64url":"INVALID"}',
+    Timeout: 3600, EnableParameter: true, DefaultParameterConfs: [{ ParameterName: 'release_request_b64url', ParameterValue: 'INVALID', ParameterDescription: '' }],
   }]);
   assert.deepEqual(client.requests[2], ['DescribeCommands', { CommandIds: ['cmd-example1'], Limit: 100, Offset: 0 }]);
   assert.equal(client.requests[3][1].Filters[0].Values[0], 'example-staging-v0.2.0');
@@ -129,13 +143,14 @@ test('new version sends exact Base64/API metadata then verifies ID and unique na
 test('disabled template parameters are explicitly supported without DefaultParameters API input', async t => {
   const input = spec();
   Object.assign(input.expectedCommand, { Content: '#!/bin/sh\nexec /opt/example/readiness\n',
-    EnableParameter: false, DefaultParameters: {}, Username: 'root', WorkingDirectory: '/' });
+    EnableParameter: false, DefaultParameters: {}, DefaultParameterConfs: [], Username: 'root', WorkingDirectory: '/' });
   const actual = remote({ ...input.expectedCommand,
     Content: Buffer.from(input.expectedCommand.Content).toString('base64'), DefaultParameters: '' });
   const client = clientWith([response([]), response([actual]), response([actual])]);
   await module.configureTat({ spec: input, apply: true, client, output: path.join(folder(t), 'binding.json') });
   assert.equal(client.requests[1][1].EnableParameter, false);
   assert.equal(Object.hasOwn(client.requests[1][1], 'DefaultParameters'), false);
+  assert.equal(Object.hasOwn(client.requests[1][1], 'DefaultParameterConfs'), false);
 });
 
 test('same-name content or metadata drift and nonempty logging/parameter settings stop before create', async t => {

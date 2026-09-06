@@ -15,7 +15,7 @@ function fixture(t) {
     target: { region: 'ap-example', instance_id: 'lhins-demo' },
     expectedCommand: { CommandName: 'example-staging-v0.1.0', Description: '', CommandType: 'SHELL',
       Content: '#!/bin/sh\nexit 0\n', Username: 'ubuntu', WorkingDirectory: '/home/ubuntu',
-      Timeout: 3600, EnableParameter: true, DefaultParameters: { release_request_b64url: 'INVALID' } } };
+      Timeout: 3600, EnableParameter: true, DefaultParameters: { release_request_b64url: 'INVALID' }, DefaultParameterConfs: [{ ParameterName: 'release_request_b64url', ParameterValue: 'INVALID', ParameterDescription: '' }] } };
   fs.writeFileSync(path.join(dir, 'spec.json'), JSON.stringify(spec), { mode: 0o600 });
   return { dir, spec, run(args = [], env = {}) {
     return spawnSync(process.execPath, [script, '--spec', path.join(dir, 'spec.json'), ...args], {
@@ -33,7 +33,7 @@ function sdkFixture(dir, spec, version = '4.1.241') {
   fs.writeFileSync(path.join(installed, 'package.json'), JSON.stringify({ name, version, main: 'index.js' }));
   const command = { ...spec.expectedCommand, CommandId: 'cmd-example1', CreatedBy: 'USER',
     Content: Buffer.from(spec.expectedCommand.Content).toString('base64'),
-    DefaultParameters: '{"release_request_b64url":"INVALID"}', DefaultParameterConfs: [],
+    DefaultParameters: '{"release_request_b64url":"INVALID"}', DefaultParameterConfs: [{ ParameterName: 'release_request_b64url', ParameterValue: 'INVALID', ParameterDescription: '' }],
     Tags: [], Scenes: [], OutputCOSBucketUrl: '', OutputCOSKeyPrefix: '' };
   fs.writeFileSync(path.join(installed, 'index.js'), `
 const fs = require('node:fs');

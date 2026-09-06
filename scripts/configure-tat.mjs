@@ -36,7 +36,7 @@ export function validateSpec(spec) {
   requireMatch(spec.target.instance_id, /^(?:lhins|ins|mi)-[a-z0-9]{4,32}$/);
   const c = spec.expectedCommand;
   keys(c, ['CommandName', 'Description', 'CommandType', 'Content', 'Username', 'WorkingDirectory',
-    'Timeout', 'EnableParameter', 'DefaultParameters']);
+    'Timeout', 'EnableParameter', 'DefaultParameters', 'DefaultParameterConfs']);
   requireMatch(c.CommandName, /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/);
   if (Buffer.byteLength(c.CommandName) > 60 || !c.CommandName.endsWith(`-v${spec.version}`)) fail('TAT_SPEC_INVALID');
   if (typeof c.Description !== 'string' || [...c.Description].length > 120 || /[\x00-\x1f\x7f]/.test(c.Description)) fail('TAT_SPEC_INVALID');
@@ -50,6 +50,8 @@ export function validateSpec(spec) {
       typeof c.EnableParameter !== 'boolean') fail('TAT_SPEC_INVALID');
   keys(c.DefaultParameters, c.EnableParameter ? ['release_request_b64url'] : []);
   if (c.EnableParameter && c.DefaultParameters.release_request_b64url !== 'INVALID') fail('TAT_SPEC_INVALID');
+  const expectedConfs = c.EnableParameter ? [{ ParameterName: 'release_request_b64url', ParameterValue: 'INVALID', ParameterDescription: '' }] : [];
+  if (canonical(c.DefaultParameterConfs) !== canonical(expectedConfs)) fail('TAT_SPEC_INVALID');
   if (hasArtifacts) {
     keys(spec.expected_artifacts, ['program_sha256', 'compose_sha256', 'policy_sha256']);
     for (const value of Object.values(spec.expected_artifacts)) requireMatch(value, /^[a-f0-9]{64}$/);
@@ -68,7 +70,7 @@ function metadata(c) {
     ContentSha256: hash(c.Content), Username: c.Username, WorkingDirectory: c.WorkingDirectory,
     Timeout: c.Timeout, EnableParameter: c.EnableParameter, DefaultParameters: c.DefaultParameters,
     CreatedBy: 'USER', OutputCOSBucketUrl: '', OutputCOSKeyPrefix: '',
-    DefaultParameterConfs: [], Tags: [], Scenes: [] };
+    DefaultParameterConfs: c.DefaultParameterConfs, Tags: [], Scenes: [] };
 }
 function verifyCommand(command, expected, id) {
   if (!object(command) || !/^cmd-[a-z0-9]{4,32}$/.test(command.CommandId) ||
@@ -156,8 +158,9 @@ export async function configureTat({ spec, apply = false, client, output }) {
     if (existing.length) id = verifyCommand(existing[0], c);
     else {
       const request = { ...c, Content: Buffer.from(c.Content).toString('base64') };
-      if (c.EnableParameter) request.DefaultParameters = canonical(c.DefaultParameters);
-      else delete request.DefaultParameters;
+      // CreateCommand 不允许同时发送两种参数表示；显式保留唯一参数的空描述。
+      delete request.DefaultParameters;
+      if (!c.EnableParameter) delete request.DefaultParameterConfs;
       // A timeout may follow successful server-side creation. Never retry a write here.
       let created;
       try { created = await client.CreateCommand(request); } catch { fail('TAT_CREATE_UNCERTAIN'); }
