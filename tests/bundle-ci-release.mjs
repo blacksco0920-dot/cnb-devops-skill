@@ -80,7 +80,7 @@ for(const mismatch of ['invocation','command','instance','multiple','missing','t
  test(`TAT polling rejects ${mismatch} task identity before accepting status`,async()=>{
   const {config,values,binding,receipt}=fixture(['web']);const client=clientFixture(receipt,binding);delete client.DescribeInvocations;
   const readTask=client.DescribeInvocationTasks;client.DescribeInvocationTasks=async args=>{const result=await readTask(args);const task=result.InvocationTaskSet[0];
-   if(mismatch==='invocation')task.InvocationId='inv-different123';if(mismatch==='command')task.CommandId='cmd-different123';if(mismatch==='instance')task.InstanceId='lhins-different123';
+   if(mismatch==='invocation')task.InvocationId='inv-different123';if(mismatch==='command')task.CommandId='cmd-different123';if(mismatch==='instance')task.InstanceId='lhins-diff';
    if(mismatch==='multiple'){result.InvocationTaskSet.push({...task});result.TotalCount=2;}if(mismatch==='missing')result.InvocationTaskSet=[];if(mismatch==='truncated-count')result.TotalCount=2;
    return result;};
   await assert.rejects(runTatRelease({client,request:renderReleaseRequest(values,config),config,binding}),error=>error.invocationId==='inv-example123'&&/exact invocation task/.test(error.message));

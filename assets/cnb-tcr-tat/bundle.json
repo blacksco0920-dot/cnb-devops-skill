@@ -65,13 +65,23 @@
   "validation": {
     "clean_host_install": "not_run",
     "external_restore": "not_run",
-    "first_host_bootstrap": "local simulated tests passed; cloud execution pending",
+    "first_host_bootstrap": "passed on one reset Tencent Cloud Ubuntu 24.04 host with preinstalled Hermes/native Caddy; existing services preserved; see cloud_evidence",
     "local_contract_tests": "passed locally: generated stages, Docker Compose config, canonical host request, candidate and TAT binding with mocked cloud boundary",
     "local_two_project_generation": "passed: one and three services, identical copied core hashes",
-    "native_caddy_setup": "local simulated failure/repeat checks and real Caddy 2.11.4 adapt/validate/admin readback passed; cloud execution pending",
-    "new_bundle_cloud_deployment": "not_run",
+    "native_caddy_setup": "passed on the same cloud host: Caddy 2.11.4, existing default site preserved, installed config and running config matched, all three test domains passed HTTPS checks",
+    "new_bundle_cloud_deployment": "passed for FinAgent test deployment and automatic ready candidate; production, external restore and second-project cloud reuse are not validated",
     "production": "not_enabled",
-    "project_installation": "passed locally with real filesystem and simulated root/Docker/PostgreSQL; clean-host execution not run"
+    "project_installation": "passed on the same cloud host from an explicitly empty isolated PostgreSQL database; clean image without preinstalled services not tested",
+    "cloud_evidence": {
+      "date": "2026-09-06",
+      "skill_commit": "bde8bd35b9cac3dace29f33b716257e22e51167a",
+      "artifact_lock_sha256": "9a62de1efe9dc5bc8ea8e5525f0fb224023c35454f31ca03a8996652bc85060d",
+      "application_commit": "0594267c31561a28070aa1965297875f1803e511",
+      "build_url": "https://cnb.cool/laoma-ai/finagent/-/build/logs/cnb-ejk-1k1rir9iu",
+      "candidate_tag": "finagent-candidate-cnb-ejk-1k1rir9iu",
+      "scope": "test deployment, database backup before migration, runtime and public availability/release identity, automatic annotated candidate and ready readback; not full business or restore acceptance",
+      "metadata_note": "Evidence records the exact installed artifact above. Updating this metadata does not upgrade that installation or attest a newly generated artifact lock."
+    }
   },
   "version": "0.1.0-preview.2"
 }
