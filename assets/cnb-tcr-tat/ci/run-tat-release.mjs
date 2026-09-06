@@ -8,15 +8,17 @@ import process from 'node:process';
 
 import { parseReleaseRequest, renderReleaseRequest, validateReleaseReceipt } from './release-request.mjs';
 
-const PENDING_STATUSES = new Set(['PENDING', 'RUNNING']);
+// Task states from the pinned TAT API 2020-10-28 InvocationTask model.
+const PENDING_STATUSES = new Set(['PENDING', 'DELIVERING', 'DELIVER_DELAYED', 'RUNNING']);
 const TERMINAL_FAILURES = new Set([
+  'DELIVER_FAILED',
+  'START_FAILED',
   'CANCELLING',
   'FAILED',
-  'PARTIAL_FAILED',
   'TIMEOUT',
-  'PARTIAL_TIMEOUT',
+  'TASK_TIMEOUT',
   'CANCELLED',
-  'PARTIAL_CANCELLED',
+  'TERMINATED',
 ]);
 const SECRET_ID_PATTERN = /^AKID[A-Za-z0-9]+$/u;
 const INVOCATION_ID_PATTERN = /^inv-[A-Za-z0-9-]{8,64}$/u;
@@ -51,24 +53,18 @@ function requireInvocationId(response) {
   return value;
 }
 
-function exactInvocation(response, { invocationId, commandId, instanceId, parameters }) {
-  const records = response?.InvocationSet;
-  if (!Array.isArray(records) || records.length !== 1) {
-    fail('TAT invocation query did not return the exact invocation', invocationId);
-  }
-  const record = records[0];
-  const tasks = record?.InvocationTaskBasicInfoSet;
+function exactInvocationTask(response, { invocationId, commandId, instanceId }) {
+  const tasks = response?.InvocationTaskSet;
+  const task = Array.isArray(tasks) && tasks.length === 1 ? tasks[0] : undefined;
   if (
-    record?.InvocationId !== invocationId ||
-    record?.CommandId !== commandId ||
-    record?.Parameters !== parameters ||
-    !Array.isArray(tasks) ||
-    tasks.length !== 1 ||
-    tasks[0]?.InstanceId !== instanceId
+    response?.TotalCount !== 1 ||
+    task?.InvocationId !== invocationId ||
+    task.CommandId !== commandId ||
+    task.InstanceId !== instanceId
   ) {
-    fail('TAT invocation query did not return the exact invocation', invocationId);
+    fail('TAT task query did not return the exact invocation task', invocationId);
   }
-  return record;
+  return task;
 }
 
 export function validateBinding(binding, config) {
@@ -105,11 +101,8 @@ function validateSavedCommand(response, binding) {
   if(!Buffer.from(text,'utf8').equals(content) || text.split('{{release_request_b64url}}').length!==2 || /\{\{|\}\}/u.test(text.replace('{{release_request_b64url}}',''))) fail('saved TAT command parameter contract is invalid');
   return text;
 }
-async function readReleaseReceipt(client, invocationId, binding, request, config, expectedScript) {
-  const result = await client.DescribeInvocationTasks({Filters:[{Name:'invocation-id',Values:[invocationId]}],HideOutput:false,Limit:1,Offset:0});
-  const tasks=result?.InvocationTaskSet;
-  const task=Array.isArray(tasks)&&tasks.length===1?tasks[0]:undefined;
-  if(result.TotalCount!==1 || task?.InvocationId!==invocationId || task.InstanceId!==binding.instance_id || task.CommandId!==binding.command_id || task.TaskStatus!=='SUCCESS' || task.TaskResult?.ExitCode!==0 || task.TaskResult?.Dropped!==0) fail('TAT task receipt does not match invocation',invocationId);
+function readReleaseReceipt(task, invocationId, binding, request, config, expectedScript) {
+  if(task.TaskStatus!=='SUCCESS' || task.TaskResult?.ExitCode!==0 || task.TaskResult?.Dropped!==0) fail('TAT task receipt does not match invocation',invocationId);
   const document=task.CommandDocument;
   if(document?.Content!==Buffer.from(expectedScript,'utf8').toString('base64') || document.CommandType!=='SHELL' || document.Username!==binding.username || document.WorkingDirectory!==binding.working_directory || document.Timeout!==binding.timeout || (document.OutputCOSBucketUrl??'')!=='' || (document.OutputCOSKeyPrefix??'')!=='') fail('executed TAT command does not match the protected command and parameters',invocationId);
   const encoded=task.TaskResult.Output;
@@ -163,7 +156,6 @@ export async function runTatRelease({
     !client ||
     typeof client.DescribeCommands !== 'function' ||
     typeof client.InvokeCommand !== 'function' ||
-    typeof client.DescribeInvocations !== 'function' ||
     typeof client.DescribeInvocationTasks !== 'function' ||
     typeof onProgress !== 'function'
   ) {
@@ -194,7 +186,7 @@ export async function runTatRelease({
   while (now() < deadline) {
     let readResponse;
     try {
-      readResponse = await client.DescribeInvocations({ InvocationIds: [invocationId] });
+      readResponse = await client.DescribeInvocationTasks({Filters:[{Name:'invocation-id',Values:[invocationId]}],HideOutput:false,Limit:1,Offset:0});
       readFailures = 0;
     } catch {
       readFailures += 1;
@@ -204,18 +196,18 @@ export async function runTatRelease({
       await sleep(pollIntervalMs);
       continue;
     }
-    const status = exactInvocation(readResponse, {
+    const task = exactInvocationTask(readResponse, {
       invocationId,
       commandId,
       instanceId,
-      parameters,
-    }).InvocationStatus;
+    });
+    const status = task.TaskStatus;
     reportProgress(onProgress, invocationId, status);
     if (status === 'SUCCESS') {
       const completedAt = new Date(Math.floor(now() / 1000) * 1000)
         .toISOString()
         .replace('.000Z', 'Z');
-      const receipt=await readReleaseReceipt(client,invocationId,binding,model,config,expectedScript);
+      const receipt=readReleaseReceipt(task,invocationId,binding,model,config,expectedScript);
       return { invocationId, completedAt, receipt };
     }
     if (!PENDING_STATUSES.has(status)) {

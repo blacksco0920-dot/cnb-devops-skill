@@ -58,6 +58,47 @@ test('TAT exact command and result readback yields verified receipt',async()=>{
  const result=await runTatRelease({client,request:renderReleaseRequest(values,config),config,binding,now:()=>Date.parse('2026-09-06T00:00:00Z')});
  assert.equal(result.invocationId,'inv-example123');assert.deepEqual(result.receipt,receipt);
 });
+test('TAT task-only client waits through delivery states without DescribeInvocations permission',async()=>{
+ const {config,values,binding,receipt}=fixture(['web']);const client=clientFixture(receipt,binding);
+ delete client.DescribeInvocations;
+ const readTask=client.DescribeInvocationTasks;
+ const statuses=['PENDING','DELIVERING','DELIVER_DELAYED','RUNNING','SUCCESS'];
+ let tick=0;
+ client.DescribeInvocationTasks=async args=>{const result=await readTask(args);result.InvocationTaskSet[0].TaskStatus=statuses.shift();return result;};
+ const result=await runTatRelease({client,request:renderReleaseRequest(values,config),config,binding,now:()=>Date.parse('2026-09-06T00:00:00Z')+tick,sleep:async ms=>{tick+=ms;}});
+ assert.deepEqual(result.receipt,receipt);assert.equal(client.invoked,1);assert.deepEqual(statuses,[]);
+});
+for(const status of ['DELIVER_FAILED','START_FAILED','FAILED','TIMEOUT','TASK_TIMEOUT','CANCELLING','CANCELLED','TERMINATED','UNRECOGNIZED']) {
+ test(`TAT task ${status} never yields a verified receipt`,async()=>{
+  const {config,values,binding,receipt}=fixture(['web']);const client=clientFixture(receipt,binding);delete client.DescribeInvocations;
+  const readTask=client.DescribeInvocationTasks;client.DescribeInvocationTasks=async args=>{const result=await readTask(args);result.InvocationTaskSet[0].TaskStatus=status;return result;};
+  await assert.rejects(runTatRelease({client,request:renderReleaseRequest(values,config),config,binding}),error=>error.invocationId==='inv-example123'&&/did not succeed|unknown terminal status/.test(error.message));
+  assert.equal(client.invoked,1);
+ });
+}
+for(const mismatch of ['invocation','command','instance','multiple','missing','truncated-count']) {
+ test(`TAT polling rejects ${mismatch} task identity before accepting status`,async()=>{
+  const {config,values,binding,receipt}=fixture(['web']);const client=clientFixture(receipt,binding);delete client.DescribeInvocations;
+  const readTask=client.DescribeInvocationTasks;client.DescribeInvocationTasks=async args=>{const result=await readTask(args);const task=result.InvocationTaskSet[0];
+   if(mismatch==='invocation')task.InvocationId='inv-different123';if(mismatch==='command')task.CommandId='cmd-different123';if(mismatch==='instance')task.InstanceId='lhins-different123';
+   if(mismatch==='multiple'){result.InvocationTaskSet.push({...task});result.TotalCount=2;}if(mismatch==='missing')result.InvocationTaskSet=[];if(mismatch==='truncated-count')result.TotalCount=2;
+   return result;};
+  await assert.rejects(runTatRelease({client,request:renderReleaseRequest(values,config),config,binding}),error=>error.invocationId==='inv-example123'&&/exact invocation task/.test(error.message));
+  assert.equal(client.invoked,1);
+ });
+}
+test('TAT task query failures stop after three reads without repeating invoke',async()=>{
+ const {config,values,binding,receipt}=fixture(['web']);const client=clientFixture(receipt,binding);delete client.DescribeInvocations;
+ let reads=0;client.DescribeInvocationTasks=async()=>{reads++;throw Error('query unavailable');};
+ await assert.rejects(runTatRelease({client,request:renderReleaseRequest(values,config),config,binding,sleep:async()=>{}}),error=>error.invocationId==='inv-example123'&&/status query failed/.test(error.message));
+ assert.equal(reads,3);assert.equal(client.invoked,1);
+});
+test('TAT task polling deadline preserves invocation identity without repeating invoke',async()=>{
+ const {config,values,binding,receipt}=fixture(['web']);const client=clientFixture(receipt,binding);delete client.DescribeInvocations;
+ let tick=0;const readTask=client.DescribeInvocationTasks;client.DescribeInvocationTasks=async args=>{const result=await readTask(args);result.InvocationTaskSet[0].TaskStatus='RUNNING';return result;};
+ await assert.rejects(runTatRelease({client,request:renderReleaseRequest(values,config),config,binding,deadlineMs:1000,pollIntervalMs:500,now:()=>tick,sleep:async ms=>{tick+=ms;}}),error=>error.invocationId==='inv-example123'&&/deadline exceeded/.test(error.message));
+ assert.equal(client.invoked,1);
+});
 test('TAT altered Saved Command is blocked before invoke',async()=>{
  const {config,values,binding,receipt}=fixture(['web']);const client=clientFixture(receipt,binding);binding.command_sha256='f'.repeat(64);
  await assert.rejects(runTatRelease({client,request:renderReleaseRequest(values,config),config,binding}));assert.equal(client.invoked,0);
