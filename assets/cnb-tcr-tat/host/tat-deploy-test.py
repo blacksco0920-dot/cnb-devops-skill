@@ -1681,7 +1681,9 @@ def _read_snapshot_file_at(directory_fd, name, maximum, uid, gid):
 
 def _validate_database_dump_descriptor(descriptor):
     info = os.fstat(descriptor)
-    if not stat.S_ISREG(info.st_mode) or info.st_size < 1024:
+    # Empty databases can produce valid custom archives smaller than 1 KiB.
+    # pg_restore must validate the structure of every nonempty archive below.
+    if not stat.S_ISREG(info.st_mode) or info.st_size <= 0:
         raise DeploymentError("database_backup_invalid")
     duplicate = os.dup(descriptor)
     os.lseek(duplicate, 0, os.SEEK_SET)

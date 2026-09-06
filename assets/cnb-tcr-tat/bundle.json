@@ -25,7 +25,7 @@
     "host/configure-native-caddy.py": "40d327f3acc00e162049787cf7b020029818c496ea41854f09181913f7251628",
     "host/install-project.py": "effd1889a5410f7073a016f3739dfb1d950f570cf60b8a7ca2e65a8d20adefed",
     "host/tat-command.sh.tmpl": "c6b310a7af1abd85bc834393595b82dab16481a5fbcae0f1a9a04a8f8ce06e9d",
-    "host/tat-deploy-test.py": "c18f2d06551c81e72051f9d47d271a4e9bcad2e40ca1819a3f108f2ad10ceb1b",
+    "host/tat-deploy-test.py": "58fcff706de62642a62c9f1938af32829b7ae9ddd3e5d3af6882c7430c838392",
     "project.example.yml": "2f38bf5e99279eb9e5732e15273be0d21432e59a0959efffdf03c938fcfa4e8e",
     "project.schema.json": "4faf425e820a820778515893db818f8d478130eedfac64c564756af19bab80e0",
     "templates/github-sync.yml.tmpl": "7e3b7700d9e8c8e26588348f6cf623b22c96d9b40931d2157657abf19cd09b86",
