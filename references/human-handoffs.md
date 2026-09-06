@@ -307,11 +307,11 @@ needs pull access, or when a Registry credential is rotated.
 
 ### Deliver
 
-- TCR Personal namespace/repository identity and separate push and pull
-  endpoints.
+- TCR Personal namespace/repository identities and the exact Registry endpoint
+  used by each credential.
 - One dedicated programmatic build-push CAM identity, never a main-account
   credential, and one dedicated pull-only CAM subuser for each customer/project
-  repository.
+  repository set.
 - A policy record, rotation date, isolation test result, and `secret receipt`
   for each credential.
 
@@ -319,45 +319,69 @@ TCR Personal is the selected free path within its service limits and has no SLA.
 TCR Enterprise service accounts are an optional paid upgrade, not the assumed
 free mechanism.
 
-### Exact console steps
+### Exact setup steps
 
 1. Confirm the build-push credential belongs to a dedicated programmatic CAM
    identity with only the required repository push/read scope. Then, in
    **CAM → Users**, create a different dedicated programmatic subuser for one
-   customer/project repository's pull access.
-2. In **CAM → Policies**, create a custom policy based on Tencent Cloud's
-   repository-read-only Personal example. Grant only `tcr:Describe*` and
-   `tcr:PullRepositoryPersonal` on the target namespace, repository, and
-   repository descendants:
+   customer/project repository set's pull access.
+2. In **CAM → Policies**, grant the host only `tcr:PullRepositoryPersonal` on
+   each exact repository. Use the Personal edition form below; list multiple
+   repositories individually, without namespace or descendant wildcards.
+   For CI, add only `tcr:PushRepositoryPersonal` to its approved repository set.
+   Replace the expiry placeholder with the approved lease's UTC deadline:
 
    ```json
    {
      "version": "2.0",
      "statement": [{
        "effect": "allow",
-       "action": ["tcr:Describe*", "tcr:PullRepositoryPersonal"],
+       "action": ["tcr:PullRepositoryPersonal"],
        "resource": [
-         "qcs::tcr:<REGION>:uin/<MAIN_ACCOUNT_UIN>:repo/<NAMESPACE>",
-         "qcs::tcr:<REGION>:uin/<MAIN_ACCOUNT_UIN>:repo/<NAMESPACE>/<REPOSITORY>",
-         "qcs::tcr:<REGION>:uin/<MAIN_ACCOUNT_UIN>:repo/<NAMESPACE>/<REPOSITORY>/*"
-       ]
+         "qcs::tcr:::repo/<NAMESPACE>/<REPOSITORY>"
+       ],
+       "condition": {
+         "date_less_than": {
+           "qcs:current_time": "<APPROVED_EXPIRY_IN_UTC>"
+         }
+       }
      }]
    }
    ```
 
-3. Only for first-time Registry credential initialization or rotation,
-   temporarily add `tcr:CreateUserPersonal` and
-   `tcr:ModifyUserPasswordPersonal` on resource `*`.
-4. Open **TCR → Personal → Instance management** for that subuser identity and
-   initialize or reset its Registry login password. Verify the login, then
-   immediately remove the two temporary actions.
-5. Treat the resulting Registry username/password as Docker credentials. A
-   Tencent Cloud API SecretId/SecretKey is not the Docker Registry password.
+   Tencent's Personal resource guide allows these empty fields: region covers
+   all regions and account resolves to the policy creator's parent account.
+   This documented format still names the exact repository; successful policy
+   creation alone does not prove that Registry authorization matches it.
+   Verified on 2026-09-06: private digest manifest reads succeeded with this
+   exact-repository form using the existing credential. This proves those
+   manifest reads, not every image-layer download or a denied write attempt.
+3. Only for first-time Registry initialization, temporarily grant
+   `tcr:CreateUserPersonal` on resource `*`, within the approved lease.
+   Do not also grant `tcr:ModifyUserPasswordPersonal`.
+4. Use the official SDK/CLI under that subuser's own API identity to call
+   `CreateUserPersonal` once, with `Password` and no `Region`. Console login
+   for the subuser is not required. Generate a private random 16-character
+   password, persist it in a protected attempt file before the request, and
+   retain the attempt if the response is uncertain. An existing initialized
+   user or uncertain response requires review, never an automatic retry with a
+   new password or an unapproved reset. Remove the initialization grant after
+   success and verify that its association is gone.
+5. Use that initialized identity's actual UIN as the Docker username, confirmed
+   from CAM; do not substitute its display name, UserId, or parent account UIN.
+   Keep the private Registry password distinct from its API SecretId/SecretKey.
 6. Enter the build-push Registry credential in the project's CNB Secret file.
-   Enter the pull-only Registry credential directly on the target host using
-   the approved runtime-secret mechanism. Record only `secret receipt`s.
-7. Test three boundaries by digest: the identity can pull its allowed
-   repository, cannot push to it, and cannot read another project's repository.
+   Enter only the pull-only Docker credential on the target host using the
+   approved runtime-secret mechanism; do not transfer the initialization API
+   key to the host. Record only `secret receipt`s.
+7. Read back the effective policy and associations, then verify an actual
+   private `repository@sha256:digest` with an isolated Docker configuration.
+   A successful login proves authentication, not repository pull permission.
+   Check that the host's effective grants contain no push/write authority;
+   this policy evidence is separate from the real digest-read result. Do not
+   require a real push attempt or access to another project's repository as a
+   negative test. Any additional denial probe needs an approved, non-mutating
+   scope and must be reported only as evidence for that specific request.
 
 Official guidance:
 
@@ -365,6 +389,9 @@ Official guidance:
 - <https://cloud.tencent.com/document/product/1141/41409>
 - <https://cloud.tencent.com/document/product/1141/41415>
 - <https://cloud.tencent.com/document/product/1141/41596>
+- <https://cloud.tencent.com/document/product/1141/41412>
+- <https://intl.cloud.tencent.com/zh/document/product/1051/39862>
+- <https://cloud.tencent.com/document/product/598/10608>
 
 CNB SaaS egress addresses change dynamically. Do not create a permanent CNB IP
 allowlist or weaken authentication; use TAT or a controlled proxy when a stable
@@ -372,9 +399,12 @@ network boundary is required: <https://docs.cnb.cool/zh/faq.html>.
 
 ### Acceptance
 
-The pull test by digest passes, the push and cross-project tests are denied, the
-initialization-only actions have been removed, and both secret receipts name an
-owner and next rotation date.
+Record policy/association readback, actual private digest pull, and absence of
+host write grants as separate evidence. Initialization-only permission is
+removed, and both secret receipts name an owner, the approved expiry, and next
+rotation date. A policy correction remains unverified until its actual Registry
+read succeeds; policy inspection is not a claim that a push was attempted and
+denied.
 
 ### Never deliver
 
