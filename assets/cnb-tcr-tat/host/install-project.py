@@ -175,7 +175,8 @@ def prepare_runtime_env(host, raw):
     host.parse_test_database_url(values[host.POLICY["database"]["url_env"]])
     if host.POLICY.get("redis"):
         host.parse_test_redis_url(values[host.POLICY["redis"]["url_env"]])
-        host.validate_test_redis_prefix(values[host.POLICY["redis"]["prefix_env"]])
+        if "prefix_env" in host.POLICY["redis"]:
+            host.validate_test_redis_prefix(values[host.POLICY["redis"]["prefix_env"]])
     return text.encode("utf-8")
 
 

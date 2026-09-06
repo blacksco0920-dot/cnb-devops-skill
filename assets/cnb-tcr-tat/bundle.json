@@ -1,11 +1,11 @@
 {
   "compatibility": {
     "controller_source": "same application repository and commit",
-    "database": "existing PostgreSQL container; distinct database/user per project",
+    "database": "existing isolated PostgreSQL or bootstrap-created PostgreSQL 16; distinct database/user per project",
     "environment": "test only; production blocked",
     "generator": "Python 3.12+, PyYAML 6.0.2, jsonschema 4.25.1",
     "host": "Ubuntu 24.04, Linux amd64, Docker Engine and Compose v2, non-root ubuntu Docker user",
-    "installation": "project installer only; dependency provisioning and active-version upgrade not included",
+    "installation": "project installer plus first-host Ubuntu 24.04/PostgreSQL 16/dedicated Redis 7 preset; active-version upgrade not included",
     "runtime": "Python 3.12+ standard library; Node.js 22; Bash; Git"
   },
   "files": {
@@ -21,13 +21,14 @@
     "dependencies/package-lock.json": "2e480e70f7652ac7e0753af6e11445a7f93fa4ed911dcf485d28c562a295ffda",
     "dependencies/package.json": "b52f23c648264c0afae3163f6bf0c3f5ccf573331103adf3c0bbf300c9d38b3f",
     "host/README.md": "08e340aff342bf73373d188ec2e5f6de79c46e9125b02a63ebbc6df331830c0d",
-    "host/install-project.py": "98f3de48eed1edb3164a0c2d7ac7e4c27785d95c56faad94b91812597cd279ab",
+    "host/bootstrap-host.py": "373aa9657a860f27bc06da2a10dfdd0980c7e67555f93db4411837bb563ead72",
+    "host/install-project.py": "effd1889a5410f7073a016f3739dfb1d950f570cf60b8a7ca2e65a8d20adefed",
     "host/tat-command.sh.tmpl": "c6b310a7af1abd85bc834393595b82dab16481a5fbcae0f1a9a04a8f8ce06e9d",
-    "host/tat-deploy-test.py": "d123111d2fddb26320c6ec428b69066e424b06edd98ea8875a3b9efe47dd35af",
+    "host/tat-deploy-test.py": "c18f2d06551c81e72051f9d47d271a4e9bcad2e40ca1819a3f108f2ad10ceb1b",
     "project.example.yml": "2f38bf5e99279eb9e5732e15273be0d21432e59a0959efffdf03c938fcfa4e8e",
-    "project.schema.json": "5ef97432d2ead039b8f58e32d6529f8f9b37efe52fddb2baef999ddf6ece38c9",
+    "project.schema.json": "4faf425e820a820778515893db818f8d478130eedfac64c564756af19bab80e0",
     "templates/github-sync.yml.tmpl": "7e3b7700d9e8c8e26588348f6cf623b22c96d9b40931d2157657abf19cd09b86",
-    "templates/render.py": "6119e111d3eb62fde28d2e3efa8fed801e51aba0ddf0b8d5afe4ecc771874acb"
+    "templates/render.py": "5324f486cc62c22f5c4daf1d2b5f098c7913c65eda4e4136027ba4a60a21da17"
   },
   "provenance": [
     {
@@ -63,11 +64,12 @@
   "validation": {
     "clean_host_install": "not_run",
     "external_restore": "not_run",
+    "first_host_bootstrap": "local simulated tests passed; cloud execution pending",
     "local_contract_tests": "passed locally: generated stages, Docker Compose config, canonical host request, candidate and TAT binding with mocked cloud boundary",
     "local_two_project_generation": "passed: one and three services, identical copied core hashes",
     "new_bundle_cloud_deployment": "not_run",
     "production": "not_enabled",
     "project_installation": "passed locally with real filesystem and simulated root/Docker/PostgreSQL; clean-host execution not run"
   },
-  "version": "0.1.0-preview.1"
+  "version": "0.1.0-preview.2"
 }

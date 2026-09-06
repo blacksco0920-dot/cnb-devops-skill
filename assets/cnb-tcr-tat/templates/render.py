@@ -34,10 +34,16 @@ def model(config, controller_sha):
                    'environment': spec.get('environment', {}),
                    'environment_refs': spec.get('environment_refs', {}),
                    'runtime_env': spec.get('runtime_env', False),
-                   'healthcheck': bool(spec.get('healthcheck')), 'mounts': []}
+                   'healthcheck': bool(spec.get('healthcheck')),
+                   'mounts': [{'type': 'bind', 'source': f'/opt/apps/{scope}/' + mount['source'],
+                               'target': mount['target']} for mount in spec.get('mounts', [])]}
         services[role] = service
         composed = {'image': '${' + image_env + '}', 'container_name': service['container'],
                     'restart': 'unless-stopped', 'networks': networks}
+        if 'loopback_port' in spec:
+            service['loopback_port'] = {'host_ip': '127.0.0.1', 'protocol': 'tcp',
+                                        'published': spec['loopback_port'], 'target': spec['expose'][0]}
+            composed['ports'] = [dict(service['loopback_port'], published=str(spec['loopback_port']))]
         if service['runtime_env']:
             composed['env_file'] = ['${CNB_RUNTIME_ENV_FILE:?required}']
         env = dict(service['environment'])
@@ -48,6 +54,8 @@ def model(config, controller_sha):
             composed['healthcheck'] = spec['healthcheck']
         if spec.get('expose'):
             composed['expose'] = [str(port) for port in spec['expose']]
+        if service['mounts']:
+            composed['volumes'] = service['mounts']
         compose_services[role] = composed
     compose = {'name': scope, 'services': compose_services,
                'networks': {name: {'external': True, 'name': name} for name in networks}}
@@ -63,6 +71,10 @@ def model(config, controller_sha):
               'availability_probes': host['availability_probes'], 'identity_probes': host['identity_probes']}
     if host.get('proxy_container'):
         policy['proxy_container'] = host['proxy_container']
+    if host.get('redis'):
+        policy['redis'] = host['redis']
+    if 'startup_timeout_seconds' in host:
+        policy['startup_timeout_seconds'] = host['startup_timeout_seconds']
     config_ci = {'schema': 'cnb-devops-ci/v1', 'project': project, 'environment': environment,
                  'controller_id': policy['controller_id'], 'candidate_prefix': project + '-candidate-',
                  'cnb_repository': config['cnb_repository'],

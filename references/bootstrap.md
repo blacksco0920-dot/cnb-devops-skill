@@ -38,6 +38,19 @@ AI 先形成一批具体材料，避免逐个猜测、重复申请：
 
 运行秘密通过已有管理员安全通道写入受保护文件，能在主机生成的值就在主机生成。TAT 正文、普通仓库和聊天不承载秘密；不新增凭据网页或传输服务。首次空库与接管现有数据必须显式区分，不能因为找不到历史回执就假定是空项目。
 
+### 首次安装运行依赖
+
+全新 Ubuntu 24.04 测试主机可使用 `host/bootstrap-host.py`：填写 `bootstrap-spec.json`，固定 PostgreSQL 16 / Redis 7 的 TCR 摘要及盘点得到的 APT 版本，`generate_env` 声明在主机生成的随机值。该预设安装缺失的 Docker/Compose，建立项目独立网络、数据库/用户和可选 Redis，运行秘密留在主机。已有资源必须属于同一安装记录；不接管预装 Caddy。当前新增入口仍待云端实测。
+
+```sh
+python3 "$HOST_BUNDLE_DIR/host/bootstrap-host.py" \
+  --bundle-dir "$HOST_BUNDLE_DIR" --lock-sha256 "$REVIEWED_ARTIFACT_LOCK_SHA256" \
+  --spec "$BOOTSTRAP_SPEC" --spec-sha256 "$REVIEWED_BOOTSTRAP_SPEC_SHA256"
+# 在已授权管理员通道加 sudo 和 --apply 执行；输出受保护 runtime.env 的路径，供下一步使用。
+```
+
+持久目录使用服务 `mounts`，source 仅填写项目目录下的一层名称；原生宿主 Caddy 使用 `loopback_port`，服务必须声明唯一 `expose` 端口，仅绑定 `127.0.0.1`。管理员一次配置域名路由，普通发布不修改入口。OCR 等慢启动服务可配置 `healthcheck.start_period` 和 `host.startup_timeout_seconds`（默认 300 秒，最高 1200 秒）。
+
 ### 安装本项目的固定发布入口
 
 在主机条件已满足、项目数据库确认为空的测试环境，AI 通过已授权管理员通道传入生成的 vendor 目录及私密运行配置。先预览，再按范围安装；工件清单摘要从本机审阅结果单独核对。

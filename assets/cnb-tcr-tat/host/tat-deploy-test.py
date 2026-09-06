@@ -146,7 +146,7 @@ def validate_host_policy(model):
                 "release_home", "app_dir", "docker_config", "recovery_root", "compose_sha256",
                 "services", "networks", "required_env", "database", "migration",
                 "availability_probes", "identity_probes"}
-    optional = {"redis", "proxy_container"}
+    optional = {"redis", "proxy_container", "startup_timeout_seconds"}
 
     def require(condition):
         if not condition:
@@ -172,6 +172,8 @@ def validate_host_policy(model):
 
     try:
         require(type(model) is dict and required <= set(model) <= required | optional)
+        require(type(model.get("startup_timeout_seconds", 300)) is int
+                and 1 <= model.get("startup_timeout_seconds", 300) <= 1200)
         require(model["schema"] == "cnb-devops-host-policy/v1" and model["environment"] == "test")
         require(name(model["project"]) and type(model["controller_id"]) is str
                 and re.fullmatch(r"[a-z][a-z0-9-]{0,95}", model["controller_id"]))
@@ -189,11 +191,20 @@ def validate_host_policy(model):
                 and len(set(env_keys)) == len(env_keys))
         services = model["services"]
         require(type(services) is dict and 1 <= len(services) <= 16 and all(name(n) for n in services))
-        image_keys, containers, repositories = set(), set(), set()
+        image_keys, containers, repositories, published_ports = set(), set(), set(), set()
         for service in services.values():
-            require(type(service) is dict and set(service) == {
+            fields = {
                 "image_repository", "image_env", "container", "networks", "environment",
-                "environment_refs", "runtime_env", "healthcheck", "mounts"})
+                "environment_refs", "runtime_env", "healthcheck", "mounts"}
+            require(type(service) is dict and fields <= set(service) <= fields | {"loopback_port"})
+            if "loopback_port" in service:
+                port = service["loopback_port"]
+                require(type(port) is dict and set(port) == {"host_ip", "protocol", "published", "target"}
+                        and port["host_ip"] == "127.0.0.1" and port["protocol"] == "tcp"
+                        and type(port["published"]) is int and 1024 <= port["published"] <= 65535
+                        and type(port["target"]) is int and 1 <= port["target"] <= 65535
+                        and port["published"] not in published_ports)
+                published_ports.add(port["published"])
             repository = service["image_repository"]
             require(type(repository) is str and re.fullmatch(
                 r"[a-z0-9][a-z0-9.-]*(?::[0-9]{1,5})?/[a-z0-9][a-z0-9._/-]{0,240}", repository))
@@ -249,15 +260,19 @@ def validate_host_policy(model):
             probe_urls.add(probe["url"])
         if model.get("redis") is not None:
             redis = model["redis"]
-            require(type(redis) is dict and set(redis) == {
-                "url_env", "host", "port", "database", "prefix_env", "prefix", "container"})
-            require(redis["url_env"] in env_keys and redis["prefix_env"] in env_keys
-                    and env_key(redis["url_env"]) and env_key(redis["prefix_env"]))
+            fields = {"url_env", "host", "port", "database", "container"}
+            require(type(redis) is dict and set(redis) in (fields, fields | {"prefix_env", "prefix"}))
+            require(redis["url_env"] in env_keys and env_key(redis["url_env"]))
             require(name(redis["host"]) and name(redis["container"])
                     and type(redis["port"]) is int and 1 <= redis["port"] <= 65535
-                    and type(redis["database"]) is int and 0 <= redis["database"] <= 15
-                    and type(redis["prefix"]) is str and redis["prefix"].startswith(model["project"] + "-test:")
-                    and re.fullmatch(r"[a-z0-9:_-]{1,128}", redis["prefix"]))
+                    and type(redis["database"]) is int and 0 <= redis["database"] <= 15)
+            if "prefix_env" in redis:
+                require(redis["prefix_env"] in env_keys and env_key(redis["prefix_env"])
+                        and type(redis["prefix"]) is str and redis["prefix"].startswith(model["project"] + "-test:")
+                        and re.fullmatch(r"[a-z0-9:_-]{1,128}", redis["prefix"]))
+            else:
+                require(redis["host"] == redis["container"] == model["project"] + "-test-redis"
+                        and redis["database"] == 0)
         if model.get("proxy_container") is not None:
             require(name(model["proxy_container"]))
         # Detach validated input from the caller so later mutation cannot change release authority.
@@ -640,7 +655,7 @@ def validate_compose_model(model, images, runtime_values):
     for key in ("volumes", "secrets", "configs"):
         if model.get(key) not in (None, {}):
             raise DeploymentError("compose_contract_top_resource")
-    forbidden = ("ports", "devices", "device_cgroup_rules", "cap_add", "cap_drop", "security_opt",
+    forbidden = ("devices", "device_cgroup_rules", "cap_add", "cap_drop", "security_opt",
                  "sysctls", "extra_hosts", "volumes_from", "group_add", "ulimits", "runtime", "pid",
                  "ipc", "uts", "userns_mode", "cgroup", "cgroup_parent", "build", "secrets", "configs", "env_file")
     for name in SERVICES:
@@ -654,6 +669,16 @@ def validate_compose_model(model, images, runtime_values):
         for key in forbidden:
             if service.get(key) not in (None, False, [], {}):
                 raise DeploymentError("compose_contract_privilege")
+        ports = service.get("ports") or []
+        if "loopback_port" in approved:
+            expected_port = dict(approved["loopback_port"], published=str(approved["loopback_port"]["published"]))
+            if type(ports) is not list or len(ports) != 1 or type(ports[0]) is not dict:
+                raise DeploymentError("compose_contract_ports")
+            actual_port = dict(ports[0])
+            if actual_port.pop("mode", "ingress") != "ingress" or actual_port != expected_port:
+                raise DeploymentError("compose_contract_ports")
+        elif ports:
+            raise DeploymentError("compose_contract_ports")
         actual_networks = service.get("networks", {})
         if type(actual_networks) not in (dict, list) or set(actual_networks) != set(approved["networks"]):
             raise DeploymentError("compose_contract_service_network")
@@ -2644,7 +2669,8 @@ def _preflight(env_text, images, candidate_compose, candidate_env):
     parse_test_database_url(values[POLICY["database"]["url_env"]])
     if POLICY.get("redis"):
         parse_test_redis_url(values[POLICY["redis"]["url_env"]])
-        validate_test_redis_prefix(values[POLICY["redis"]["prefix_env"]])
+        if "prefix_env" in POLICY["redis"]:
+            validate_test_redis_prefix(values[POLICY["redis"]["prefix_env"]])
     for service in SERVICES:
         validate_image(service, images[service])
     _run(_docker_prefix() + ["info", "--format", "{{json .ServerVersion}}"])
@@ -2799,8 +2825,16 @@ def _backup_database_at(directory_fd, name, uid, gid):
         os.close(descriptor)
 
 
+def validate_runtime_loopback(service, ports):
+    port = POLICY["services"][service]["loopback_port"]
+    expected = {str(port["target"]) + "/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(port["published"])}]}
+    # Docker may include unbound image EXPOSE entries with null values.
+    if type(ports) is not dict or {key: value for key, value in ports.items() if value is not None} != expected:
+        raise DeploymentError("runtime_loopback_mismatch")
+
+
 def _wait_for_runtime(images):
-    deadline = time.monotonic() + 300
+    deadline = time.monotonic() + POLICY.get("startup_timeout_seconds", 300)
     while time.monotonic() < deadline:
         ready = True
         for service in SERVICES:
@@ -2817,6 +2851,9 @@ def _wait_for_runtime(images):
                 if running != b"true" or json.loads(configured_image) != images[service]:
                     ready = False
                     break
+                if "loopback_port" in POLICY["services"][service]:
+                    ports = _run(_docker_prefix() + ["inspect", "--format", "{{json .NetworkSettings.Ports}}", container], timeout=5)
+                    validate_runtime_loopback(service, json.loads(ports.decode("utf-8", "strict")))
                 if POLICY["services"][service]["healthcheck"]:
                     health = _run(
                         _docker_prefix()
