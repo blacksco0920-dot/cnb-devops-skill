@@ -2,6 +2,8 @@ import copy
 import importlib.util
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -154,6 +156,18 @@ class NativeCaddyTests(unittest.TestCase):
                 self.run_config(True)
             self.assertFalse(self.site.exists())
 
+    def test_only_automatic_stdin_file_server_hide_is_corrected(self):
+        model = {'handler': 'subroute', 'routes': [{'handle': [
+            {'handler': 'file_server', 'hide': ['./-', 'private.txt'], 'browse': {}},
+            {'handler': 'other', 'hide': ['./-']},
+            {'handler': 'file_server', 'hide': ['unexpected-file']},
+        ]}]}
+        with patch.object(self.m, 'command', return_value=json.dumps(model).encode()):
+            actual = self.m.adapt(self.original)
+        expected = copy.deepcopy(model)
+        expected['routes'][0]['handle'][0]['hide'][0] = str(self.config)
+        self.assertEqual(actual, expected)
+
     def test_bad_domain_or_missing_loopback_mapping_is_rejected(self):
         for key, value in [('url', 'https://*.example.com/release.json'), ('url', 'https://user@api.example.com/'),
                            ('url', 'http://api.example.com/'), ('service', 'unknown')]:
@@ -173,6 +187,32 @@ class NativeCaddyTests(unittest.TestCase):
         with self.assertRaises(self.m.CaddyError):
             self.run_config(True)
         self.assertEqual(self.config.read_bytes(), self.original)
+
+
+@unittest.skipUnless(os.environ.get('CNB_CADDY_TEST_IMAGE'), 'requires an explicitly selected local Caddy image')
+class RealCaddyAdaptTests(unittest.TestCase):
+    def test_default_file_server_stdin_matches_real_named_file_adapter(self):
+        spec = importlib.util.spec_from_file_location('native_caddy_real', SCRIPT)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        docker = shutil.which('docker') or '/usr/local/bin/docker'
+        image = os.environ['CNB_CADDY_TEST_IMAGE']
+        with tempfile.TemporaryDirectory() as td:
+            config = Path(td) / 'Caddyfile'
+            for suffix in [b'file_server', b'file_server {\n hide private.txt\n }']:
+                raw = b':80 {\n root * /usr/share/caddy\n ' + suffix + b'\n}\n'
+                config.write_bytes(raw)
+                prefix = [docker, 'run', '--rm', '--pull=never', '--network', 'none',
+                          '--workdir', '/etc/caddy', '--mount',
+                          'type=bind,source=' + str(config) + ',target=/etc/caddy/Caddyfile,readonly',
+                          '-i', image, 'caddy']
+                def command(args, data=None):
+                    return subprocess.run(prefix + args[1:], input=data, stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, timeout=30, check=True).stdout
+                named = json.loads(command([helper.CADDY, 'adapt', '--config', '/etc/caddy/Caddyfile',
+                                            '--adapter', 'caddyfile']))
+                with patch.object(helper, 'command', side_effect=command):
+                    self.assertEqual(helper.adapt(raw), named)
 
 
 if __name__ == '__main__':

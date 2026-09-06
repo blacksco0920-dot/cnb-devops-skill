@@ -22,7 +22,7 @@
     "dependencies/package.json": "b52f23c648264c0afae3163f6bf0c3f5ccf573331103adf3c0bbf300c9d38b3f",
     "host/README.md": "85a4f925bacdce8c6781715bff4b9d4b146a014f178e9257881b1b448d2021bd",
     "host/bootstrap-host.py": "3efc0d995e5e681c92959c8583ec3cea7676900e073598a700858e3ce89ab193",
-    "host/configure-native-caddy.py": "fd280046bab2628b27846369e79c094349544b7d9844cc9142c4ee8949c4a447",
+    "host/configure-native-caddy.py": "40d327f3acc00e162049787cf7b020029818c496ea41854f09181913f7251628",
     "host/install-project.py": "effd1889a5410f7073a016f3739dfb1d950f570cf60b8a7ca2e65a8d20adefed",
     "host/tat-command.sh.tmpl": "c6b310a7af1abd85bc834393595b82dab16481a5fbcae0f1a9a04a8f8ce06e9d",
     "host/tat-deploy-test.py": "c18f2d06551c81e72051f9d47d271a4e9bcad2e40ca1819a3f108f2ad10ceb1b",

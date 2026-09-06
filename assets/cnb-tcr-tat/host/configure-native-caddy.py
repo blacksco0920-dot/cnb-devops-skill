@@ -152,7 +152,20 @@ def running_config():
 
 
 def adapt(raw):
-    return strict_json(command([CADDY, 'adapt', '--config', '-', '--adapter', 'caddyfile'], raw))
+    model = strict_json(command([CADDY, 'adapt', '--config', '-', '--adapter', 'caddyfile'], raw))
+    def filename(value):
+        if isinstance(value, dict):
+            # Caddy 自动隐藏配置文件；stdin 的虚拟文件名须对应已固定的实际主配置。
+            hides = value.get('hide')
+            if value.get('handler') == 'file_server' and isinstance(hides, list) and './-' in hides:
+                hides[hides.index('./-')] = str(ROOT / 'etc/caddy/Caddyfile')
+            for item in value.values():
+                filename(item)
+        elif isinstance(value, list):
+            for item in value:
+                filename(item)
+    filename(model)
+    return model
 
 
 def check_conflicts(config, domains):
