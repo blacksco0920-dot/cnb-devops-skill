@@ -26,7 +26,7 @@ Last verified: 2026-09-07
 
 AI 先用已有事实准备可审阅的材料，完成当前授权内可执行的检查，再给人一个必要动作：明确页面、动作、范围和完成标志。账号或目标绑定缺失时，只请求能继续准备的最小前提；不让人编写技术回执，也不让人把敏感内容发到聊天。AI 核验实际结果后更新项目索引；未确认的草稿保持 pending，不编造授权、绑定或成功状态。
 
-账号初始化优先走[官方登录与 API 入口](api-onboarding.md)。仓库、构建开关、固定 TAT 及云身份权限由 AI 自动配置并回读；下文控制台步骤仅在相应 API 不可用或组织要求时作为具体操作参考，不要求用户照着配置。本人登录授权、验证码与 Secret 的官方 Web 保存仍按实际缺口交接。
+账号初始化优先走[官方登录与 API 入口](api-onboarding.md)。AI 自动配置固定 TAT 与云身份权限；仓库与构建设置按实际写权限处理。CNB 默认 CLI 创建缺权时，AI 将必要创建/设置与 Secret 保存集中准备，按准确页面交接，不让用户学习 API 或反复登录。下文控制台细节仅在所选通道不可用或组织要求时参考。
 
 区分 AI 权限确认、云控制台登录/验证码/本人验证，以及候选 Tag 部署页审批。AI 权限问题直接说明操作和回复方式；问题卡片不可见时用普通文字重述，不重启接入，已有明确且有效的授权不重复询问。候选审批必须指出具体 Tag 和页面；项目要求的机器授权记录由 AI 先准备并核验，按钮可见不代表执行条件已满足。
 
@@ -681,13 +681,16 @@ success.
 
 ## CNB Secret repository operation
 
-AI handles repository creation, configuration preparation and verification within
-the approved scope. The Secret maintainer completes the required audited Web
-save; browser automation is optional, not a prerequisite.
+AI handles configuration preparation and verification within the approved scope.
+Repository creation uses an available authorized channel; the default CLI login
+has a known scope limit. The Secret maintainer completes the audited Web save;
+browser automation is optional, not a prerequisite.
 
-1. AI creates or selects the intended **Secret repository** through the
-   [public creation API](cnb-openapi.md#secret-repositories), verifies its type
-   and target organization, and prepares the exact file/page links.
+1. AI selects an existing **Secret repository**, or creates it through an
+   authorized [public API](cnb-openapi.md#secret-repositories). If the current
+   channel lacks creation scope, prepare the exact name, type and organization
+   for the official Web creation, combined with the following save handoff.
+   Verify metadata through the organization listing and prepare exact file links.
 2. AI classifies the consuming job and prepares the narrow repository/event/branch
    rules. Script/commands tasks omit `allow_images`; plugin tasks constrain the
    pinned image and use the applicable variable-loading mechanism.

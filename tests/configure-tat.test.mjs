@@ -125,6 +125,36 @@ test('parameter readback permits only the declared name, INVALID value and empty
   }
 });
 
+test('API conf-only defaults are verified after create and on reuse with the same binding metadata', async t => {
+  const actual = remote({ DefaultParameters: '' });
+  const created = await module.configureTat({ spec: spec(), apply: true,
+    client: clientWith([response([]), response([actual]), response([actual])]),
+    output: path.join(folder(t), 'binding.json') });
+  const reusedClient = clientWith([response([actual])]);
+  const reused = await module.configureTat({ spec: spec(), apply: true, client: reusedClient,
+    output: path.join(folder(t), 'binding.json') });
+  assert.equal(created.status, 'verified');
+  assert.deepEqual(reused, created);
+  assert.deepEqual(reused.metadata.DefaultParameters, { release_request_b64url: 'INVALID' });
+  const preview = await module.configureTat({ spec: spec() });
+  assert.deepEqual(reused.metadata, preview.metadata);
+  assert.equal(reused.command_metadata_sha256, preview.command_metadata_sha256);
+  assert.equal(reusedClient.requests.length, 1);
+});
+
+test('empty legacy defaults cannot hide missing, duplicate, extra or changed confs', async t => {
+  const expected = { ParameterName: 'release_request_b64url', ParameterValue: 'INVALID', ParameterDescription: '' };
+  for (const confs of [undefined, null, [], [expected, expected], [expected, { ...expected, ParameterName: 'extra' }],
+    [{ ...expected, ParameterValue: 'live-request' }], [{ ...expected, ParameterDescription: 'changed' }],
+    [{ ...expected, Unknown: '' }]]) {
+    const output = path.join(folder(t), 'binding.json');
+    await assert.rejects(module.configureTat({ spec: spec(), apply: true,
+      client: clientWith([response([remote({ DefaultParameters: '', DefaultParameterConfs: confs })])]), output }),
+    { message: 'TAT_COMMAND_DRIFT' });
+    assert.equal(fs.existsSync(output), false);
+  }
+});
+
 test('new version sends exact Base64/API metadata then verifies ID and unique name', async t => {
   const input = spec();
   input.version = '0.2.0';

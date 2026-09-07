@@ -41,6 +41,8 @@ AI 检查官方存储目录与文件权限（目录 0700、凭据 0600），关�
 
 ## 2．自动准备 CNB 仓库和构建设置
 
+**先区分登录与写权限。** 2026-09-07 实测，官方 CLI `1.15.18` 默认 `cnb_cli` 登录可读取本次组织和已有仓库，但创建返回 `403/10023`，缺少 `group-resource:rw`。该版本没有 `login --scope`；重复登录、刷新或账号已经是 Owner 都不能据此获得缺失权限。创建和构建设置写入不能仅凭登录成功判为可用。
+
 AI 从已选组织与项目配置生成如下非秘密 spec，业务仓库明确 `private`、密钥仓库明确 `secret`。首次准备可暂不开启自动触发，Secret 与主机就绪后再将所需开关设为 true；保留其他开关现状。
 
 ```json
@@ -60,9 +62,13 @@ node "$SKILL_DIR/scripts/configure-cnb.mjs" \
 # 已授权且预览符合本项目范围时，用相同输入加 --apply。
 ```
 
-预览只读；应用前核对所有目标，再创建缺失仓库或更新明确请求的设置并回读。已有正确资源复用；类型、归属或权限不符即停止。持久状态在创建前落盘，不确定结果先回查，不重复 POST。始终保留同一 `cnb-state.json`；`CREATE_RECONCILIATION_REQUIRED` 需要核对云端结果，不能删状态重试。进程中断遗留 `.lock` 时，AI 先确认原进程已结束，再清理锁，保留状态文件。
+预览只读；应用前核对所有目标，再在权限允许时创建缺失仓库或更新明确请求的设置并回读。已有正确资源复用；类型、归属或权限不符即停止。Secret 的单仓库详情接口拒绝 Token 访问，配置器改用父组织仓库列表完整分页核对路径、类型和 ID，并明确记录父组织 Owner/Master 权限依据；不把列表返回的 `access: Unknown` 伪装成仓库角色。
 
-执行器核对官方登录的主机与凭据文件权限，使用 CLI 自己的刷新，不使用意外继承的 CI/其他助手 token。组织须已经存在；全新账号没有组织时，AI 在既有创建授权内用官方 `organizations create-organization --path <已选组织路径>` 对应的公开 `POST /groups` 准备明确选定的组织并回读，然后继续。先检查所用 CLI 的 `--help` 与角色要求，不让用户学习组织 API。Secret 文件内容不在此脚本的写入范围。
+持久状态在创建前落盘，不确定结果先回查，不重复 POST。明确的平台拒绝且重新确认不存在时，配置器才解除本次 pending；超时、5xx 或回查失败仍保留。始终使用同一 `cnb-state.json`；`CREATE_RECONCILIATION_REQUIRED` 需要核对云端结果，不能删状态重试。进程中断遗留 `.lock` 时，AI 先确认原进程已结束，再清理锁，保留状态文件。
+
+执行器核对官方登录的主机与凭据文件权限，使用 CLI 自己的刷新，不使用意外继承的 CI/其他助手 token。组织须已经存在；公开 `POST /groups` 可创建组织，但也需要实际写权限，不能假定默认登录已具备。
+
+出现 `CNB_SCOPE_REQUIRED` 时，记录 `required_scopes` 与失败步骤，停止相同权限下的写重试。有已批准且具备精确权限的组织集成时可使用其已验收通道；本配置器不接收 PAT 或其他 OAuth client。否则 AI 准备所选组织的官方仓库页、准确名称/类型及所需构建开关，把缺失的创建/设置与 Secret 保存集中交接，随后用配置器重新回读。不要让用户理解 scope、重登碰运气或为每个项目申请 OAuth 应用；[自建 OAuth 应用](https://docs.cnb.cool/zh/oauth/developer.html)需要平台审核，不是当前的即用方案。Secret 内容仍仅走官方 Web 保存。
 
 ## 3．接通固定 TAT 与专用云身份
 
@@ -96,7 +102,7 @@ node "$SKILL_DIR/scripts/configure-cam.mjs" --spec "$PRIVATE_DIR/cam-spec.json" 
 
 ## 4．把剩下的动作一次准备好
 
-AI 汇总所需 Secret 文件、变量名、允许引用的仓库/ref/event、准确页面和安全存储位置。按[Secret 保存交接](human-handoffs.md#cnb-secret-repository-operation)让人完成官方 Web 保存，再做无害引用验证；人不手写 YAML、不设计权限、不整理回执。仓库创建、构建开关、TAT 脚本与专用身份权限不交给用户逐项点控制台。
+AI 汇总所需 Secret 文件、变量名、允许引用的仓库/ref/event、准确页面和安全存储位置。按[Secret 保存交接](human-handoffs.md#cnb-secret-repository-operation)让人完成官方 Web 保存，再做无害引用验证；人不手写 YAML、不设计权限、不整理回执。仅把已确认无法通过当前授权通道完成的 CNB 创建/设置合并到这次交接；TAT 脚本与专用身份权限由 AI 配置。
 
 仅凭生成文件或 API 成功不能报告流水线完成。当前进度记录：已发现/创建的资源及私密回执位置、Secret 是否已保存和验收、目标就绪状态、凭据到期时间、下一步；用户动作次数与实际等待时间分开记录。之后只继续失败或未完成阶段。
 
@@ -106,4 +112,4 @@ AI 汇总所需 Secret 文件、变量名、允许引用的仓库/ref/event、�
 
 这只是临时凭据兼容，**尚未把 OIDC 设为新项目默认**。正式接入还需固定官方插件版本/镜像摘要，核验账号已启用联邦，建立环境专用角色和精确 subject 信任，并分别验收测试 push、生产就绪及同候选生产部署。参见[已核实的 OIDC 条件](../docs/history/2026-09-07-api-onboarding.md#进一步减少长期云密钥oidc)。现有 Secret、审批、镜像拉取身份和生产签名私钥的职责保持独立。
 
-接口依据：[CNB 官方 CLI](https://docs.cnb.cool/zh/develops/cnb-cli.html)、[CNB Swagger](https://api.cnb.cool/swagger.json)、[腾讯云 CLI 登录](https://cloud.tencent.com/document/product/440/111345)、[官方 OAuth 实现](https://github.com/TencentCloud/tencentcloud-cli/blob/master/tccli/oauth.py)。本入口的本机验证不替代新账号和新服务器的实际接入验收。
+接口依据：[CNB 官方 CLI](https://docs.cnb.cool/zh/develops/cnb-cli.html)、[CNB Swagger](https://api.cnb.cool/swagger.json)、[腾讯云 CLI 登录](https://cloud.tencent.com/document/product/440/111345)、[官方 OAuth 实现](https://github.com/TencentCloud/tencentcloud-cli/blob/master/tccli/oauth.py)。[本轮真实 API 验证](../docs/history/2026-09-07-api-live-validation.md)覆盖登录及部分配置，不替代完整的新账号接入和部署验收。

@@ -66,6 +66,35 @@ test('TAT exact command and result readback yields verified receipt',async()=>{
  const result=await runTatRelease({client,request:renderReleaseRequest(values,config),config,binding,now:()=>Date.parse('2026-09-06T00:00:00Z')});
  assert.equal(result.invocationId,'inv-example123');assert.deepEqual(result.receipt,receipt);
 });
+test('TAT accepts the real conf-only Saved Command response before invocation',async()=>{
+ for(const legacy of ['',JSON.stringify({release_request_b64url:'INVALID'})]) {
+  const {config,values,binding,receipt}=fixture(['web']);const client=clientFixture(receipt,binding);
+  const describe=client.DescribeCommands;client.DescribeCommands=async()=>{const response=await describe();Object.assign(response.CommandSet[0],{
+   DefaultParameters:legacy,DefaultParameterConfs:[{ParameterName:'release_request_b64url',ParameterValue:'INVALID',ParameterDescription:''}]});return response;};
+  const result=await runTatRelease({client,request:renderReleaseRequest(values,config),config,binding});
+  assert.deepEqual(result.receipt,receipt);assert.equal(client.invoked,1);
+ }
+});
+test('TAT rejects conflicting or extra Saved Command defaults before invocation',async()=>{
+ const conf={ParameterName:'release_request_b64url',ParameterValue:'INVALID',ParameterDescription:''};
+ const invalidConfs=[undefined,null,[],[conf,conf],[conf,{...conf,ParameterName:'extra'}],
+  [{...conf,ParameterValue:'OTHER'}],[{...conf,ParameterDescription:'changed'}],[{...conf,Unknown:''}],{}];
+ for(const legacy of ['',JSON.stringify({release_request_b64url:'INVALID'})]) {
+  for(const confs of invalidConfs) {
+   if(legacy && (confs==null || (Array.isArray(confs)&&confs.length===0)))continue;
+   const {config,values,binding,receipt}=fixture(['web']);const client=clientFixture(receipt,binding);
+   const describe=client.DescribeCommands;client.DescribeCommands=async()=>{const response=await describe();Object.assign(response.CommandSet[0],{DefaultParameters:legacy,DefaultParameterConfs:confs});return response;};
+   await assert.rejects(runTatRelease({client,request:renderReleaseRequest(values,config),config,binding}),/saved TAT command configuration is invalid/);
+   assert.equal(client.invoked,0);
+  }
+ }
+ for(const legacy of ['{"release_request_b64url":"OTHER"}','{"release_request_b64url":"INVALID","extra":"INVALID"}',null,undefined]) {
+  const {config,values,binding,receipt}=fixture(['web']);const client=clientFixture(receipt,binding);
+  const describe=client.DescribeCommands;client.DescribeCommands=async()=>{const response=await describe();Object.assign(response.CommandSet[0],{DefaultParameters:legacy,DefaultParameterConfs:[conf]});return response;};
+  await assert.rejects(runTatRelease({client,request:renderReleaseRequest(values,config),config,binding}),/saved TAT command configuration is invalid/);
+  assert.equal(client.invoked,0);
+ }
+});
 test('TAT task-only client waits through delivery states without DescribeInvocations permission',async()=>{
  const {config,values,binding,receipt}=fixture(['web']);const client=clientFixture(receipt,binding);
  delete client.DescribeInvocations;

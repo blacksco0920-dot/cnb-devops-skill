@@ -26,6 +26,14 @@ debug logging off. The [repository setup executor](api-onboarding.md) uses this
 login and refresh path. Other bundle consumers still use their declared
 credential inputs; they do not implicitly read the CLI login store.
 
+Live validation on 2026-09-07 found that CLI 1.15.18's default `cnb_cli`
+authorization could read the selected resources but repository creation failed
+with `403`, `errcode: 10023`, missing `group-resource:rw`, despite an Owner
+organization role. This CLI has no login `--scope` option. Do not retry login
+as a permission fix. The executor reports `CNB_SCOPE_REQUIRED` with allowlisted
+`required_scopes`; use the [onboarding fallback](api-onboarding.md) and retain
+successful resources. Build-setting PUT was not exercised in this validation.
+
 If a required integration still needs a PAT, use **Personal settings → Access
 token → Add access token** with only its required scope. Never place a token in
 a URL, Git remote, command argument, log, example value, ordinary repository,
@@ -71,8 +79,15 @@ itself is not safe promotion and must never be described as one.
 Separate repository creation from Secret content editing. The public API
 `POST /{slug}/-/repos` supports `visibility: "secret"` with `group-resource:rw`
 and a permitted organization role. Explicitly set the visibility; never rely on
-the ordinary public-repository default. In an authorized setup, AI can create
-and re-read this repository without asking the person to use the creation page.
+the ordinary public-repository default. The default CLI login has not passed
+this write operation; an API schema is not proof of sufficient credentials.
+
+The single-repository GET rejects Token access to Secret repositories. The
+public `GET /{slug}/-/repos` organization listing returned their metadata in
+live validation. Complete the direct-child listing, match the exact path,
+type and ID, and verify the parent organization role. Listing `access: Unknown`
+does not establish a repository role; record the parent authority explicitly.
+This metadata route does not permit Secret content reads or writes.
 
 Secret content editing still follows CNB's audited Web flow. The public Swagger
 checked on 2026-09-07 does not document a complete supported Secret file write

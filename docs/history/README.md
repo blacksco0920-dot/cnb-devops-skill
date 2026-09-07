@@ -19,6 +19,7 @@
 | [完整演练](2026-09-07-complete-rehearsal.md) | 固定版本、指定环境的真实部署与恢复结果 | 任意项目、当前新生成工件或所有业务功能的验收 |
 | [早期可复用包测试](2026-09-06-bundle-staging-rehearsal.md) | 早期包的测试部署和候选路径 | 生产、完整业务与恢复验收 |
 | [早期项目专用演练](2026-09-06-live-rehearsal.md) | 专用实现的历史结果和问题 | 当前标准执行包的成功证据或操作入口 |
+| [官方登录与 API 实测](2026-09-07-api-live-validation.md) | 官方登录、已有仓库识别、TAT/CAM 配置与复用；CNB 创建缺权的实际边界 | 新账号完整自动初始化、新版运行包的部署与恢复验收 |
 | [包内检查](../../tests/)与[行为场景](../../tests/skill-scenarios.md) | 配置生成、执行接口和门禁回归；AI 行为的评估范围 | 实际云端部署、真实业务或公开推广的耗时承诺 |
 | [工件清单](../../assets/cnb-tcr-tat/bundle.json) | 版本、文件摘要及其关联的验证记录 | 更新文档后自动确认新工件或升级现有主机 |
 
@@ -27,6 +28,7 @@
 ## 来源与维护记录
 
 - [公开 API 与低操作成本接入研究及首版实施](2026-09-07-api-onboarding.md)：自动初始化、官方登录与临时凭据的本机验证；OIDC 和新账号完整接入尚未云端验收。
+- [后续真实 API 验证](2026-09-07-api-live-validation.md)：腾讯云配置通过，CNB 默认登录未通过创建，已修正读取和错误续接行为。
 
 - [来源与许可](../../assets/cnb-tcr-tat/dependencies/SOURCES.md)、[第三方依赖](../../assets/cnb-tcr-tat/dependencies/THIRD_PARTY.md)：保留来源项目名称、源文件摘要、复用行为与许可限制；这些是追溯信息，不是使用依赖。
 - [首轮优化](2026-09-05-first-optimization.md)、[项目接入整理](2026-09-05-project-adoption.md)、[早期可用性评估](2026-09-05-open-source-usability.md)：记录当时的决策与验证边界。

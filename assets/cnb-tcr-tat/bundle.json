@@ -20,7 +20,7 @@
     "ci/release-identity.mjs": "1b3b115cc84d7c09d340e2ed35fc2276f823b376ff9e4f473ee59921885b705b",
     "ci/release-request.mjs": "3ab178e2b43158b8b811e283d1f6b13922222e08595503c127adfa5738a53711",
     "ci/run-production-deploy.mjs": "cdd5cd2c1d05170bce2a14d6af71e52d9f8addf4cdb010b4be7f3b0185324c1d",
-    "ci/run-tat-release.mjs": "d0382b2a387930b2bce3a2272fe31108d897034d2892e633400068a32527a7d3",
+    "ci/run-tat-release.mjs": "597b30d31fb55a02784474b338ad99f9fd375295916a423134e1438ca64afc0d",
     "ci/strict-json.mjs": "edc1f147ba4f9fb07a8d2f848e7360a1751563394e5d2c60af31125cf1fe7afe",
     "dependencies/SOURCES.md": "ec739a815c640a666d6d0faeb623bf989a5642a53f5e6851bdd5f3743eb1cd65",
     "dependencies/THIRD_PARTY.md": "1a64e8bd121e3241d119e6412d92c6e8f0e7e06b63f26dba107c68d660ddad62",
@@ -74,6 +74,7 @@
   "status": "local-preview",
   "validation": {
     "administrator_apt_lock_wait": "local checks passed for bounded 120-second dpkg install lock wait and fixed safe bootstrap failure codes; new helpers completed first-attempt setup on both clean round-3 hosts; actual lock-wait contention was not deliberately exercised and apt update lists-lock contention is not covered",
+    "api_onboarding": "2026-09-07: official CNB/Tencent logins, existing CNB metadata, and TAT/CAM configuration/reuse passed; default CNB CLI repository creation blocked by missing group-resource:rw; no new runtime deployment, key issuance or OIDC acceptance. See docs/history/2026-09-07-api-live-validation.md.",
     "clean_host_install": "round 3 first-attempt setup passed on both freshly reset Ubuntu 24.04 hosts without compatibility resume or retry; test apply 62.459 seconds and production 52.077 seconds",
     "cloud_evidence": {
       "accepted_installed_locks": {
@@ -131,5 +132,5 @@
     "production": "passed: immutable tested candidate, governed branch, fixed-TAT readiness, independently verified local Ed25519 approval, native owner approval, same-digest deployment, final annotation readback and synthetic business acceptance",
     "project_installation": "round 3 passed isolated empty test and production installation with generated and accepted locks equal; administrator-helper resume tested in round 1; active-version upgrade and a second project on shared hosts not tested"
   },
-  "version": "0.2.0-preview.2"
+  "version": "0.2.0-preview.3"
 }

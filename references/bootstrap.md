@@ -32,7 +32,7 @@ python3 "$SKILL_DIR/scripts/prepare-project.py" \
 
 ## 2．一次核对账号和主机
 
-新账号或权限缺口按[账号与 API 接入](api-onboarding.md)复用官方登录，自动准备仓库和构建设置；腾讯云临时会话导出的私密三元组可直接作为下述配置器的 `--credentials`。有效登录和成功资源不重复建立。
+新账号或权限缺口按[账号与 API 接入](api-onboarding.md)复用官方登录，核对仓库与构建设置。CNB 默认 CLI 的仓库创建权限限制按该入口处理；腾讯云临时会话导出的私密三元组可直接作为下述配置器的 `--credentials`。有效登录和成功资源不重复建立。
 
 AI 先形成一批具体材料，避免逐个猜测、重复申请：
 
@@ -118,7 +118,7 @@ node "$SKILL_DIR/scripts/configure-tat.mjs" \
 ```
 
 工具先核对目标地域的实际 CVM/Lighthouse 实例运行状态与 Linux TAT Agent 在线，再 Describe 命令：同版本同内容复用，不一致停止；不存在才 Create，再回读内容和全部相关元数据。初始化身份需有对应实例及 Agent 的只读查询权限。创建结果不确定时不重试写入；下一次先查询。输出文件不覆盖已有文件，重查时使用新的证据文件名。`target_verified` 仅指云实例和 Agent；绑定中的三项摘要仍是**预期工件**，命令配置成功不等于主机已安装或部署成功。
-模板显式约束唯一参数 `release_request_b64url=INVALID` 及空描述；按[官方 CreateCommand 接口](https://cloud.tencent.com/document/api/1340/52684)的互斥要求，创建只发送 `DefaultParameterConfs`，回读仍精确校验它与规范 `DefaultParameters`，额外参数、默认值或描述变化均拒绝。
+模板显式约束唯一参数 `release_request_b64url=INVALID` 及空描述；按[官方 CreateCommand 接口](https://cloud.tencent.com/document/api/1340/52684)的互斥要求，创建只发送 `DefaultParameterConfs`。真实回读可能将旧字段 `DefaultParameters` 留为空字符串：配置器接受它与精确匹配的唯一 conf，或与 conf 一致的规范旧字段；发布执行器也兼容只有规范旧字段的历史命令。额外参数、冲突默认值或描述变化仍拒绝。
 
 ## 4．人只完成必须的控制台步骤
 

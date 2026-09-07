@@ -84,6 +84,15 @@ function validateSavedCommand(response, binding) {
   if(typeof encoded !== 'string') fail('saved TAT command content is invalid');
   content=Buffer.from(encoded,'base64');
   if(content.length === 0 || content.length>48*1024 || content.includes(0) || content.toString('base64')!==encoded || createHash('sha256').update(content).digest('hex')!==binding.command_sha256) fail('saved TAT command content hash mismatch');
+  const confs=command.DefaultParameterConfs;
+  const conf=Array.isArray(confs)&&confs.length===1 ? confs[0] : undefined;
+  const validConfs=conf!==null&&typeof conf==='object'&&!Array.isArray(conf)&&
+    Object.keys(conf).sort().join(',')==='ParameterDescription,ParameterName,ParameterValue'&&
+    conf.ParameterName==='release_request_b64url'&&conf.ParameterValue==='INVALID'&&conf.ParameterDescription==='';
+  const absentConfs=confs==null||(Array.isArray(confs)&&confs.length===0);
+  // Accept the API's conf-only readback, while checking both representations when present.
+  const validDefaults=(command.DefaultParameters===JSON.stringify({release_request_b64url:'INVALID'})&&(absentConfs||validConfs))||
+    (command.DefaultParameters===''&&validConfs);
   if (
     response?.TotalCount !== 1 ||
     command.CommandId !== binding.command_id ||
@@ -91,7 +100,7 @@ function validateSavedCommand(response, binding) {
     command.WorkingDirectory !== binding.working_directory ||
     command.Timeout !== binding.timeout ||
     command.EnableParameter !== true ||
-    command.DefaultParameters !== JSON.stringify({ release_request_b64url: 'INVALID' }) ||
+    !validDefaults ||
     command.CreatedBy !== 'USER' ||
     command.Username !== binding.username ||
     (command.OutputCOSBucketUrl ?? '') !== '' ||

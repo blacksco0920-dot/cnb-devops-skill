@@ -17,6 +17,12 @@ function fixture() {
 test('production transport invokes once and attests executed request',async()=>{
   const f=fixture();const r=await runTatCommand(f.options);assert.deepEqual(r.receipt,{ready:true});assert.equal(f.invoked(),1);
 });
+test('production transport accepts the API conf-only parameter representation',async()=>{
+  const f=fixture(),describe=f.options.client.DescribeCommands;
+  f.options.client.DescribeCommands=async()=>{const response=await describe();Object.assign(response.CommandSet[0],{
+    DefaultParameters:'',DefaultParameterConfs:[{ParameterName:'release_request_b64url',ParameterValue:'INVALID',ParameterDescription:''}]});return response;};
+  const r=await runTatCommand(f.options);assert.deepEqual(r.receipt,{ready:true});assert.equal(f.invoked(),1);
+});
 test('administrator readiness verification only reads and never invokes',async()=>{
   const f=fixture();delete f.options.client.InvokeCommand;
   const r=await verifyTatInvocation({...f.options,invocationId:'inv-DEMO1234'});assert.deepEqual(r.receipt,{ready:true});assert.equal(f.invoked(),0);

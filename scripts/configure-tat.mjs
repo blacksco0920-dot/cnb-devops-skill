@@ -102,7 +102,11 @@ function verifyCommand(command, expected, id) {
   let defaults;
   try { defaults = command.DefaultParameters ? JSON.parse(command.DefaultParameters) : {}; }
   catch { fail('TAT_COMMAND_DRIFT'); }
-  if (expected.EnableParameter && command.DefaultParameters !== canonical(expected.DefaultParameters)) fail('TAT_COMMAND_DRIFT');
+  if (expected.EnableParameter && command.DefaultParameters !== canonical(expected.DefaultParameters)) {
+    // CreateCommand uses DefaultParameterConfs; DescribeCommands may leave the legacy string empty.
+    if (command.DefaultParameters !== '' || canonical(command.DefaultParameterConfs) !== canonical(expected.DefaultParameterConfs)) fail('TAT_COMMAND_DRIFT');
+    defaults = expected.DefaultParameters;
+  }
   const actual = { ...command, ContentSha256: hash(bytes), DefaultParameters: defaults };
   const wanted = metadata(expected);
   for (const key of Object.keys(wanted)) {

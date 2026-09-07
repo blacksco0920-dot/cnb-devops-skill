@@ -17,6 +17,7 @@ const execute = promisify(execFile);
 const VERSION = '1.15.18';
 const BUILD_KEYS = ['auto_trigger', 'auto_trigger_by_npc', 'cron_auto_trigger', 'forked_repo_auto_trigger'];
 const ADMIN = new Set(['Owner', 'Master']);
+const API_SCOPES = new Set(['group-resource:r', 'group-resource:rw', 'repo-basic-info:r', 'repo-manage:r', 'repo-manage:rw']);
 class CnbFailure extends Error {
   constructor(code) { super(code); this.code = code; }
 }
@@ -24,6 +25,13 @@ const fail = code => { throw new CnbFailure(code); };
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const only = (value, keys) => object(value) && Object.keys(value).every(key => keys.includes(key));
 const slugOK = slug => typeof slug === 'string' && slug.length <= 255 && /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)+$/.test(slug) && !slug.endsWith('.git');
+
+function requiredScopes(response) {
+  const prefix = "The token's authorization scope does not match this request. Missing required scopes: ";
+  if (response.status !== 403 || response.data?.errcode !== 10023 || typeof response.data.errmsg !== 'string' || !response.data.errmsg.startsWith(prefix)) return null;
+  const scopes = response.data.errmsg.slice(prefix.length).replace(/\.$/, '').split(',').map(scope => scope.trim());
+  return scopes.length && scopes.every(scope => API_SCOPES.has(scope)) ? [...new Set(scopes)] : null;
+}
 
 /** Inspect only the profile's destination metadata; credential use and refresh
  * remain inside the official CLI. CNB_API_ENDPOINT cannot override login_host.
@@ -84,7 +92,7 @@ export class CnbCliClient {
     if (typeof result?.stdout !== 'string') fail('CNB_CLI_RESPONSE_INVALID');
     return result.stdout;
   }
-  async request(args, { missing = false } = {}) {
+  async request(args, { missing = false, creating = false } = {}) {
     if (!this.checked) {
       if ((await this.invoke(['--version'])).trim() !== VERSION) fail('CNB_CLI_VERSION_MISMATCH');
       this.checked = true;
@@ -94,12 +102,24 @@ export class CnbCliClient {
     catch (error) { if (error instanceof CnbFailure) throw error; fail('CNB_CLI_RESPONSE_INVALID'); }
     if (!object(response) || !Number.isInteger(response.status) || response.status < 100 || response.status > 599 || !Object.hasOwn(response, 'data')) fail('CNB_CLI_RESPONSE_INVALID');
     if (missing && response.status === 404) return null;
-    if (response.status < 200 || response.status >= 300) fail(`CNB_HTTP_${response.status}`);
+    if (response.status < 200 || response.status >= 300) {
+      const scopes = requiredScopes(response);
+      const error = new CnbFailure(scopes ? 'CNB_SCOPE_REQUIRED' : `CNB_HTTP_${response.status}`);
+      if (scopes) error.required_scopes = scopes;
+      // Only standard CNB validation/auth rejection envelopes establish that POST
+      // was refused. Gateway text, timeouts, conflicts and 5xx remain uncertain.
+      error.rejectedCreate = creating && [400, 401, 403, 422].includes(response.status)
+        && object(response.data) && Number.isInteger(response.data.errcode) && response.data.errcode !== 0
+        && typeof response.data.errmsg === 'string' && response.data.errmsg.length > 0
+        && (!Object.hasOwn(response.data, 'errparam') || object(response.data.errparam));
+      throw error;
+    }
     return response.data;
   }
   getGroup(slug) { return this.request(['organizations', 'get-group', '--group', slug]); }
   getRepo(slug) { return this.request(['repositories', 'get-by-id', '--repo', slug], { missing: true }); }
-  createRepo(group, body) { return this.request(['repositories', 'create-repo', '--slug', group, '--data', JSON.stringify(body)]); }
+  listGroupRepos(group, page) { return this.request(['repositories', 'get-group-sub-repos', '--slug', group, '--descendant', 'sub', '--page', String(page), '--page-size', '100', '--order-by', 'slug_path']); }
+  createRepo(group, body) { return this.request(['repositories', 'create-repo', '--slug', group, '--data', JSON.stringify(body)], { creating: true }); }
   getBuildSettings(slug) { return this.request(['git-settings', 'get-pipeline-settings', '--repo', slug]); }
   putBuildSettings(slug, body) { return this.request(['git-settings', 'put-pipeline-settings', '--repo', slug, '--data', JSON.stringify(body)]); }
 }
@@ -150,11 +170,38 @@ export class FileJournal {
   }
 }
 
-function checkRepo(actual, desired) {
+function checkGroup(info, group) {
+  if (!object(info) || info.path !== group || info.freeze === true || !ADMIN.has(info.access_role)) fail('GROUP_PERMISSION_REQUIRED');
+}
+function checkRepo(actual, desired, group) {
   if (!object(actual) || actual.path !== desired.slug || typeof actual.id !== 'string' || !actual.id || actual.freeze === true) fail('REPOSITORY_IDENTITY_INVALID');
   if (actual.visibility_level !== (desired.visibility === 'private' ? 'Private' : 'Secret')) fail('REPOSITORY_TYPE_MISMATCH');
-  if (desired.visibility === 'secret' && !ADMIN.has(actual.access)) fail('REPOSITORY_PERMISSION_REQUIRED');
+  if (desired.visibility === 'secret') checkGroup(group, desired.slug.slice(0, desired.slug.lastIndexOf('/')));
   if (desired.build_settings && !ADMIN.has(actual.access)) fail('REPOSITORY_PERMISSION_REQUIRED');
+}
+async function discoverRepo(client, desired) {
+  if (desired.visibility !== 'secret') return { actual: await client.getRepo(desired.slug) };
+  // Secret's single-repo endpoint rejects OAuth tokens; the public organization
+  // listing returns metadata, but access may be Unknown. Keep parent authority
+  // explicit, without inventing a repository role or treating a 403 as absence.
+  const parent = desired.slug.slice(0, desired.slug.lastIndexOf('/'));
+  const group = await client.getGroup(parent);
+  checkGroup(group, parent);
+  const paths = new Set(), ids = new Set();
+  let actual = null;
+  for (let page = 1; page <= 100; page++) {
+    const rows = await client.listGroupRepos(parent, page);
+    if (!Array.isArray(rows) || rows.length > 100) fail('REPOSITORY_LIST_INVALID');
+    for (const item of rows) {
+      if (!object(item) || !slugOK(item.path) || item.path.slice(0, item.path.lastIndexOf('/')) !== parent
+        || typeof item.id !== 'string' || !item.id || paths.has(item.path) || ids.has(item.id)) fail('REPOSITORY_LIST_INVALID');
+      paths.add(item.path); ids.add(item.id);
+      if (item.path === desired.slug) actual = item;
+    }
+    // Even a found target is not trusted before the complete listing finishes.
+    if (rows.length < 100) return { actual, group };
+  }
+  fail('REPOSITORY_LIST_INCOMPLETE');
 }
 function checkedSettings(value) {
   if (!only(value, BUILD_KEYS) || BUILD_KEYS.some(key => typeof value[key] !== 'boolean')) fail('SETTINGS_RESPONSE_INVALID');
@@ -174,25 +221,25 @@ export async function configureCnb({ spec, client, journal, apply = false, onPla
     const discovered = [], plan = [], groups = new Set();
     // Complete all preflight discovery before the first write, including later repos.
     for (const desired of spec.repositories) {
-      const actual = await call(() => client.getRepo(desired.slug));
+      const { actual, group: authority } = await call(() => discoverRepo(client, desired));
       const remembered = state.creates[desired.slug];
       if (remembered && remembered.visibility !== desired.visibility) fail('STATE_TARGET_MISMATCH');
       if (actual === null) {
         if (remembered) fail('CREATE_RECONCILIATION_REQUIRED');
         const group = desired.slug.slice(0, desired.slug.lastIndexOf('/'));
         if (!groups.has(group)) {
-          const info = await call(() => client.getGroup(group));
-          if (!object(info) || info.path !== group || info.freeze === true || !ADMIN.has(info.access_role)) fail('GROUP_PERMISSION_REQUIRED');
+          const info = authority || await call(() => client.getGroup(group));
+          checkGroup(info, group);
           groups.add(group);
         }
         plan.push({ action: 'create_repository', slug: desired.slug, visibility: desired.visibility, requested_build_settings: desired.build_settings || {} });
-        discovered.push({ desired, actual: null });
+        discovered.push({ desired, actual: null, authority });
       } else {
-        checkRepo(actual, desired);
+        checkRepo(actual, desired, authority);
         const current = desired.build_settings ? checkedSettings(await call(() => client.getBuildSettings(desired.slug))) : null;
         const changes = current ? changesFor(current, desired.build_settings) : {};
         if (Object.keys(changes).length) plan.push({ action: 'update_build_settings', slug: desired.slug, changes });
-        discovered.push({ desired, actual, current });
+        discovered.push({ desired, actual, current, authority });
       }
     }
     const manual_actions = spec.repositories.filter(repo => repo.visibility === 'secret').map(repo => ({
@@ -208,6 +255,7 @@ export async function configureCnb({ spec, client, journal, apply = false, onPla
     for (const item of discovered) {
       const { desired } = item;
       let actual = item.actual;
+      let authority = item.authority;
       if (!actual) {
         state.creates[desired.slug] = { visibility: desired.visibility, status: 'pending' };
         await journal.save(state); // durable before POST, including a lost response/crash
@@ -215,8 +263,23 @@ export async function configureCnb({ spec, client, journal, apply = false, onPla
         try {
           await client.createRepo(desired.slug.slice(0, split), { name: desired.slug.slice(split + 1), visibility: desired.visibility });
           writes++;
-          actual = await client.getRepo(desired.slug);
-          checkRepo(actual, desired);
+        } catch (error) {
+          if (error instanceof CnbFailure && error.rejectedCreate) {
+            // Reconfirm absence before releasing this POST's pending marker.
+            // A read failure or an existing resource cannot justify another POST.
+            let absent = false;
+            try { absent = (await discoverRepo(client, desired)).actual === null; } catch {}
+            if (absent) {
+              delete state.creates[desired.slug];
+              await journal.save(state);
+              throw error;
+            }
+          }
+          fail('CREATE_RESULT_UNCERTAIN');
+        }
+        try {
+          ({ actual, group: authority } = await discoverRepo(client, desired));
+          checkRepo(actual, desired, authority);
         } catch { fail('CREATE_RESULT_UNCERTAIN'); }
       }
       if (state.creates[desired.slug]) {
@@ -236,7 +299,9 @@ export async function configureCnb({ spec, client, journal, apply = false, onPla
           build_settings = readback;
         } else build_settings = current;
       }
-      verified.push({ slug: desired.slug, id: actual.id, visibility: desired.visibility, ...(build_settings ? { build_settings } : {}) });
+      verified.push({ slug: desired.slug, id: actual.id, visibility: desired.visibility,
+        ...(authority ? { permission_basis: { kind: 'parent_group', slug: authority.path, role: authority.access_role } } : {}),
+        ...(build_settings ? { build_settings } : {}) });
     }
     return { ...preview, status: writes ? 'applied' : 'unchanged', verified };
   } finally { if (release) await release(); }
@@ -263,7 +328,8 @@ async function main(args) {
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main(process.argv.slice(2)).catch(error => {
-    console.error(JSON.stringify({ status: 'failed', code: error instanceof CnbFailure ? error.code : 'CNB_CONFIGURATION_FAILED' }));
+    console.error(JSON.stringify({ status: 'failed', code: error instanceof CnbFailure ? error.code : 'CNB_CONFIGURATION_FAILED',
+      ...(error instanceof CnbFailure && error.code === 'CNB_SCOPE_REQUIRED' ? { required_scopes: error.required_scopes } : {}) }));
     process.exitCode = 1;
   });
 }
