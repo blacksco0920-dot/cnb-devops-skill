@@ -38,7 +38,7 @@
   {
     "scenario_id": "NEW_PROJECT_EXISTING_SHARED_HOST",
     "tests": [
-      "tests.test_skill_package.SkillPackageTests.test_shared_caddy_routing_requires_shared_route_evidence"
+      "tests.test_skill_package.SkillPackageTests.test_shared_host_guidance_routes_via_host_classification"
     ]
   },
   {

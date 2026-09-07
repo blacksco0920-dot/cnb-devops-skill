@@ -4,6 +4,7 @@ The shared core's own production callback seam is exercised separately in
 test_bundle_production_core.py. No cloud, real credentials or live containers.
 """
 import copy
+from datetime import datetime, timezone
 import fcntl
 import json
 import os
@@ -141,7 +142,7 @@ class ProductionLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='cnb-production-lifecycle-')
         self.addCleanup(self.tmp.cleanup)
-        self.clock = 1788739200  # fixed public test time
+        self.clock = int(datetime(2026, 9, 7, tzinfo=timezone.utc).timestamp())
         self.time_patch = mock.patch.object(production.time, 'time', side_effect=lambda: self.clock)
         self.time_patch.start()
         self.addCleanup(self.time_patch.stop)

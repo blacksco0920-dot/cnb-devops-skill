@@ -2,7 +2,26 @@
 
 配合 [bootstrap](bootstrap.md) 使用。以下是 AI 的技术参考；从项目差异和批准记录填值，不复用来源项目的目标、凭据或当前发布状态。命令以 Bash/zsh 为例；执行前关闭 `set -x`，私密目录为未被版本控制的受保护目录且权限 `0700`（可使用项目 `.git` 下的任务目录），秘密不放进命令文字或输出。
 
-## 环境与私密文件
+<a id="production-key"></a>
+## 生成配置前：生产密钥
+
+仅配置测试环境可跳过本节。完整双环境配置需要项目专用 Ed25519 公钥：已有匹配密钥对且授权仍有效时复用；新项目由 AI 在批准的本机私密目录生成。先确认目录不被版本控制、权限为 `0700`，关闭命令追踪。以下命令只适用于两个目标文件均不存在时；不覆盖或轮换现有密钥。
+
+```sh
+set -euo pipefail
+umask 077
+PRIVATE_DIR="<本项目已批准的本机私密目录>"
+test -d "$PRIVATE_DIR"
+test ! -e "$PRIVATE_DIR/production-approval.pem"
+test ! -e "$PRIVATE_DIR/production-approval.pub"
+openssl genpkey -algorithm ED25519 -out "$PRIVATE_DIR/production-approval.pem"
+openssl pkey -in "$PRIVATE_DIR/production-approval.pem" -pubout \
+  -out "$PRIVATE_DIR/production-approval.pub"
+```
+
+AI 读取 `.pub` 文件，将完整 SPKI PEM 公钥填入 `production.approval_public_key`；私钥只交给后面的本机签名入口，不进入聊天、项目、CNB 或主机。记录密钥文件位置与公钥对应关系，然后运行[项目生成](bootstrap.md)。公钥与本机私钥不匹配时停止，不替换已安装的信任配置。
+
+## 生成后：环境与私密文件
 
 先完成 `prepare-project.py --diff/--apply`。测试包与生产包都有独立的 `artifact-lock.json`、`host-policy.json`、`ci-config.json`、`tat-spec.template.json`；不要混用摘要。
 

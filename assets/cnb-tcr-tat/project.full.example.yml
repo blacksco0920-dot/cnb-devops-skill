@@ -1,0 +1,120 @@
+# Complete starting configuration for one Web application on TWO separate hosts:
+# one test host and one production host, each with its own PostgreSQL database.
+# Adapt repositories, domains, Dockerfile, npm scripts, probes and business tables
+# to the actual application. This file does not supply an application or cloud setup.
+# Never put credentials, private keys, SSH targets or cloud instance IDs here.
+schema_version: 1
+project: sample
+environment: test
+cnb_repository: example-team/sample
+test_branch: test
+production_branch: main
+# Enable only when GitHub is the source of truth.
+github_sync: false
+ci:
+  image: node:22-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
+  npm_registry: https://mirrors.cloud.tencent.com/npm/
+  verify:
+    - npm ci
+    - npm test
+secrets:
+  # Replace these repository paths; values live in the protected CNB Secret files.
+  tcr_import: https://cnb.cool/example-team/deploy-secret/-/blob/main/tcr.yml
+  tat_import: https://cnb.cool/example-team/deploy-secret/-/blob/main/sample-test.yml
+services:
+  web:
+    dockerfile: Dockerfile
+    context: .
+    image_repository: ccr.ccs.tencentyun.com/example-team/sample-web
+    runtime_env: true
+    environment:
+      NODE_ENV: production
+      APP_ENV: test
+      UPLOAD_DIR: /app/uploads
+    environment_refs:
+      DATABASE_URL: DATABASE_URL
+    expose: [3000]
+    loopback_port: 13000
+    mounts:
+      - source: uploads
+        target: /app/uploads
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+host:
+  release_user: ubuntu
+  # The first-host preset requires <project>-<environment> and its own PostgreSQL.
+  networks: [sample-test]
+  required_env: [DATABASE_URL]
+  database:
+    url_env: DATABASE_URL
+    host: sample-test-postgres
+    port: 5432
+    name: sample_test
+    user: sample_test
+    container: sample-test-postgres
+    admin_user: postgres
+  # Supply the real migration script shipped in the Web image.
+  migration:
+    service: web
+    argv: [npm, run, db:migrate]
+  availability_probes:
+    - https://test.example.test/health
+  identity_probes:
+    # Must return this service's exact cnb-release-identity/v1 commit and build ID.
+    - url: https://test.example.test/release.json
+      service: web
+      api_envelope: false
+production:
+  # The production host has a separate TAT binding and protected Secret file.
+  tat_import: https://cnb.cool/example-team/deploy-secret/-/blob/main/sample-production.yml
+  # Replace this ENTIRE block with the project's Ed25519 SPKI PEM public key.
+  # The explicit marker is rejected by prepare-project until replaced.
+  # Keep the matching private key only in approved private local storage.
+  approval_public_key: |
+    REPLACE_WITH_PROJECT_ED25519_SPKI_PUBLIC_KEY_PEM
+  services:
+    web:
+      # Production reuses the tested image; only runtime differences go here.
+      environment:
+        APP_ENV: production
+      loopback_port: 23000
+  host:
+    release_user: ubuntu
+    networks: [sample-production]
+    required_env: [DATABASE_URL]
+    database:
+      url_env: DATABASE_URL
+      host: sample-production-postgres
+      port: 5432
+      name: sample_production
+      user: sample_production
+      container: sample-production-postgres
+      admin_user: postgres
+    migration:
+      service: web
+      argv: [npm, run, db:migrate]
+    availability_probes:
+      - https://app.example.test/health
+    identity_probes:
+      - url: https://app.example.test/release.json
+        service: web
+        api_envelope: false
+recovery:
+  # Classify every persistent source once. Redis is outside this recovery scope.
+  # If uploads is not used, remove its service mount and classification together.
+  mounts:
+    uploads: backup
+  # Replace these with real tables created by the application's migrations.
+  # In BOTH environments, exercise signup and upload (or the actual equivalent)
+  # through the application before export so the selected tables are nonempty.
+  # These declarations neither create tables nor seed data.
+  required_nonempty_tables:
+    - schema: public
+      name: users
+      minimum_rows: 1
+    - schema: public
+      name: uploaded_files
+      minimum_rows: 1

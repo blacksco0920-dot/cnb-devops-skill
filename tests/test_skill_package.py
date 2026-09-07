@@ -14,6 +14,11 @@ class SkillPackageTests(unittest.TestCase):
     def text(self, relative: str) -> str:
         return (ROOT / relative).read_text(encoding="utf-8")
 
+    def assert_local_route(self, source: str, target: str):
+        from markdown_link_support import local_link_errors, prose
+        self.assertIn(f"]({target})", prose(self.text(source)))
+        self.assertEqual([], local_link_errors(ROOT / source), source)
+
     def public_package_text(self) -> str:
         texts = []
         inventory = subprocess.run(
@@ -144,7 +149,6 @@ class SkillPackageTests(unittest.TestCase):
 
         for phrase in (
             "target-host owner/operator",
-            "named in the handoff manifest",
             "control-record id",
             "target-scope commitment",
             "exact path-contract digest",
@@ -155,6 +159,9 @@ class SkillPackageTests(unittest.TestCase):
             "freshness, scope, and drift",
         ):
             self.assertIn(phrase, handoffs)
+        self.assert_local_route(
+            "references/human-handoffs.md", "#target-host-owneroperator"
+        )
 
     def test_handoffs_cover_roles_artifacts_and_free_tcr_path(self):
         handoffs = self.text("references/human-handoffs.md")
@@ -258,15 +265,14 @@ class SkillPackageTests(unittest.TestCase):
             self.assertFalse((ROOT / relative).exists(), relative)
 
     def test_native_deployment_ui_is_routed_through_package_guidance(self):
-        readme = self.text("README.md")
         safety = self.text("references/release-safety.md")
         handoffs = self.text("references/human-handoffs.md")
         normalized_handoffs = handoffs.lower()
         scenarios = self.text("tests/skill-scenarios.md")
 
-        self.assertIn(
-            "](references/cnb-deployment-ui.md)",
-            readme,
+        self.assert_local_route("README.md", "SKILL.md")
+        self.assert_local_route(
+            "SKILL.md", "references/cnb-deployment-ui.md"
         )
         for phrase in (
             "ready-last",
@@ -418,16 +424,25 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, handoffs)
 
-    def test_shared_caddy_routing_requires_shared_route_evidence(self):
-        skill = self.text("SKILL.md")
-        self.assertIn("multiple independently managed projects", skill)
-        self.assertNotIn("multi-container Docker host", skill)
+    def test_shared_host_guidance_routes_via_host_classification(self):
+        # Package routing for the mapped NEW_PROJECT_EXISTING_SHARED_HOST scenario;
+        # agent behavior is assessed separately, not inferred from exact prose.
+        self.assert_local_route(
+            "SKILL.md", "references/project-adoption.md#host-and-account-classification"
+        )
+        self.assert_local_route("SKILL.md", "references/shared-caddy-v1/contract.md")
+        self.assert_local_route("SKILL.md", "references/shared-caddy-v1/host-handoff.md")
+        self.assert_local_route(
+            "references/project-adoption.md", "shared-caddy-v1/contract.md"
+        )
 
-    def test_shared_caddy_routing_does_not_treat_a_visible_single_project_route_as_shared(self):
-        skill = self.text("SKILL.md")
-        self.assertIn("opaque Caddy", skill)
-        self.assertIn("shared route ownership", skill)
-        self.assertNotIn("legacy " + "HTTPS routes", skill)
+    def test_standard_setup_route_is_available(self):
+        # Keep the ordinary-project route available alongside shared-host guidance.
+        self.assert_local_route("SKILL.md", "references/standard-workflow.md")
+        self.assert_local_route("references/standard-workflow.md", "bootstrap.md")
+        self.assert_local_route(
+            "references/project-adoption.md", "human-handoffs.md#standard-artifacts"
+        )
 
     def test_legacy_baseline_topology_is_separately_authorized_not_a_cnb_release_input(self):
         handoff = " ".join(self.text("references/shared-caddy-v1/host-handoff.md").split())
@@ -631,14 +646,25 @@ class SkillPackageTests(unittest.TestCase):
             root = Path(directory)
             source = root / "source.md"
             target = root / "target.md"
-            target.write_text("# New heading\n## Repeated\n## Repeated\n```md\n# Fake\n```\n")
-            for link in ("missing.md", "target.md#old-heading", "#absent", "target.md#fake"):
+            target.write_text(
+                '# New heading\n## Repeated\n## Repeated\n<a id="explicit-id"></a>\n'
+                "<a name='legacy-name'></a>\n```md\n# Fake\n"
+                '<a id="fake-id"></a>\n<a name="fake-name"></a>\n```\n'
+            )
+            (root / "assets").mkdir()
+            (root / "assets/README.md").write_text("# Child\n")
+            for link in (
+                "missing.md", "target.md#old-heading", "#absent", "target.md#fake",
+                "target.md#fake-id", "target.md#fake-name", "assets/#child",
+            ):
                 with self.subTest(link=link):
                     source.write_text(f"# Source\n[route]({link})\n")
                     self.assertEqual(1, len(local_link_errors(source)))
             source.write_text(
                 "# Source\n[local](#source)\n[heading](target.md#new-heading)\n"
                 "[duplicate](target.md#repeated-1)\n[external](https://example.test/x#y)\n"
+                "[explicit](target.md#explicit-id)\n[legacy](target.md#legacy-name)\n"
+                "[directory](assets/)\n"
             )
             self.assertEqual([], local_link_errors(source))
 

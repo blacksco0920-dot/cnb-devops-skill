@@ -2,40 +2,31 @@
 
 Last verified: 2026-09-03
 
-Use this reference when a release needs information or an action that the AI
-cannot complete through available authorized access. Roles name accountable
-authorities; one owner may hold several roles subject to actual project policy.
-The role deliverables below are acceptance requirements, not instructions for
-the human to author manifests, commands or receipts.
+本页供 AI 在当前任务需要补充信息、本人操作或审批时按需读取。角色表示责任归属；个人用户可按项目政策兼任多个角色。技术材料、命令与回执由 AI 在已有授权范围内准备、执行和核验，用户只补无法发现的选择、本人验证和必要审批。
 
-For the current dependency, the AI first prepares reviewable configuration,
-commands and record drafts from known facts, then validates what it can through
-available authorized tools and records. Give the person one necessary real-world
-action or confirmation in plain language: destination, action, and acceptance
-condition. After actual authorized acceptance, the AI records the evidence and
-updates the project index. Drafts remain pending until that acceptance is
-verified; never invent an approval, binding or successful check.
+## 按实际任务选择阅读范围
 
-If account access or a target/control-record binding is unavailable, request the
-smallest prerequisite needed to prepare or validate the action, such as opening
-the approved console and selecting the intended project environment. Keep
-sensitive details within its private control boundary. Do not ask the person to
-supply a completed technical receipt. Reuse already accepted facts and setup
-while their scope and validity hold.
+- **标准包首次接入简单主机**：先走[标准工作流](standard-workflow.md)与[首装入口](bootstrap.md)，从下表填充要求，再按当前缺口定位负责人。
+- **继续发布或增加独立项目**：先读项目部署/状态索引及仍有效的回执，复用已接受的事实、配置和授权；每个项目分别核对目标与权限范围。
+- **接管现有主机、控制器兼容或共享路由问题**：按实际条件读目标主机负责人或共享 Caddy 管理员章节；跨账号委托仅在组织政策要求时读取。维护、备份恢复、凭据轮换和审批门禁按对应合同保留。
 
-When confirmation is actually needed, distinguish an AI permission question
-from a cloud console's login, CAPTCHA or identity check. For AI permission,
-state the prepared operation, scope and reply method directly in the conversation;
-do not send the person looking for a browser authorization dialog. If a question
-card is not visible, restate the same question in plain text without restarting
-setup. An explicit reply covering that scope completes the confirmation; do not
-ask again through another interface.
+<a id="standard-artifacts"></a>
+## 标准产物如何满足要求
 
-Candidate approval is a third, separate action on the selected Tag's deployment
-page. Name that exact page and candidate when it is needed. If project policy
-also requires a machine authorization record, the AI must prepare and verify it
-before directing the person to execute publication; a visible button alone does
-not establish that the execution prerequisites are complete.
+| 当前要求 | AI 优先读取的标准产物 | 如何使用 |
+| --- | --- | --- |
+| 拓扑、路径、账号与权限合同 | `deploy/project.yml`、各环境 `host-policy.json`、Compose、锁定版本的 installer | 提取已有路径、对象类型、UID/GID、mode 和执行约束；安装/兼容检查提供实际结果，仅对未覆盖的实际要求补充合同字段 |
+| 构建、固定命令与发布证据 | `artifact-lock.json`、CI/TAT 配置、binding、安装与发布回执 | 核对版本、目标绑定、权限范围和实际构建/运行/公网结果；不复制其他项目的目标或凭据 |
+| 数据与恢复 | `recovery-policy.json`、导出及离机恢复回执 | 对照实际持久数据核对范围，以真实恢复及对账结果验收 |
+| 秘密配置 | 变量名清单、私密存储位置及有效 secret receipt | 核对用途、有效期和实际消费边界；值留在批准的私密存储 |
+
+这些产物用于填充现有要求；生成或安装成功不能替代实际需要的兼容检查、发布、恢复或审批验收。缺失、失效或不适配的部分仍阻断对应动作。
+
+## 把当前动作交给人
+
+AI 先用已有事实准备可审阅的材料，完成当前授权内可执行的检查，再给人一个必要动作：明确页面、动作、范围和完成标志。账号或目标绑定缺失时，只请求能继续准备的最小前提；不让人编写技术回执，也不让人把敏感内容发到聊天。AI 核验实际结果后更新项目索引；未确认的草稿保持 pending，不编造授权、绑定或成功状态。
+
+区分 AI 权限确认、云控制台登录/验证码/本人验证，以及候选 Tag 部署页审批。AI 权限问题直接说明操作和回复方式；问题卡片不可见时用普通文字重述，不重启接入，已有明确且有效的授权不重复询问。候选审批必须指出具体 Tag 和页面；项目要求的机器授权记录由 AI 先准备并核验，按钮可见不代表执行条件已满足。
 
 ## 按问题找负责人
 
@@ -137,10 +128,11 @@ against the approved control record and fail closed on uncertainty.
 
 ### When
 
-Before the first managed release to an existing single-host staging server or
-customer production server, whenever the controller or path contract changes,
-and before and after host maintenance. This role must be named in the
-handoff manifest; ordinary release authority does not imply this role.
+For existing-host adoption, changed controller/path requirements, before and
+after host maintenance, or when project policy requires independent compatibility
+acceptance. Simple first installation uses the standard artifact mapping above.
+Name this accountable role in the handoff manifest; ordinary release authority
+does not imply host-maintenance authority.
 
 ### Deliver
 
@@ -220,13 +212,14 @@ to an existing host, and before a candidate is approved.
   volumes.
 - The governed branch, candidate prefix, and whether application/controller
   commits must be identical because they share a repository.
-- A versioned controller path contract for each environment: logical path
-  roles, object kinds, no-symlink requirements, numeric UID/GID, exact mode and
-  ACL requirements, parent-directory traversal identity, mount/capacity
-  expectations, lock/transaction/recovery locations, and required atomic file
-  operations. Keep target-specific values in the approved control system.
-- For an existing host or a new or stricter controller, an accepted value-free
-  `compatibility receipt` produced before the first ordinary release.
+- The per-environment controller path contract, populated from the
+  [standard artifacts](#standard-artifacts): path/object roles, no-symlink,
+  numeric UID/GID, exact mode/ACL, parent traversal, mount/capacity,
+  lock/transaction/recovery and atomic operation requirements. Keep target-specific
+  values in the approved control system; extend only requirements the selected
+  artifacts do not cover.
+- For existing-host adoption or a controller change requiring compatibility
+  checks, an accepted value-free `compatibility receipt` before ordinary release.
 - Environment variable names, classification, and owning role; no values.
 - Independently selected CNB page operator, readiness operator, production
   approver, and change/rollback owner; do not assume roles are upward-inclusive.
@@ -263,10 +256,10 @@ Only for an observed governed GitHub-to-CNB synchronization path:
 
 ### Common controller handoff
 
-Deliver the controller path contract to the named target-host owner/operator.
-For an existing host or incoming controller requiring compatibility checks,
-have that role run the read-only preflight with the exact controller and return
-only the value-free `compatibility receipt`.
+AI indexes the existing contract artifacts and their verified results for the
+named target-host owner/operator. Existing-host adoption or controller changes
+requiring compatibility checks still need the exact-controller read-only
+preflight and value-free `compatibility receipt` before acceptance.
 
 Official guidance:
 
@@ -567,23 +560,36 @@ application rollback may be incompatible with stored data.
   object kind, numeric UID/GID, exact mode and ACL requirements, retention,
   parent traversal, capacity, and atomic-write expectations; no data values or
   dump contents.
-- For an existing host or new controller, the data owner's acceptance of the
-  value-free `compatibility receipt` before backup or migration may start.
+- For existing-host adoption or changed controller/path requirements, the data
+  owner's acceptance of the value-free `compatibility receipt` before backup or
+  migration may start; also require it when project policy calls for it.
 - Encrypted backup location and checksum, restore steps, freeze window, RPO,
   RTO, retention, reconciliation checks, and named recovery owner.
 
-### Exact console steps
+### AI execution and owner decisions
 
-1. Create the backup in the customer-approved database/storage system and
-   record its checksum without exposing credentials.
-2. Restore it into an isolated rehearsal target using the documented procedure.
-3. Run technical integrity and business reconciliation checks; record results
-   as non-secret evidence.
-4. Approve the freeze and migration window only after the rehearsal meets RPO
-   and RTO. Keep database recovery as a separate decision from image rollback.
-5. Reject a blocked or stale `compatibility receipt`; metadata repair belongs
-   to separately authorized target-host maintenance, not to backup or migration
-   execution.
+For observed `none/empty` first deployment, record the actual data state and
+applicable initialization checks; do not infer emptiness from missing receipts.
+An empty starting snapshot is not business recovery. Initialize within the
+approved scope, then create representative business data and complete any
+required recovery acceptance. The migration-window restore gate below applies
+to existing data; shared-host takeover retains its pre-mutation restore gates.
+See [backup and restore acceptance](release-safety.md#backup-and-restore-acceptance).
+
+1. AI prepares the actual data/backup scope, destination, retention and RPO/RTO
+   requirements from project artifacts. The owner confirms undiscoverable choices
+   and the short write pause needed for export; reuse valid existing authorization.
+2. AI runs the [standard export, protected download and isolated restore](bootstrap-inputs.md#recovery)
+   on the authorized targets, retaining checksums and real receipts. Data outside
+   that preset uses its approved recovery procedure; it must remain accounted for.
+3. AI verifies integrity, business reconciliation, source resumption and measured
+   recovery time. Use the standard program's actual table/sequence/file comparison
+   and bound receipt assertions; record business results and mock limitations.
+4. For existing-data migration, the owner reviews the scope and results and approves the window
+   only after the rehearsal meets RPO/RTO. Database recovery remains a separate
+   decision from image rollback.
+5. Where compatibility checks apply, a blocked or stale receipt stops the action;
+   metadata repair remains separately authorized target-host maintenance.
 
 Official guidance:
 
@@ -595,9 +601,9 @@ Official guidance:
 ### Acceptance
 
 Mode, backup checksum, successful restore rehearsal, business reconciliation,
-retention, recovery owner, and the exact-controller `compatibility receipt` are
-recorded. The release evidence states whether the prior application can safely
-use the post-migration data.
+retention, recovery owner, and any required exact-controller
+`compatibility receipt` are recorded. The release evidence states whether the prior application
+can safely use the post-migration data.
 
 ### Never deliver
 

@@ -19,9 +19,9 @@ not authorize migrating a working registry or deployment system.
 Read repository-local instructions, then `docs/DEPLOYMENT.md` and
 `docs/PROJECT_STATUS.md` when present. Do not ask a human to repeat a fact that
 the repository, its accepted receipts, or a supplied control record can show.
-Read [release safety](release-safety.md) for candidate/evidence rules,
-[human handoffs](human-handoffs.md) for ownership, and the [CNB deployment
-page](cnb-deployment-ui.md) only when the project uses that control surface.
+Read [release safety](release-safety.md) for the current candidate/evidence rules,
+the applicable [human handoff](human-handoffs.md) when an input or human action is
+missing, and the [CNB deployment page](cnb-deployment-ui.md) when that control is used.
 
 ## Read-only discovery
 
@@ -42,14 +42,15 @@ approval does not execute production.
 
 ## AI-owned setup and human handoffs
 
-For an authorized setup request, complete the applicable local work from the
-actual project: deployment documents, pipeline/build and runtime configuration,
-value-free variable inventories, and reviewed project-owned controller and fixed
-execution integrations. Adapt the linked contracts to the observed topology;
-run the available project tests and configuration checks. Keep unavailable cloud
-integrations disabled with a recorded reason, while completing independent work.
-Index generated files, actual check results and remaining blockers in the status
-document. Local generation or passing checks do not establish live acceptance.
+For authorized setup, generate the standard project artifacts, adapt actual
+differences, and run applicable project/configuration checks. Use the
+[standard artifact mapping](human-handoffs.md#standard-artifacts) to fill existing
+topology, path, UID/GID, mode and execution-contract requirements from the policy,
+Compose, versioned installer and accepted receipts. Add only observed missing
+requirements; do not create another platform or contract duplicating these files.
+Index generated files, actual checks and remaining blockers in the project
+documents. Keep unavailable integrations disabled while completing independent
+work; local generation or passing checks do not establish live acceptance.
 
 For the current dependency, follow the [human handoff process](human-handoffs.md):
 the AI prepares technical materials and records actual authorized acceptance;
@@ -143,20 +144,18 @@ next_authorized_action:
 
 ## Add another project
 
-Apply the same Skill independently in each business repository. Reuse verified
-configuration patterns and accepted shared-host capabilities, checking that their
-scope, freshness and compatibility still cover this project. Maintain separate
-project/environment identities, Secret bindings, image namespaces, routes, data,
-project-specific release locks and release records. Shared Caddy still requires
-its shared host-wide lock under the [Shared Caddy contract](shared-caddy-v1/contract.md);
-project locks do not replace it. Authorization for one project does not cover another.
+**Across business repositories:** reuse the Skill and verified configuration
+patterns independently. Each project keeps its own identities, Secret bindings,
+image namespaces, routes, data, release locks and deployment/status records.
+Authorization and sensitive inputs remain project-specific; classify each actual
+target host separately. No global operational repository or secret store is needed.
 
-Retain completed shared-host bootstrap and maintenance receipts; adding a project
-does not replay that work. Missing per-project provisioning is a separately
-scoped maintenance dependency under the host handoff, not an ordinary release
-permission. Prepare independent local setup while it is pending. Each repository
-keeps its own deployment/status documents; no global operational repository or
-global secret store is needed. Customer-account deployment is optional.
+**On an actually shared host:** also verify that accepted host capabilities still
+cover the new project's scope, freshness and compatibility. Retain completed
+bootstrap/maintenance receipts. Missing per-project provisioning requires its
+scoped host-maintenance authorization; prepare independent local work meanwhile.
+Shared Caddy requires the [host-wide lock and handoff](shared-caddy-v1/contract.md)
+in addition to project locks. Customer-account deployment remains optional.
 
 ## Source topology
 
@@ -224,7 +223,8 @@ production approval.
 
 ## Optional advanced paths
 
-Load shared-Caddy takeover, existing-host controller compatibility, recovery,
-retention, or cross-account delegation guidance only when observed topology or
-organization policy requires it. Completed bootstrap or migration work is a
-recorded maintenance result, not an ordinary release step to infer or repeat.
+Use [standard recovery](bootstrap-inputs.md#recovery) for the configured data scope.
+Read legacy/shared-Caddy takeover, existing-host controller compatibility or
+cross-account delegation details only when actual topology or project policy
+requires them. Retain required maintenance, recovery and approval gates; completed
+bootstrap or migration is a recorded result to reuse while valid.

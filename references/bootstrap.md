@@ -4,11 +4,15 @@ AI 接入兼容项目时先运行生成器，不重新编写发布控制器。�
 
 AI 执行时配合[完整输入与命令](bootstrap-inputs.md)：包含双环境包路径、SSH/APT 盘点、bootstrap spec、Docker 拉取配置、生产签名与导出下载。示例只用非秘密占位；实际值留在项目批准的私密目录，沿用已有阶段授权。
 
-当前 0.2 包提供**测试与候选、显式配置的生产、SSH 首装和隔离恢复**入口，已完成 FinAgent 三轮全链路实操，第 3 轮无修复且全流程 28.74 分钟；耗时、实际修复和范围见[完整演练](../docs/history/2026-09-07-complete-rehearsal.md)。连续稳定复用及第二项目云端接入仍待验证。支持 Ubuntu 24.04、Docker Compose、PostgreSQL、同仓同提交的应用与发布程序；已有共享主机仍需按实际拓扑核对。不兼容时列出具体差异。
+标准首装使用两台独立的 Ubuntu 24.04 / Linux amd64 主机、Docker Compose、PostgreSQL 16 和可选 Redis 7；应用与发布程序同仓同提交。包内覆盖**测试与候选、显式配置的生产、SSH 首装和隔离恢复**。只请求测试时只配置、操作该环境；其他数据库、已有数据、活动版本升级或复杂共享主机先列出差异，按对应入口处理。
 
 ## 1．生成项目文件
 
-从项目读取 Dockerfile、构建上下文、验证命令、服务、数据迁移和公网地址，填入[项目配置示例](../assets/cnb-tcr-tat/project.example.yml)。GitHub 为源码入口时显式设置 `github_sync: true`，生成同 SHA 同步工作流；CNB 原生项目保持 false。保存为业务仓库的 `deploy/project.yml`；这是唯一需要维护的非秘密差异配置。服务名和数量由配置决定。
+从[完整配置示例](../assets/cnb-tcr-tat/project.full.example.yml)开始：一个 Web 服务、PostgreSQL 和 uploads，包含隔离的测试/生产配置与恢复范围。它是供 AI 适配的配置起点，不附带业务应用，也不创建云资源。按实际项目改写仓库、域名、Dockerfile、构建上下文、验证/迁移命令、服务端口、身份探针和业务表；不能把示例表名当作已存在或已验收的数据。
+
+完整示例的生产公钥故意使用待填标记，原样生成会被拒绝。先按[生产密钥准备](bootstrap-inputs.md#production-key)复用或生成项目专用密钥，只填入公钥；私钥留在本机私密存储。仅接测试时移除 `production`，保留实际需要的测试与恢复配置。[最小示例](../assets/cnb-tcr-tat/project.example.yml)只展示测试文件生成，不覆盖标准首装、生产和恢复。
+
+GitHub 为源码入口时显式设置 `github_sync: true`，生成同 SHA 同步工作流；CNB 原生项目保持 false。保存为业务仓库的 `deploy/project.yml`，集中维护非秘密项目差异；服务名和数量由配置决定。
 
 ```sh
 # SKILL_DIR 指向已经加载的 Skill；PROJECT_DIR 指向业务仓库。
@@ -83,7 +87,7 @@ sudo python3 "$HOST_BUNDLE_DIR/host/install-project.py" \
   --lock-sha256 "$REVIEWED_ARTIFACT_LOCK_SHA256" --apply
 ```
 
-安装器校验依赖、完整工件、权限和数据库起点，再安装固定程序与显式空库记录；不会创建数据库、重装公共组件或接管已有应用。重复调用不会覆盖运行中的项目配置，内容漂移停止。迁移后的失败保留事务现场，不能自动改回旧镜像假装恢复。0.2 已完成三轮双环境重装接入，第 3 轮两台纯净主机均首次空库安装和发布成功；管理员 helper 兼容续接已有单独实测，共享主机第二项目仍待验收。安装器没有版本升级入口，不能用首次安装接管已部署版本。
+安装器校验依赖、完整工件、权限和数据库起点，再安装固定程序与显式空库记录；不会创建数据库、重装公共组件或接管已有应用。重复调用不会覆盖运行中的项目配置，内容漂移停止。迁移后的失败保留事务现场，不能自动改回旧镜像假装恢复。安装器没有版本升级入口，不能用首次安装接管已部署版本。
 
 ### 原生 Caddy 的首次域名接入
 
@@ -95,8 +99,6 @@ sudo python3 "$HOST_BUNDLE_DIR/host/configure-native-caddy.py" \
   --baseline-sha256 "$INVENTORIED_CADDYFILE_SHA256"
 # 预览符合已授权范围后加 --apply；只在首次接入执行，普通发布不调用。
 ```
-
-0.2 已在两台 Ubuntu 24.04 / Caddy 2.6.2 主机完成接入，保留默认站点并核对文件与运行配置；六个域名 HTTPS、可用性、发布身份及双环境业务验收通过。该结果只覆盖实测拓扑。
 
 ## 3．配置固定 TAT 命令
 
@@ -138,7 +140,7 @@ AI 按 `secrets.tcr_import`、`secrets.tat_import` 和生产的 `production.tat_
 
 后续会话只读项目的 `docs/DEPLOYMENT.md`、`docs/PROJECT_STATUS.md`，再按当前阶段读取固定工件和最新证据。状态分别记录首装、新项目开通、测试、候选、生产、恢复、升级和中断；未运行的项写“未验证”，不引用来源项目的历史成功充当本项目成功。
 
-本包的版本、来源与缺口见 [bundle.json](../assets/cnb-tcr-tat/bundle.json)，云端结果绑定[完整演练](../docs/history/2026-09-07-complete-rehearsal.md)中的固定提交与工件锁。文档或验证元数据更新不会自动验收新生成的工件锁，也不要求重发已验证的应用。来源应用代码的外部分发许可尚未记录，正式开源发布前需完成代码归属核对。
+本包版本与工件摘要见 [bundle.json](../assets/cnb-tcr-tat/bundle.json)；当前项目按自己的生成锁和实际回执验收。历史成功不替代新项目或新工件的验收，文档更新也不要求重发已经验收的应用。
 
 ## 6．生产发布同一候选
 

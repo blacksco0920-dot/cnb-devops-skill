@@ -1,3 +1,5 @@
+# Minimal test-only generation example; not a first-host/production/recovery preset.
+# For a complete two-host starting configuration, adapt project.full.example.yml.
 # AI maintains project differences here. Never put secret values or cloud IDs here.
 schema_version: 1
 project: sample
