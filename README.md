@@ -20,7 +20,7 @@
 | 正式发布 | 准备候选说明、核对就绪和恢复条件 | 审批具体候选，决定发布范围 | 通过门禁后部署同一组镜像并记录结果 |
 | 下一次发布 | 适配变化、读取当前记录并处理故障 | 完成该次必要的生产审批 | 复用已经接好的流程，无需从头搭建 |
 
-当前 0.2 执行包已提供双环境生成、SSH 首装、生产签名/发布和数据库及声明目录的恢复入口，并通过本地接口验证；新版本从首装到生产与恢复的完整云端演练仍待验。此前 0.1 的 FinAgent 测试发布与自动候选证据不能作为 0.2 生产成功证明，第二项目云端复用也尚未验收。入口见[接入步骤](references/bootstrap.md)，历史固定版本和耗时见[执行包实测](docs/history/2026-09-06-bundle-staging-rehearsal.md)。
+当前 0.2 执行包已在 FinAgent 完成一轮真实重装、双环境发布、业务与离机恢复；首轮含修复共 88 分钟，速度仍未达标，正在复测稳定性。第二项目的云端接入尚未验收。使用见[接入步骤](references/bootstrap.md)，范围和耗时见[完整演练记录](docs/history/2026-09-07-complete-rehearsal.md)。
 
 ## 从这里开始
 
@@ -56,7 +56,7 @@ Skill 入口使用 Agent Skills Markdown 格式；执行包使用 Python、Node.
 
 仓库 CI 运行确定性的包测试；[行为场景](tests/skill-scenarios.md)提供当前提示、预期和测试映射，并链接独立的历史评估及其证据限制。这些检查不代表你的云端流水线已经验收。附带的 helper 和 installer 是参考实现，安装前需核对目标主机文件系统与执行接口。
 
-[执行包实测](docs/history/2026-09-06-bundle-staging-rehearsal.md)记录当前包在一个三服务项目上的测试与候选结果，以及实际修复和人工操作成本。[此前部署复盘](docs/history/2026-09-06-live-rehearsal.md)中的生产与异机恢复属于此前项目专用路径，不能替代本包的生产、恢复或多项目验收。
+[完整演练记录](docs/history/2026-09-07-complete-rehearsal.md)记录 0.2 的固定版本、实际修复与双环境验收边界。[0.1 测试记录](docs/history/2026-09-06-bundle-staging-rehearsal.md)和[此前项目专用路径](docs/history/2026-09-06-live-rehearsal.md)保留为历史，不替代当前版本或多项目验收。
 
 ## 给 AI 与维护者的参考
 
