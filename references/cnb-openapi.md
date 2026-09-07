@@ -2,6 +2,8 @@
 
 Last verified: 2026-09-02
 
+Authentication and Secret creation/editing boundaries rechecked: 2026-09-07.
+
 Use the live specification for endpoint schemas:
 
 - API and interactive documentation: <https://api.cnb.cool>
@@ -15,11 +17,18 @@ CNB OpenAPI uses an `Authorization: Bearer ${token}` request header. Set
 `Accept` to a response type listed by the live specification, commonly
 `application/json`.
 
-Obtain a token from an existing approved secure store. If none exists, direct
-the authorized human to **Personal settings → Access token → Add access token**
-and request only the repository/use scope and operation scope required for the
-task. Never place a token in a URL, Git remote, command argument, log, example
-value, ordinary repository, or AI conversation.
+Reuse an existing approved login or secure credential store. For local OpenAPI
+work, the [official CNB CLI](https://docs.cnb.cool/zh/develops/cnb-cli.html)
+supports `cnb login` device authorization: AI runs the command and the person
+completes the official authorization page. Check the granted resource/operation
+scope and account role; login does not grant every requested operation. Keep
+debug logging off. This does not make existing bundle programs automatically
+consume or refresh the CLI login store.
+
+If a required integration still needs a PAT, use **Personal settings → Access
+token → Add access token** with only its required scope. Never place a token in
+a URL, Git remote, command argument, log, example value, ordinary repository,
+or AI conversation.
 
 CNB pipelines expose a temporary `CNB_TOKEN` that is destroyed after the build.
 Do not copy it out of the job or turn it into a long-lived credential.
@@ -58,12 +67,22 @@ itself is not safe promotion and must never be described as one.
 
 ## Secret repositories
 
-Secret repositories are created and edited through CNB Web. They cannot be Git
-cloned or locally pushed. Pipelines reference files with `imports`,
-`optionsFrom`, or `settingsFrom` subject to CNB's file-reference checks.
+Separate repository creation from Secret content editing. The public API
+`POST /{slug}/-/repos` supports `visibility: "secret"` with `group-resource:rw`
+and a permitted organization role. Explicitly set the visibility; never rely on
+the ordinary public-repository default. In an authorized setup, AI can create
+and re-read this repository without asking the person to use the creation page.
 
-The authorized Secret maintainer first identifies the consuming task type, then
-uses only the applicable `allow_*` fields. An ordinary `script` or `commands`
+Secret content editing still follows CNB's audited Web flow. The public Swagger
+checked on 2026-09-07 does not document a complete supported Secret file write
+API; browser-internal commit endpoints are not a supported PAT/OAuth contract.
+Do not infer such support from the generic blob creation endpoint or use
+single-build `env` inputs as persistent Secret storage. Secret repositories
+cannot be Git cloned or locally pushed. Pipelines reference files with
+`imports`, `optionsFrom`, or `settingsFrom` subject to file-reference checks.
+
+AI identifies the consuming task type and prepares the applicable `allow_*`
+rules for the authorized Secret maintainer. An ordinary `script` or `commands`
 task may use `allow_slugs`, `allow_events`, and `allow_branches`, but its Secret
 file must omit `allow_images`; a job that has both `image` and `script` is still
 a script task. CNB treats `allow_images` as a plugin-task restriction, so a
@@ -156,3 +175,10 @@ ready-last transition. See the
 - <https://docs.cnb.cool/zh/repo/secret.html>
 - <https://docs.cnb.cool/zh/build/file-reference.html>
 - <https://docs.cnb.cool/zh/build/deploy.html>
+
+## Related automation research
+
+[Public API and low-interaction onboarding findings](../docs/history/2026-09-07-api-onboarding.md)
+record the official CLI login paths, TAT maintenance APIs and CNB OIDC plugin.
+The current release runner and signer do not yet consume STS session tokens;
+research evidence is not acceptance of a new authentication path.

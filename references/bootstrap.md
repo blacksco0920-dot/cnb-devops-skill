@@ -120,7 +120,7 @@ node "$SKILL_DIR/scripts/configure-tat.mjs" \
 
 ## 4．人只完成必须的控制台步骤
 
-AI 按 `secrets.tcr_import`、`secrets.tat_import` 和生产的 `production.tat_import` 准备 CNB Secret 文件、对应仓库/ref/event 范围及校验步骤：
+AI 按[公开创建接口](cnb-openapi.md#secret-repositories)创建或复用密钥仓库并回读类型，随后按 `secrets.tcr_import`、`secrets.tat_import` 和生产的 `production.tat_import` 准备 Secret 文件、对应仓库/ref/event 范围及校验步骤：
 
 - TCR 文件提供 `TCR_USERNAME`、`TCR_PASSWORD`。
 - TAT 文件提供 `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`、`CNB_TAT_BINDING_JSON`，后者来自上一步受保护绑定。

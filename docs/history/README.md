@@ -26,6 +26,8 @@
 
 ## 来源与维护记录
 
+- [公开 API 与低操作成本接入研究](2026-09-07-api-onboarding.md)：仓库创建、TAT 维护、官方 CLI 登录与 OIDC 的能力边界；新鉴权路径尚未接入验收。
+
 - [来源与许可](../../assets/cnb-tcr-tat/dependencies/SOURCES.md)、[第三方依赖](../../assets/cnb-tcr-tat/dependencies/THIRD_PARTY.md)：保留来源项目名称、源文件摘要、复用行为与许可限制；这些是追溯信息，不是使用依赖。
 - [首轮优化](2026-09-05-first-optimization.md)、[项目接入整理](2026-09-05-project-adoption.md)、[早期可用性评估](2026-09-05-open-source-usability.md)：记录当时的决策与验证边界。
 

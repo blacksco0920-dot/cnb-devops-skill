@@ -679,25 +679,28 @@ success.
 
 ## CNB Secret repository operation
 
-Only an authorized human Secret maintainer performs these steps:
+AI handles repository creation, configuration preparation and verification within
+the approved scope. The Secret maintainer completes the required audited Web
+save; browser automation is optional, not a prerequisite.
 
-1. In CNB Web, create or select the intended **Secret repository**.
-2. Open the intended YAML file in the Web editor; Secret repositories cannot be
-   cloned or pushed from a local checkout.
-3. Classify the consuming job using the
-   [Secret task and variable rules](cnb-openapi.md#secret-repositories). For a
-   script/commands task, set the narrow applicable repository/event/branch
-   permissions and omit `allow_images`.
-4. For a plugin task, authorize the exact pinned image and choose the variable
-   loading mechanism from that same rule before saving.
-5. Enter values directly in CNB Web and save through the audited flow. If a
-   value was pasted into chat, a log, or another ordinary artifact, treat it as
-   exposed, never echo the value, and have the authorized owner rotate it at
-   the source before replacing it here.
-6. Trigger only a harmless authorized validation and confirm that the intended
-   pipeline can reference the file while an out-of-scope pipeline cannot.
-7. Return only the variable names and `secret receipt`s. Do not paste values
-   into chat or an AI prompt.
+1. AI creates or selects the intended **Secret repository** through the
+   [public creation API](cnb-openapi.md#secret-repositories), verifies its type
+   and target organization, and prepares the exact file/page links.
+2. AI classifies the consuming job and prepares the narrow repository/event/branch
+   rules. Script/commands tasks omit `allow_images`; plugin tasks constrain the
+   pinned image and use the applicable variable-loading mechanism.
+3. The maintainer opens the prepared file in CNB Web and saves the prepared
+   content through the audited flow. Explain only the concrete action; do not
+   ask the person to design permissions or write YAML. Sensitive values stay in
+   the approved private handoff and editor, never chat or ordinary artifacts.
+4. AI performs an authorized harmless validation, verifies permitted references
+   and the relevant out-of-scope rejection, then records variable names and a
+   value-free `secret receipt`.
+
+Secret repositories cannot be cloned or pushed from a local checkout. Do not
+substitute an undocumented browser-internal endpoint for the audited flow. If a
+value appears in chat, logs or ordinary artifacts, never echo it; the authorized
+owner rotates it at the source before replacement.
 
 Official guidance:
 
