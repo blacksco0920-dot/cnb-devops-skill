@@ -163,10 +163,10 @@ def pipeline(config):
                'stages': [{'name': 'production adapter pending verification',
                            'script': ['echo "Production is not enabled in this bundle version; staging candidates remain available." >&2\nexit 1']}]}
     production_jobs = {'web_trigger_production_readiness': [copy.deepcopy(blocked)],
-                       'tag_deploy': {'production': [blocked]}}
+                       'tag_deploy.production': [blocked]}
     if config.get('production'):
         production_jobs = {'web_trigger_production_readiness': [production_job(config, 'readiness')],
-                           'tag_deploy': {'production': [production_job(config, 'apply')]}}
+                           'tag_deploy.production': [production_job(config, 'apply')]}
     return {config['test_branch']: {'push': [job]}, project + '-candidate-*': production_jobs}
 
 

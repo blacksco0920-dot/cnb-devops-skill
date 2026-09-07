@@ -72,8 +72,9 @@ class TwoEnvironmentTests(unittest.TestCase):
     def test_production_jobs_consume_candidates_without_building_images(self):
         config = project()
         pipeline = render.pipeline(config)['sample-candidate-*']
+        self.assertIn('tag_deploy.production', list(pipeline))
         for phase, job in [('readiness', pipeline['web_trigger_production_readiness'][0]),
-                           ('apply', pipeline['tag_deploy']['production'][0])]:
+                           ('apply', pipeline['tag_deploy.production'][0])]:
             scripts = '\n'.join(script for stage in job['stages'] for script in stage.get('script', []))
             self.assertIn('candidate_gate.py production', scripts)
             self.assertIn('--branch main', scripts)
@@ -91,6 +92,18 @@ class TwoEnvironmentTests(unittest.TestCase):
         self.assertNotIn('尚未', json.dumps(ui, ensure_ascii=False))
         requirements = {item.get('annotation') for item in ui['require']}
         self.assertTrue({'candidate_status', 'test_runtime_status', 'test_public_status', 'production_readiness_status', 'production_approval_status'} <= requirements)
+
+    def test_disabled_production_is_addressable_by_the_actual_tag_event(self):
+        config = project()
+        del config['production']
+        events = render.pipeline(config)['sample-candidate-*']
+        self.assertIn('tag_deploy.production', list(events))
+        self.assertNotIn('tag_deploy', events)
+        jobs = events['tag_deploy.production']
+        self.assertIsInstance(jobs, list)
+        script = jobs[0]['stages'][0]['script'][0]
+        result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
 
     def test_readiness_button_includes_cnb_required_description(self):
         # Required button fields from CNB's tag-deploy-schema-zh.json (2026-09-07).

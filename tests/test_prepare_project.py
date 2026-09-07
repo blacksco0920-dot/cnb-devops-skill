@@ -118,6 +118,27 @@ class PrepareProjectTests(unittest.TestCase):
         checked = subprocess.run(['bash', '-n'], input=command, capture_output=True, text=True)
         self.assertEqual(0, checked.returncode, checked.stderr)
 
+    def test_exact_owned_nested_tag_event_upgrades_without_touching_other_jobs(self):
+        spec = importlib.util.spec_from_file_location('prepare_event_upgrade', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        branch = 'atlas-candidate-*'
+        job = {'name': 'production', 'stages': [{'script': ['true']}]}
+        previous = {branch: {'tag_deploy': {'production': [job]}}}
+        generated = {branch: {'tag_deploy.production': [job]}}
+        original = copy.deepcopy(previous)
+        original[branch]['web_trigger_notes'] = [{'stages': [{'script': ['echo notes']}]}]
+        raw = yaml.safe_dump(original).encode()
+        upgraded = module.merged_pipeline(raw, generated, previous)
+        actual = yaml.safe_load(upgraded)
+        self.assertNotIn('tag_deploy', actual[branch])
+        self.assertEqual(actual[branch]['tag_deploy.production'], [job])
+        self.assertEqual(actual[branch]['web_trigger_notes'], original[branch]['web_trigger_notes'])
+        self.assertEqual(module.merged_pipeline(upgraded, generated, generated), upgraded)
+        original[branch]['tag_deploy']['production'][0]['stages'][0]['script'] = ['echo drift']
+        with self.assertRaises(module.PreparationError):
+            module.merged_pipeline(yaml.safe_dump(original).encode(), generated, previous)
+
     def test_core_drift_blocks_before_writing_anything(self):
         root, config = self.project()
         self.run_prepare(root, '--apply')

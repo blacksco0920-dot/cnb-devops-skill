@@ -38,7 +38,7 @@
     "project.example.yml": "2f38bf5e99279eb9e5732e15273be0d21432e59a0959efffdf03c938fcfa4e8e",
     "project.schema.json": "0ec72e4dc24715dac33600ad9fc8d0674eb5a9d3070e09968fd73bbfe00b4082",
     "templates/github-sync.yml.tmpl": "7e3b7700d9e8c8e26588348f6cf623b22c96d9b40931d2157657abf19cd09b86",
-    "templates/render.py": "e34214f76969d9e49c9aed8ab7b61fddba6e5fcce30631ec27ccdb8f14d6b01e"
+    "templates/render.py": "15dd7dce5032c4e9d887a11a3dbf580e7163b5f20110ebb4ad29c1447a44d2a6"
   },
   "provenance": [
     {
