@@ -53,10 +53,11 @@ def strict_json(raw):
     return json.loads(raw, object_pairs_hook=pairs)
 
 
-def paths(project):
+def paths(project, environment='test'):
     require(isinstance(project, str) and re.fullmatch(r'[a-z][a-z0-9-]{0,39}', project), 'CADDY_PROJECT_INVALID')
-    return (ROOT / 'etc/caddy/Caddyfile', ROOT / f'etc/caddy/cnb-devops/{project}-test.caddy',
-            ROOT / f'opt/cnb-devops/{project}/test/v1/host-policy.json')
+    require(environment in ('test', 'production'), 'CADDY_ENVIRONMENT_INVALID')
+    return (ROOT / 'etc/caddy/Caddyfile', ROOT / f'etc/caddy/cnb-devops/{project}-{environment}.caddy',
+            ROOT / f'opt/cnb-devops/{project}/{environment}/v1/host-policy.json')
 
 
 def safe_directory(path):
@@ -81,9 +82,9 @@ def read_safe(path):
         return stream.read(LIMIT + 1), info
 
 
-def render_sites(policy, project, policy_sha):
+def render_sites(policy, project, policy_sha, environment='test'):
     require(policy.get('schema') == 'cnb-devops-host-policy/v1' and policy.get('project') == project
-            and policy.get('environment') == 'test', 'CADDY_POLICY_INVALID')
+            and environment in ('test', 'production') and policy.get('environment') == environment, 'CADDY_POLICY_INVALID')
     routes = {}
     seen = set()
     try:
@@ -103,7 +104,7 @@ def render_sites(policy, project, policy_sha):
         require(1 <= len(routes) <= 16 and seen == set(policy['services']), 'CADDY_SERVICE_MAPPING_INCOMPLETE')
     except (KeyError, TypeError, ValueError) as error:
         raise CaddyError('CADDY_POLICY_INVALID') from error
-    text = f'# cnb-devops {project}/test policy_sha256={policy_sha}\n'
+    text = f'# cnb-devops {project}/{environment} policy_sha256={policy_sha}\n'
     for host, (_role, port) in sorted(routes.items()):
         text += f'\nhttps://{host} {{\n\treverse_proxy 127.0.0.1:{port}\n}}\n'
     return text.encode(), sorted(routes)
@@ -226,14 +227,14 @@ def locked():
         os.close(fd)
 
 
-def configure(project, policy_sha, baseline_sha, apply=False):
+def configure(project, policy_sha, baseline_sha, apply=False, environment='test'):
     require(all(isinstance(v, str) and re.fullmatch('[0-9a-f]{64}', v) for v in (policy_sha, baseline_sha)),
             'CADDY_HASH_INVALID')
-    config_path, site_path, policy_path = paths(project)
+    config_path, site_path, policy_path = paths(project, environment)
     check_system()
     policy_raw, _ = read_safe(policy_path)
     require(sha(policy_raw) == policy_sha, 'CADDY_POLICY_DRIFT')
-    site, domains = render_sites(strict_json(policy_raw), project, policy_sha)
+    site, domains = render_sites(strict_json(policy_raw), project, policy_sha, environment)
     original, info = read_safe(config_path)
     suffix = ('\nimport ' + str(site_path) + '\n').encode()
     existing = site_path.exists() or site_path.is_symlink()
@@ -249,7 +250,7 @@ def configure(project, policy_sha, baseline_sha, apply=False):
     check_conflicts(before, domains)
     candidate = adapt(baseline + b'\n' + site)
     require(running_config() == (candidate if existing else before), 'CADDY_RUNNING_CONFIG_DRIFT')
-    result = {'schema': 'cnb-native-caddy/v1', 'project': project, 'environment': 'test',
+    result = {'schema': 'cnb-native-caddy/v1', 'project': project, 'environment': environment,
               'status': 'unchanged' if existing else 'planned', 'policy_sha256': policy_sha,
               'baseline_sha256': baseline_sha, 'site_sha256': sha(site), 'domains': domains,
               'site_path': str(site_path), 'site': site.decode(), 'https_verified': False}
@@ -295,13 +296,14 @@ def configure(project, policy_sha, baseline_sha, apply=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project', required=True)
+    parser.add_argument('--environment', choices=('test', 'production'), default='test')
     parser.add_argument('--policy-sha256', required=True)
     parser.add_argument('--baseline-sha256', required=True)
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
     require(os.geteuid() == 0, 'CADDY_ROOT_REQUIRED')
     with locked() if args.apply else contextlib.nullcontext():
-        result = configure(args.project, args.policy_sha256, args.baseline_sha256, args.apply)
+        result = configure(args.project, args.policy_sha256, args.baseline_sha256, args.apply, args.environment)
     print(json.dumps(result, sort_keys=True))
 
 

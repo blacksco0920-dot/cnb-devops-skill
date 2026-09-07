@@ -2,7 +2,9 @@
 import copy
 import hashlib
 import importlib.util
+import io
 import json
+import contextlib
 from pathlib import Path
 import tempfile
 import subprocess
@@ -45,6 +47,70 @@ class BootstrapTests(unittest.TestCase):
         self.b = load_bootstrap()
         self.policy, self.spec = policy_fixture(), spec_fixture()
 
+    def production_policy(self):
+        policy = copy.deepcopy(self.policy)
+        policy.update(environment="production", networks=["sample-production"])
+        policy["database"].update(host="sample-production-postgres", container="sample-production-postgres")
+        policy["redis"].update(host="sample-production-redis", container="sample-production-redis")
+        return policy
+
+    def test_production_bootstrap_has_separate_resources_and_rejects_test_database(self):
+        policy = self.production_policy()
+        self.b.validate_spec(self.spec, policy, "a" * 64, apply=True)
+        model = self.b.compose_model(policy, self.spec, "b" * 64)
+        self.assertEqual(model["name"], "sample-production-data")
+        self.assertEqual(model["services"]["postgres"]["container_name"], "sample-production-postgres")
+        self.assertEqual(model["volumes"]["redis-data"]["name"], "sample-production-redis-data")
+        self.assertEqual(model["services"]["redis"]["labels"]["io.cnb-devops.environment"], "production")
+        runtime = self.b.runtime_environment(policy, self.spec, self.b.generate_credentials(self.spec))
+        self.assertIn(b"@sample-production-postgres:5432/", runtime)
+        policy["database"].update(host="sample-test-postgres", container="sample-test-postgres")
+        with self.assertRaises(self.b.BootstrapError):
+            self.b.validate_spec(self.spec, policy, "a" * 64, apply=True)
+
+    def test_production_bootstrap_first_write_and_lock_use_production_state(self):
+        policy = self.production_policy()
+        writes = []
+        def first_write(path, *_args):
+            writes.append(str(path))
+            raise RuntimeError("stop before writing")
+        installer = mock.Mock()
+        installer.install_file.side_effect = first_write
+        bundle = {"policy": policy, "host": mock.Mock(POLICY_SHA256="a" * 64)}
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary) / "os-release"
+            release.write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+            actual_path = Path
+            def path(value):
+                return release if value == "/etc/os-release" else actual_path(value)
+            with mock.patch.object(self.b, "Path", side_effect=path), \
+                 mock.patch.object(self.b.os, "geteuid", return_value=0), \
+                 mock.patch.object(self.b, "ensure_docker"), \
+                 mock.patch.object(self.b, "inventory_resources", return_value={"network": {}, "volume": {}, "container": {}}):
+                with self.assertRaisesRegex(RuntimeError, "stop before writing"):
+                    self.b.apply_bootstrap(installer, bundle, self.spec, "b" * 64)
+        self.assertEqual(writes, ["/var/lib/cnb-devops/sample/production/bootstrap/identity.json"])
+        with mock.patch.object(self.b.os, "geteuid", return_value=0), \
+             mock.patch.object(self.b.os, "open", side_effect=OSError("no write")) as opened:
+            with self.assertRaises(OSError), self.b.bootstrap_lock("sample", "production"):
+                self.fail("lock must not succeed")
+        self.assertEqual(str(opened.call_args.args[0]), "/run/lock/cnb-devops-sample-production-bootstrap.lock")
+
+    def test_production_preview_reports_real_environment(self):
+        raw = self.b.canonical(self.spec)
+        installer = mock.Mock()
+        installer.read_file.return_value = raw
+        installer.strict_json.return_value = self.spec
+        bundle = {"policy": self.production_policy(), "host": mock.Mock(POLICY_SHA256="a" * 64)}
+        output = io.StringIO()
+        with mock.patch.object(self.b, "load_bundle", return_value=(installer, bundle)), contextlib.redirect_stdout(output):
+            self.b.main(["--bundle-dir", "/reviewed", "--lock-sha256", "c" * 64,
+                         "--spec", "/reviewed/spec.json", "--spec-sha256", self.b.sha(raw)])
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["environment"], "production")
+        self.assertEqual(result["status"], "preview")
+        self.assertIn("production release verification", result["remaining"])
+
     def test_only_dedicated_policy_and_digest_images_are_supported(self):
         self.b.validate_spec(self.spec, self.policy, "a" * 64, apply=True)
         for mutate in (
@@ -64,6 +130,13 @@ class BootstrapTests(unittest.TestCase):
     def test_offline_plan_can_explain_required_image_pins(self):
         self.spec["images"]["postgres"] = None
         self.b.validate_spec(self.spec, self.policy, "a" * 64)
+        with self.assertRaises(self.b.BootstrapError):
+            self.b.validate_spec(self.spec, self.policy, "a" * 64, apply=True)
+
+    def test_optional_caddy_package_requires_exact_approved_version(self):
+        self.spec["docker_packages"]["caddy"] = "2.6.2-1ubuntu0.24.04.3"
+        self.b.validate_spec(self.spec, self.policy, "a" * 64, apply=True)
+        self.spec["docker_packages"]["caddy"] = "latest"
         with self.assertRaises(self.b.BootstrapError):
             self.b.validate_spec(self.spec, self.policy, "a" * 64, apply=True)
 

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Preview or root-install one fixed test controller on an already provisioned Ubuntu host.
+"""Preview or root-install one fixed environment controller on a provisioned Ubuntu host.
 
 No dependency downloads, database creation, cloud calls, recovery or production activation.
 Runtime values enter only from an administrator's protected local file; output is metadata.
 """
 import argparse
+import base64
 import fcntl
 import hashlib
 import json
@@ -20,6 +21,11 @@ from datetime import datetime, timezone
 
 class InstallError(Exception):
     pass
+
+
+PRODUCTION_FILES = {"production-release.py": ("host/production-release.py", 0o555),
+                    "production-authority.json": ("production-authority.json", 0o444),
+                    "approval-ed25519.pub": ("approval-ed25519.pub", 0o444)}
 
 
 def canonical(model):
@@ -106,8 +112,42 @@ def verify_bundle(bundle_dir, lock_sha256=None, *, require_trusted=False):
     policy_sha = digest(files["host-policy.json"])
     if digest(files["docker-compose.yml"]) != policy["compose_sha256"]:
         raise InstallError("compose_identity_mismatch")
-    if files["tat-command.sh"] != host.render_tat_template(policy, digest(files["host/tat-deploy-test.py"]), policy_sha):
+    if policy["environment"] == "production":
+        if not {source for source, _mode in PRODUCTION_FILES.values()} <= files.keys():
+            raise InstallError("production_authority_files_missing")
+        wrapper = ModuleType("installed_production_authorization")
+        wrapper.__file__ = str(bundle_dir / "host/production-release.py")
+        exec(compile(files["host/production-release.py"], wrapper.__file__, "exec"), wrapper.__dict__)
+        try:
+            authority = wrapper.validate_authority(strict_json(files["production-authority.json"]))
+        except Exception as error:
+            raise InstallError("production_authority_invalid") from error
+        expected = {"schema": "cnb-production-authority/v1", "project": policy["project"], "environment": "production",
+                    "controller_program_sha256": digest(files["host/tat-deploy-test.py"]),
+                    "host_policy_sha256": policy_sha, "controller_compose_sha256": digest(files["docker-compose.yml"]),
+                    "approval_public_key_sha256": digest(files["approval-ed25519.pub"])}
+        if authority != expected:
+            raise InstallError("production_authority_mismatch")
+        public = files["approval-ed25519.pub"]
+        match = re.fullmatch(rb"-----BEGIN PUBLIC KEY-----\n([A-Za-z0-9+/]{59}=)\n-----END PUBLIC KEY-----\n", public)
+        der = base64.b64decode(match[1], validate=True) if match else b""
+        if len(der) != 44 or der[:12] != bytes.fromhex("302a300506032b6570032100") or base64.b64encode(der) != match[1]:
+            raise InstallError("approval_ed25519_spki_required")
+        template = wrapper.render_tat_template(policy, digest(files["host/production-release.py"]), digest(files["production-authority.json"]))
+    else:
+        template = host.render_tat_template(policy, digest(files["host/tat-deploy-test.py"]), policy_sha)
+    if files["tat-command.sh"] != template:
         raise InstallError("tat_shim_mismatch")
+    if "recovery-policy.json" in files:
+        if "host/recover-project.py" not in files:
+            raise InstallError("recovery_program_missing")
+        recovery = ModuleType("installed_project_recovery")
+        recovery.__file__ = str(bundle_dir / "host/recover-project.py")
+        exec(compile(files["host/recover-project.py"], recovery.__file__, "exec"), recovery.__dict__)
+        try:
+            recovery.validate_recovery_policy(strict_json(files["recovery-policy.json"]), policy, policy_sha)
+        except Exception as error:
+            raise InstallError("recovery_policy_invalid") from error
     host.configure_policy(policy, policy_sha256=policy_sha)
     return {"host": host, "policy": policy, "files": files, "raw_lock": raw_lock,
             "lock_sha256": digest(raw_lock), "version": lock["version"]}
@@ -190,7 +230,8 @@ def check_dependencies(host, release_account):
         raise InstallError("ubuntu_24_04_required")
     if sys.version_info < (3, 12):
         raise InstallError("python_3_12_required")
-    for binary in (host.DOCKER, host.CURL):
+    binaries = (host.DOCKER, host.CURL) + (("/usr/bin/openssl",) if host.POLICY["environment"] == "production" else ())
+    for binary in binaries:
         host._regular_file(Path(binary), 128 * 1024 * 1024)
     info = host._regular_file(host.DOCKER_CONFIG, 1024 * 1024, 0o600)
     if (info.st_uid, info.st_gid) != (release_account.pw_uid, release_account.pw_gid):
@@ -284,6 +325,11 @@ def apply_install(plan, runtime_env):
              "docker-compose.yml": (plan["files"]["docker-compose.yml"], 0o444),
              "tat-command.sh": (plan["files"]["tat-command.sh"], 0o444),
              "artifact-lock.json": (plan["raw_lock"], 0o444)}
+    if policy["environment"] == "production":
+        fixed.update({name: (plan["files"][source], mode) for name, (source, mode) in PRODUCTION_FILES.items()})
+    if "recovery-policy.json" in plan["files"]:
+        fixed.update({"recovery-policy.json": (plan["files"]["recovery-policy.json"], 0o444),
+                      "recover-project.py": (plan["files"]["host/recover-project.py"], 0o555)})
     # Completed installation is read-only even after ordinary release changes its runtime env.
     receipt_path = install / "installation.json"
     if receipt_path.exists():
@@ -365,7 +411,7 @@ def main(argv=None):
     plan = verify_bundle(values.bundle_dir, values.lock_sha256, require_trusted=values.apply)
     status = apply_install(plan, values.runtime_env) if values.apply else "preview"
     print(json.dumps({"schema": "cnb-install-result/v1", "status": status,
-                      "project": plan["policy"]["project"], "environment": "test", "version": plan["version"],
+                      "project": plan["policy"]["project"], "environment": plan["policy"]["environment"], "version": plan["version"],
                       "artifact_lock_sha256": plan["lock_sha256"],
                       "requires": ["Ubuntu 24.04", "Docker Compose v2", "pre-existing empty PostgreSQL database",
                                    "release user Docker access", "private TCR pull credentials", "approved external networks"]},

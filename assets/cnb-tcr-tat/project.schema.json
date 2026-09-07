@@ -460,6 +460,126 @@
     },
     "github_sync": {
       "type": "boolean"
+    },
+    "production": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "$ref": "#/properties/host"
+        },
+        "services": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "environment": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[A-Z][A-Z0-9_]*$"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "environment_refs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[A-Z][A-Z0-9_]*$"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[A-Z][A-Z0-9_]*$"
+                }
+              },
+              "loopback_port": {
+                "type": "integer",
+                "minimum": 1024,
+                "maximum": 65535
+              }
+            }
+          }
+        },
+        "tat_import": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^https://cnb\\.cool/[a-zA-Z0-9_/-]+/-/blob/[a-zA-Z0-9_/-]+\\.ya?ml$"
+        },
+        "approval_public_key": {
+          "type": "string",
+          "minLength": 110,
+          "maxLength": 120,
+          "pattern": "^-----BEGIN PUBLIC KEY-----\\n[A-Za-z0-9+/]{59}=\\n-----END PUBLIC KEY-----\\n$"
+        }
+      },
+      "required": [
+        "host",
+        "tat_import",
+        "approval_public_key"
+      ]
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mounts": {
+          "type": "object",
+          "maxProperties": 256,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+          },
+          "additionalProperties": {
+            "enum": [
+              "backup",
+              "rebuild"
+            ]
+          }
+        },
+        "required_nonempty_tables": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "schema": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_$]{0,62}$"
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_$]{0,62}$"
+              },
+              "minimum_rows": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "schema",
+              "name",
+              "minimum_rows"
+            ]
+          }
+        }
+      },
+      "required": [
+        "mounts",
+        "required_nonempty_tables"
+      ]
     }
   },
   "required": [

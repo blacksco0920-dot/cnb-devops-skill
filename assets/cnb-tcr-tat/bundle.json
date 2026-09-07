@@ -2,34 +2,43 @@
   "compatibility": {
     "controller_source": "same application repository and commit",
     "database": "existing isolated PostgreSQL or bootstrap-created PostgreSQL 16; distinct database/user per project",
-    "environment": "test only; production blocked",
+    "environment": "test plus explicitly configured production using a tested candidate and local administrator signature",
     "generator": "Python 3.12+, PyYAML 6.0.2, jsonschema 4.25.1",
     "host": "Ubuntu 24.04, Linux amd64, Docker Engine and Compose v2, non-root ubuntu Docker user",
-    "installation": "project installer plus first-host Ubuntu 24.04/PostgreSQL 16/dedicated Redis 7 preset; active-version upgrade not included",
+    "installation": "SSH setup for Ubuntu 24.04, isolated PostgreSQL 16 and Redis 7, existing native Caddy or explicitly pinned initial Caddy installation; active-version upgrade not included",
     "runtime": "Python 3.12+ standard library; Node.js 22; Bash; Git"
   },
   "files": {
-    "ci/candidate_gate.py": "04ee9581c4664d85e71ee4ab552f2ba9dad7de5edb82a2c8ec682bfdcba83908",
+    "admin/publish-production-approval.mjs": "48d9467be1ae9cf184537e0de6102b9598dcb83d25f8dc6f0e109e2b66c69523",
+    "admin/sign-production-approval.mjs": "621dc7a79dd77261a36c8f115fac0067c1cb9933128ffc0ffead8c7ff1f76e5c",
+    "ci/candidate_gate.py": "aae1dc140c4b5715a5e7bf054b532a6564b63bd891894b3392eacd40ab16a8b4",
     "ci/candidate_manifest.py": "7a0d2b0df0f7c76dae4964ea93f994ef181dd40be2668d9761246d1a2c6b9d2c",
     "ci/extract-docker-push-digest.sh": "369ef30856bc3832cb9705ccb25f5ff36984760aed6363cfbd0d7037a006c5e2",
+    "ci/production-contract.mjs": "8ebf96ecdfea14b5f66a7a4e25ba80242b48f5b992e3295ebffe981397f7b9d1",
+    "ci/production_annotations.py": "6b5142c59b6c216774fe4820a41b1d479546ec5b0777df54d08bb1b9c6ed23f6",
     "ci/publish-candidate-tag.sh": "343bf74a972bac9ff84d7f5de296a62c387776af33218bb8e6aa287ad09fabc3",
     "ci/release-identity.mjs": "1b3b115cc84d7c09d340e2ed35fc2276f823b376ff9e4f473ee59921885b705b",
-    "ci/release-request.mjs": "82e5116f716d594d32f2f1b00a5be9940a207d6ce4654d6d52c338cfd7a3350a",
-    "ci/run-tat-release.mjs": "30d4f14262fbc62b3b441d8e4f0e2f7898b21e9f59d9cd3757be888959b0c562",
-    "dependencies/SOURCES.md": "143bf1182b23c34ed55d1b29731fab4e76f874d64de7a5b0b9b095e439061f05",
+    "ci/release-request.mjs": "3ab178e2b43158b8b811e283d1f6b13922222e08595503c127adfa5738a53711",
+    "ci/run-production-deploy.mjs": "cdd5cd2c1d05170bce2a14d6af71e52d9f8addf4cdb010b4be7f3b0185324c1d",
+    "ci/run-tat-release.mjs": "5c97eefcc9a5856e5c1620c204c73a473f7d04cf2bd49734740e4ef9224b9ef9",
+    "ci/strict-json.mjs": "edc1f147ba4f9fb07a8d2f848e7360a1751563394e5d2c60af31125cf1fe7afe",
+    "dependencies/SOURCES.md": "724bb7f8aa32fc462ebde1be469781a7b34710f45bfa8e9aeadca2f821ba2177",
     "dependencies/THIRD_PARTY.md": "1a64e8bd121e3241d119e6412d92c6e8f0e7e06b63f26dba107c68d660ddad62",
     "dependencies/package-lock.json": "2e480e70f7652ac7e0753af6e11445a7f93fa4ed911dcf485d28c562a295ffda",
     "dependencies/package.json": "b52f23c648264c0afae3163f6bf0c3f5ccf573331103adf3c0bbf300c9d38b3f",
     "host/README.md": "85a4f925bacdce8c6781715bff4b9d4b146a014f178e9257881b1b448d2021bd",
-    "host/bootstrap-host.py": "3efc0d995e5e681c92959c8583ec3cea7676900e073598a700858e3ce89ab193",
-    "host/configure-native-caddy.py": "40d327f3acc00e162049787cf7b020029818c496ea41854f09181913f7251628",
-    "host/install-project.py": "effd1889a5410f7073a016f3739dfb1d950f570cf60b8a7ca2e65a8d20adefed",
+    "host/bootstrap-host.py": "f3c17022f191f171e60aa85ad66f56f240412ec0856edf1f984ef804f45364b4",
+    "host/configure-native-caddy.py": "73cf7a1568e27f14e2489bda1aa19e27777fa606c9f2b4c8349b17d4fa8904c6",
+    "host/install-project.py": "2859b1abec92db30b06cfed835a1fa4b3bb1abcaac34bcd5fc97bd95506aea14",
+    "host/production-release.py": "34a004f5415ccac852875e7c4ef9813c9b854b49fea457a8365bceb6c6a1ae49",
+    "host/recover-project.py": "8f414576a2480dab6da18fc9aba4129852a35c98c4e2c0fe5e250d972a93a208",
+    "host/setup-project.py": "ccb5917b7c4c657e0b2e38253db66ff9dec217173231cb8abb586284d1cc16f2",
     "host/tat-command.sh.tmpl": "c6b310a7af1abd85bc834393595b82dab16481a5fbcae0f1a9a04a8f8ce06e9d",
-    "host/tat-deploy-test.py": "58fcff706de62642a62c9f1938af32829b7ae9ddd3e5d3af6882c7430c838392",
+    "host/tat-deploy-test.py": "734a20fe7144d344610eecee39b43e2c15798cce2aeb24554c6ea6d2874ea0db",
     "project.example.yml": "2f38bf5e99279eb9e5732e15273be0d21432e59a0959efffdf03c938fcfa4e8e",
-    "project.schema.json": "4faf425e820a820778515893db818f8d478130eedfac64c564756af19bab80e0",
+    "project.schema.json": "0ec72e4dc24715dac33600ad9fc8d0674eb5a9d3070e09968fd73bbfe00b4082",
     "templates/github-sync.yml.tmpl": "7e3b7700d9e8c8e26588348f6cf623b22c96d9b40931d2157657abf19cd09b86",
-    "templates/render.py": "5324f486cc62c22f5c4daf1d2b5f098c7913c65eda4e4136027ba4a60a21da17"
+    "templates/render.py": "3c2607bc64c4663d8da2a09d88b63bbf8dc42bfd5c3dd3f175d90cba99ec9ee2"
   },
   "provenance": [
     {
@@ -64,24 +73,24 @@
   "status": "local-preview",
   "validation": {
     "clean_host_install": "not_run",
-    "external_restore": "not_run",
+    "cloud_evidence": {
+      "application_commit": "0594267c31561a28070aa1965297875f1803e511",
+      "artifact_lock_sha256": "9a62de1efe9dc5bc8ea8e5525f0fb224023c35454f31ca03a8996652bc85060d",
+      "build_url": "https://cnb.cool/laoma-ai/finagent/-/build/logs/cnb-ejk-1k1rir9iu",
+      "candidate_tag": "finagent-candidate-cnb-ejk-1k1rir9iu",
+      "date": "2026-09-06",
+      "metadata_note": "Evidence records the exact installed artifact above. Updating this metadata does not upgrade that installation or attest a newly generated artifact lock.",
+      "scope": "test deployment, database backup before migration, runtime and public availability/release identity, automatic annotated candidate and ready readback; not full business or restore acceptance",
+      "skill_commit": "bde8bd35b9cac3dace29f33b716257e22e51167a"
+    },
+    "external_restore": "implemented and local PostgreSQL 16/file restore verified; current artifact off-host cloud acceptance pending",
     "first_host_bootstrap": "passed on one reset Tencent Cloud Ubuntu 24.04 host with preinstalled Hermes/native Caddy; existing services preserved; see cloud_evidence",
     "local_contract_tests": "passed locally: generated stages, Docker Compose config, canonical host request, candidate and TAT binding with mocked cloud boundary",
     "local_two_project_generation": "passed: one and three services, identical copied core hashes",
     "native_caddy_setup": "passed on the same cloud host: Caddy 2.11.4, existing default site preserved, installed config and running config matched, all three test domains passed HTTPS checks",
-    "new_bundle_cloud_deployment": "passed for FinAgent test deployment and automatic ready candidate; production, external restore and second-project cloud reuse are not validated",
-    "production": "not_enabled",
-    "project_installation": "passed on the same cloud host from an explicitly empty isolated PostgreSQL database; clean image without preinstalled services not tested",
-    "cloud_evidence": {
-      "date": "2026-09-06",
-      "skill_commit": "bde8bd35b9cac3dace29f33b716257e22e51167a",
-      "artifact_lock_sha256": "9a62de1efe9dc5bc8ea8e5525f0fb224023c35454f31ca03a8996652bc85060d",
-      "application_commit": "0594267c31561a28070aa1965297875f1803e511",
-      "build_url": "https://cnb.cool/laoma-ai/finagent/-/build/logs/cnb-ejk-1k1rir9iu",
-      "candidate_tag": "finagent-candidate-cnb-ejk-1k1rir9iu",
-      "scope": "test deployment, database backup before migration, runtime and public availability/release identity, automatic annotated candidate and ready readback; not full business or restore acceptance",
-      "metadata_note": "Evidence records the exact installed artifact above. Updating this metadata does not upgrade that installation or attest a newly generated artifact lock."
-    }
+    "new_bundle_cloud_deployment": "current 0.2 artifact pending; cloud_evidence below records previous 0.1 test deployment only",
+    "production": "implemented and contract-tested; current artifact cloud acceptance pending",
+    "project_installation": "passed on the same cloud host from an explicitly empty isolated PostgreSQL database; clean image without preinstalled services not tested"
   },
-  "version": "0.1.0-preview.2"
+  "version": "0.2.0-preview.1"
 }

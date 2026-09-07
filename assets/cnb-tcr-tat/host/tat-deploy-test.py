@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy one immutable test release using a root-installed project policy.
+"""Deploy one immutable release using a root-installed project policy.
 
 Extracted transaction/snapshot/retention controller; provenance is in bundle.json.
 Ordinary release requires a previously provisioned application and valid release record."""
@@ -174,7 +174,7 @@ def validate_host_policy(model):
         require(type(model) is dict and required <= set(model) <= required | optional)
         require(type(model.get("startup_timeout_seconds", 300)) is int
                 and 1 <= model.get("startup_timeout_seconds", 300) <= 1200)
-        require(model["schema"] == "cnb-devops-host-policy/v1" and model["environment"] == "test")
+        require(model["schema"] == "cnb-devops-host-policy/v1" and model["environment"] in {"test", "production"})
         require(name(model["project"]) and type(model["controller_id"]) is str
                 and re.fullmatch(r"[a-z][a-z0-9-]{0,95}", model["controller_id"]))
         require(name(model["release_user"]) and model["release_user"] != "root")
@@ -268,10 +268,10 @@ def validate_host_policy(model):
                     and type(redis["database"]) is int and 0 <= redis["database"] <= 15)
             if "prefix_env" in redis:
                 require(redis["prefix_env"] in env_keys and env_key(redis["prefix_env"])
-                        and type(redis["prefix"]) is str and redis["prefix"].startswith(model["project"] + "-test:")
+                        and type(redis["prefix"]) is str and redis["prefix"].startswith(model["project"] + "-" + model["environment"] + ":")
                         and re.fullmatch(r"[a-z0-9:_-]{1,128}", redis["prefix"]))
             else:
-                require(redis["host"] == redis["container"] == model["project"] + "-test-redis"
+                require(redis["host"] == redis["container"] == model["project"] + "-" + model["environment"] + "-redis"
                         and redis["database"] == 0)
         if model.get("proxy_container") is not None:
             require(name(model["proxy_container"]))
@@ -293,7 +293,7 @@ def configure_policy(model, *, policy_sha256=None):
     POLICY, POLICY_SHA256 = checked, policy_sha256
     APP_DIR = Path(checked["app_dir"])
     ENV_PATH, COMPOSE_PATH, RELEASE_PATH = APP_DIR / ".env", APP_DIR / "docker-compose.yml", APP_DIR / ".release.json"
-    PROJECT = checked["project"] + "-test"
+    PROJECT = checked["project"] + "-" + checked["environment"]
     DOCKER_CONFIG = Path(checked["docker_config"])
     LOCK_PATH = APP_DIR.parent / ("." + PROJECT + ".deploy.lock")
     TRANSACTION_PATH = APP_DIR / ".release.transaction.json"
@@ -469,6 +469,16 @@ def parse_tat_release_script(data):
             raise ValueError("non-canonical base64url")
         model = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_unique_json_object,
                            parse_constant=_reject_json_constant)
+        if raw != json.dumps(model, sort_keys=True, separators=(",", ":")).encode("ascii"):
+            raise ValueError("non-canonical request")
+        return validate_release_request_model(model)
+    except (ValueError, UnicodeError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise DeploymentError("release_request_invalid") from exc
+
+
+def validate_release_request_model(model):
+    """Recheck even administrator-authorized overrides against the installed policy."""
+    try:
         if (
             type(model) is not dict
             or set(model) != {"schema", "project", "environment", "controller", "git_sha", "controller_commit", "build_id", "images"}
@@ -480,11 +490,10 @@ def parse_tat_release_script(data):
             or model["controller_commit"] != model["git_sha"]
             or type(model["build_id"]) is not str or not BUILD_ID.fullmatch(model["build_id"])
             or type(model["images"]) is not dict or set(model["images"]) != set(SERVICES)
-            or raw != json.dumps(model, sort_keys=True, separators=(",", ":")).encode("ascii")
         ):
             raise ValueError("invalid request binding")
         images = {service: validate_image(service, model["images"][service]) for service in SERVICES}
-    except (ValueError, UnicodeError, TypeError, KeyError, json.JSONDecodeError) as exc:
+    except (ValueError, UnicodeError, TypeError, KeyError) as exc:
         raise DeploymentError("release_request_invalid") from exc
     return {"git_sha": model["git_sha"], "controller_commit": model["controller_commit"],
             "build_id": model["build_id"], "images": images}
@@ -2991,8 +3000,20 @@ def _arguments(argv=None):
     return values, release["images"], _read_controller_compose()
 
 
-def deploy(argv=None):
-    values, images, compose_bytes = _arguments(argv)
+def deploy(argv=None, *, release_override=None, authorize_locked=None):
+    if POLICY.get("environment") == "production" and not callable(authorize_locked):
+        raise DeploymentError("production_authorization_required")
+    if release_override is None:
+        values, images, compose_bytes = _arguments(argv)
+    else:
+        release = validate_release_request_model(release_override)
+        values = argparse.Namespace(git_sha=release["git_sha"], controller_commit=release["controller_commit"],
+                                    build_id=release["build_id"])
+        images, compose_bytes = release["images"], _read_controller_compose()
+    request_model = {"schema": "cnb-release-request/v1", "project": POLICY["project"],
+                     "environment": POLICY["environment"], "controller": CONTROLLER_ID,
+                     "git_sha": values.git_sha, "controller_commit": values.controller_commit,
+                     "build_id": values.build_id, "images": dict(images)}
     controller_program_digest = controller_program_sha256()
     phase = "lock"
     transaction_active = False
@@ -3012,6 +3033,25 @@ def deploy(argv=None):
         except BlockingIOError as exc:
             raise DeploymentError("release_busy") from exc
         _assert_release_unblocked()
+        if authorize_locked is not None:
+            phase = "authorization"
+            cached = authorize_locked(request_model)
+            if cached is not None:
+                expected = {"schema": "cnb-deploy-result/v1", "status": "passed",
+                            "project": POLICY["project"], "environment": POLICY["environment"],
+                            "controller": CONTROLLER_ID, "git_sha": values.git_sha,
+                            "controller_commit": values.controller_commit, "build_id": values.build_id,
+                            "images": images, "controller_program_sha256": controller_program_digest,
+                            "controller_compose_sha256": CONTROLLER_COMPOSE_SHA256,
+                            "policy_sha256": POLICY_SHA256, "container_count": len(SERVICES),
+                            "probe_count": len(PUBLIC_PROBES), "probes": list(PUBLIC_PROBES)}
+                if (type(cached) is not dict or set(cached) != set(expected) | {"database_backup_sha256"}
+                        or any(cached.get(key) != value for key, value in expected.items())
+                        or type(cached["database_backup_sha256"]) is not str
+                        or not SHA256.fullmatch(cached["database_backup_sha256"])):
+                    raise DeploymentError("production_cached_receipt_invalid")
+                sys.stdout.write(json.dumps(cached, sort_keys=True, separators=(",", ":")) + "\n")
+                return 0
 
         phase = "preflight"
         env_info = _regular_file(ENV_PATH, 1024 * 1024, 0o600)

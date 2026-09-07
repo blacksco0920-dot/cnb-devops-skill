@@ -172,7 +172,7 @@ class HostPolicyTests(unittest.TestCase):
 
     def test_policy_rejects_unsafe_paths_duplicate_roles_and_invalid_migration(self):
         for key, value in (("install_dir", "/opt/x/../escape"), ("app_dir", "/tmp/app"),
-                           ("release_user", "ubuntu;id"), ("environment", "production")):
+                           ("release_user", "ubuntu;id"), ("environment", "staging")):
             bad = copy.deepcopy(self.policy)
             bad[key] = value
             with self.subTest(key=key), self.assertRaises(self.host.DeploymentError):

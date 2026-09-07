@@ -2,46 +2,43 @@
 
 首次接入和新增项目先读本页。目标是复用已验证的阶段和工件，只适配业务差异；日常构建、部署和 Tag 生成由流水线执行。接入说明和当前进度分别落到业务仓库的 `docs/DEPLOYMENT.md`、`docs/PROJECT_STATUS.md`，不另建流程平台。
 
-## 来源与本版范围
+## 本版范围与证据
 
-流程依据 ecat 的 `.cnb.yml`、`.cnb/tag_deploy.yml` 及部署脚本，核对基线为 `f52eb1ddf928729b3a4db23d8b0de9211984c4d9`。其项目记录已有 TCR 构建、固定 TAT 测试发布、运行与公网验证、候选 Tag 和生产页面验收；各次运行以自己的 commit/build 回执为准，基线提交本身不代表已上线。
-
-该基线的新生产执行入口仍为 pending/disabled，受控分支祖先检查仍有 future gate。下面记录完整目标流程，但不能声称 ecat 的新生产链路或恢复已经通过。FinAgent 后来的受控生产实操也不能替代 ecat 自身的验收。
-
-本版已将测试发布器、TAT 调用与候选逻辑提取到[可复用包](../assets/cnb-tcr-tat/bundle.json)，并提供配置校验、确定性生成和固定命令配置入口。兼容项目直接按[接入步骤](bootstrap.md)使用，不再依赖维护者本机 ecat 目录。FinAgent 三服务已在保留预装服务的重置测试主机上完成首装、测试发布、公网可用性与发布身份核验及自动候选；固定版本与证据见[执行包实测](../docs/history/2026-09-06-bundle-staging-rehearsal.md)。生产、恢复、完整业务验收和第二项目云端复用仍未完成，下面的完整目标流程不等于本包已全部实现。
+0.2 [可复用包](../assets/cnb-tcr-tat/bundle.json)已包含测试、候选、生产签名/执行、SSH 首装与隔离恢复入口，本地可运行及接口检查已通过；新版本云端全流程和第二项目复用仍待验。0.1 的 FinAgent 测试与候选结果见[执行包实测](../docs/history/2026-09-06-bundle-staging-rehearsal.md)，不作为 0.2 生产证明。来源记录保留在包内，日常接入只需要 Skill 与项目差异，不读取 ecat 或旧私密脚本。
 
 ## 一次性接入
 
-1. **读项目并列差异。** 从已有配置确定服务清单、Dockerfile/构建上下文、验证命令、运行端口、数据存储、源码同步路径；再确定测试/受控分支、候选前缀、TCR 镜像命名和目标环境。只询问无法查到的输入，服务数量与命名不照搬 ecat。
+1. **读项目并列差异。** 从已有配置确定服务清单、Dockerfile/构建上下文、验证命令、运行端口、数据存储、源码同步路径；再确定测试/受控分支、候选前缀、TCR 镜像命名和目标环境。人只补账号、域名、本人验证和生产意图；可从项目或已有授权查到的信息不重复询问。
 2. **先复用再适配。** 先运行包内生成器；已有项目则核对下表对应工件、版本、依赖和验收记录。列出“直接复用／参数适配／缺失”及原因；同一阶段已有合用实现就不重写。目标、路径和允许镜像仓库仍由项目批准的固定配置约束，不能变成任意流水线输入。
-3. **接通基础条件。** AI 准备 CNB 流水线、TCR 推拉权限、测试/生产分开的固定 TAT 命令及权限、主机运行配置和域名方案；敏感值进入 Secret 或主机私密边界。新购主机先盘点预装服务，已有共享主机按[接入分类](project-adoption.md#host-and-account-classification)处理。
+3. **接通基础条件。** AI 从一份配置 prepare 双环境，用私密 SSH 目标和已审摘要运行 `scripts/setup-host.py`，再配置各环境固定 TAT、TCR 推拉权限和 Secret。生产配置只含批准公钥，私钥留本机；本机授权发布 PAT 需目标仓库的 `repo-release:rw`。新主机先盘点预装服务，已有共享主机按[接入分类](project-adoption.md#host-and-account-classification)处理。
 4. **完成必须的人为操作。** 按[人员交接](human-handoffs.md)给出实际页面、已备材料、一个动作和完成标志。本人登录/实名、没有可用 API 的 Secret 控制台配置、项目规定的审批由人完成；不要让人写命令、设计权限或整理技术回执。已完成的操作不重复要求。
 5. **先通测试路径。** 用 Git、受支持的 API/CLI 发起已授权构建并核验结果。普通终端可完成的动作不依赖 Computer Use；浏览器不可控时保留同一流程，仅将必要控制台操作交给人，不为切换工具重建凭据或控制程序。
 
-| ecat 工件位置（参考项目内） | 复用内容 | 新项目需要适配 |
+| 包内入口 | 复用内容 | 新项目需要适配 |
 | --- | --- | --- |
-| `.cnb.yml` | 检查→构建→推送→固定 TAT→候选的阶段顺序和失败中断 | 分支、服务、构建命令、Secret 引用、锁名称 |
-| `scripts/extract-docker-push-digest.sh` | 从一次 push 输出严格提取唯一摘要 | 无项目参数；本包已纳入[同名脚本](../scripts/extract-docker-push-digest.sh) |
-| `deploy/scripts/run-tat-release.mjs`、`release-request.mjs` | Saved Command 回读、请求校验、调用及结果核对 | 固定目标绑定、请求服务映射、SDK 依赖；不可只复制一个入口而遗漏其依赖 |
-| `deploy/runtime/test/tat-command.sh` 及其实际调用的主机程序 | 服务器端固定部署入口 | 应用目录、Compose、数据迁移、健康和业务探针 |
-| `deploy/scripts/candidate_manifest.py`、`publish-candidate-tag.sh` | 清单校验、不可变 Tag 发布和回读 | 完整服务映射、项目/Tag 前缀、允许的 Git remote |
-| `.cnb/tag_deploy.yml`、`candidate_gate.py`、`production_control.py` | 原生页面、就绪/审批门禁、生产控制记录 | 受控分支、审批规则和生产适配器；基线阻断阶段不可当成成品部署程序 |
+| `scripts/prepare-project.py`、`scripts/setup-host.py` | 双环境生成、SSH 串联固定首装入口 | 项目配置、私密目标、APT/镜像摘要和 Caddy 基线 |
+| `ci/run-tat-release.mjs`、`host/tat-deploy-test.py` | 固定命令回读、发布事务及运行/公网核验 | 服务、迁移、探针、目标绑定与环境隔离 |
+| `ci/candidate_manifest.py`、`ci/publish-candidate-tag.sh` | 完整镜像清单、不可变候选及 annotations 回读 | 项目仓库、候选前缀及受控分支 |
+| `admin/sign-production-approval.mjs`、`admin/publish-production-approval.mjs` | 本机独立核验就绪、签名及发布授权 | 生产意图、私密签名密钥与限定仓库的本机 PAT |
+| `ci/run-production-deploy.mjs`、`host/production-release.py` | 生产回执核验、固定公钥验签并复用部署核心 | 已批准候选、prepared 与各环境固定工件摘要 |
+| `host/recover-project.py` | 导出及不同 Docker daemon 上的隔离恢复 | 数据目录分类、非空表要求、导出包与回执摘要 |
 
-这是来源映射，日常接入使用包内固定版本，无需重新读取来源项目。AI 在已有授权范围内适配配置；记录导入来源，只迁移所需依赖，不复制参考项目的凭据、目标 ID 或当前发布状态。缺失的生产适配能力单独说明和确定范围，先完成不依赖它的接入工作。
+表中 `scripts/` 属于 Skill，`ci/admin/host` 随包生成。AI 在已有授权范围内操作代码、命令和回执，不要求人手写配置；不复制来源项目的凭据、目标 ID 或当前发布状态。
 
 ## 接通后由流水线执行
 
 | 阶段 | 输入与执行者 | 产物及完成条件 |
 | --- | --- | --- |
 | 1．检查 | 测试分支 push；CNB 运行项目验证 | 该完整提交的真实检查结果；失败即停止后续构建/发布 |
-| 2．构建与推送 | CNB 构建每个服务一次并推送 TCR | 同一构建的完整 `repository@sha256:digest` 映射，含所需数据库/缓存镜像 |
+| 2．构建与推送 | CNB 构建每个应用服务一次并推送 TCR | 同一构建的完整 `repository@sha256:digest` 映射；数据库/缓存镜像另由 bootstrap spec 固定 |
 | 3．测试部署 | CNB 调用已配置的固定 TAT 命令 | 回读 invocation、服务器实际镜像和健康状态；不是只看调用返回成功 |
 | 4．测试验收 | 已配置的运行、公开访问与业务探针；AI 核对证据 | 构建、运行、公网证据分别通过；mock、数据和恢复范围如实记录 |
 | 5．候选 | CNB 在上述成功后生成 `<项目候选前缀>-<构建ID>` | 创建不可变 Tag，绑定清单与完整镜像集，annotations 回读后最后设 ready |
-| 6．生产门禁 | 候选满足受控分支与适配器条件；就绪检查后由人审批 | 绑定候选的有效就绪和审批记录；合并分支、展示按钮都不等于执行生产 |
+| 6．生产门禁 | main（或配置的生产分支）纳入候选提交；Tag 就绪→本机 sign/publish→CNB owner 批准 | 签名绑定候选、prepared 和时限；原生 owner 批准不会生成 Ed25519 签名，CI 无私钥 |
 | 7．生产执行与验收 | 已授权的部署事件再次检查门禁，再调用固定生产命令 | 使用测试过的同一组 digest；核对实际运行、公开业务及所需备份恢复证据 |
+| 8．恢复验收 | 授权短暂停写 export，SSH/SFTP 下载，再运行 restore-local | 不同本机 Docker daemon、无网络/无端口；数据库及声明备份目录对账，保存真实恢复回执 |
 
-ecat 对应的事件是 `test.push`、`ecat-candidate-*` 下的 `web_trigger_production_readiness` 和 `tag_deploy.production`。这些是来源事实；新项目适配分支与候选前缀，保留事件职责。候选创建是成功流水线的一步，AI 不应在每次发布时临时用 API 拼装候选来代替该阶段。
+生成器按测试分支接 push，候选 Tag 下使用 `web_trigger_production_readiness` 和 `tag_deploy.production`。候选创建是成功流水线的一步；本机 publisher 只发布已签的生产授权，不代替流水线创建候选。具体命令与私密输入见[接入步骤](bootstrap.md)。
 
 门禁细节按需读[CNB 部署页面](cnb-deployment-ui.md)、[发布安全](release-safety.md)。现有 [production-gates 示例](cnb-deployment-ui/examples/candidate-production-gates.yml)是契约示例，内含阻断占位，不能拿它充当已适配的生产执行器。
 
@@ -50,5 +47,5 @@ ecat 对应的事件是 `test.push`、`ecat-candidate-*` 下的 `web_trigger_pro
 - 日常发布复用已接通的事件、脚本、身份和固定命令；AI 主要处理项目变更、发起已授权动作、核对结果和定位异常。
 - 下一会话只先读两个项目文档与当前阶段所需的回执。成功步骤不重做；配置或证据确实失效时只重验受影响部分。恢复阻断按发布安全规则处理，不能跳过。
 - 失败停在实际边界，先修最小问题。例如 TCR 已推送而主机拉取失败，应检查主机网络和拉取权限，不重新构建应用。
-- 若需要新控制仓库、额外签名体系或新的执行框架，先说明现有流程为什么不能满足具体要求；不把这些当普通项目接入的默认步骤。
+- 生产复用包内签名与主机验证，不另建控制仓库或服务。兼容性不足时只说明具体缺口，不把新框架混入普通接入。
 - 当前状态记录阶段耗时、人工介入、直接复用与新增工件，工具可提供时记录 token 用量。缺失数据标未采集，不估造；本地检查数量不代替云端成功或效率证据。

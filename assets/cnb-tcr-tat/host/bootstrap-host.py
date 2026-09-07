@@ -68,10 +68,10 @@ def validate_spec(spec, policy, policy_sha256, *, apply=False):
         if not condition:
             raise ValueError("invalid bootstrap input")
     try:
-        scope = policy["project"] + "-test"
+        scope = policy["project"] + "-" + policy["environment"]
         require(set(spec) == {"schema", "policy_sha256", "images", "docker_packages", "generate_env"})
         require(spec["schema"] == "cnb-first-host/v1" and spec["policy_sha256"] == policy_sha256)
-        require(policy["environment"] == "test" and policy["networks"] == [scope])
+        require(policy["environment"] in ("test", "production") and policy["networks"] == [scope])
         db = policy["database"]
         require(db["container"] == db["host"] == scope + "-postgres" and db["port"] == 5432)
         require(db["admin_user"] == "postgres" and db["user"] != "postgres")
@@ -90,7 +90,7 @@ def validate_spec(spec, policy, policy_sha256, *, apply=False):
                 r"(?:ccr\.ccs\.tencentyun\.com|[a-z0-9.-]+\.tencentcloudcr\.com)/[a-z0-9._/-]+@sha256:[0-9a-f]{64}", image))
             require(".." not in image and "//" not in image)
         require(type(spec["docker_packages"]) is dict)
-        require(set(spec["docker_packages"]) <= {"docker.io", "docker-compose-v2", "curl", "ca-certificates"})
+        require(set(spec["docker_packages"]) <= {"docker.io", "docker-compose-v2", "curl", "ca-certificates", "caddy"})
         require(all(type(v) is str and re.fullmatch(r"[0-9][A-Za-z0-9.+:~_-]{0,127}", v)
                    for v in spec["docker_packages"].values()))
         generated = spec["generate_env"]
@@ -134,12 +134,12 @@ def ensure_docker(spec):
 
 
 def labels(policy, spec_sha256):
-    return {"io.cnb-devops.project": policy["project"], "io.cnb-devops.environment": "test",
+    return {"io.cnb-devops.project": policy["project"], "io.cnb-devops.environment": policy["environment"],
             "io.cnb-devops.bootstrap-spec": spec_sha256}
 
 
 def compose_model(policy, spec, spec_sha256):
-    scope = policy["project"] + "-test"
+    scope = policy["project"] + "-" + policy["environment"]
     services = {}
     owned = labels(policy, spec_sha256)
     for role, image in spec["images"].items():
@@ -164,7 +164,7 @@ def compose_model(policy, spec, spec_sha256):
 
 
 def inventory_resources(policy, spec, execute=run):
-    scope = policy["project"] + "-test"
+    scope = policy["project"] + "-" + policy["environment"]
     wanted = {"network": [scope], "volume": [scope + "-" + r + "-data" for r in spec["images"]],
               "container": [scope + "-" + r for r in spec["images"]]}
     result = {kind: {} for kind in wanted}
@@ -181,7 +181,7 @@ def inventory_resources(policy, spec, execute=run):
 
 
 def validate_resources(policy, spec, spec_sha256, inventory):
-    scope, owned = policy["project"] + "-test", labels(policy, spec_sha256)
+    scope, owned = policy["project"] + "-" + policy["environment"], labels(policy, spec_sha256)
     for kind, resources in inventory.items():
         for name, resource in resources.items():
             actual_labels = resource.get("Config", {}).get("Labels", {}) if kind == "container" else resource.get("Labels", {})
@@ -287,8 +287,8 @@ def apply_bootstrap(installer, bundle, spec, spec_sha256, runtime_import=None):
     ensure_docker(spec)
     existing = inventory_resources(policy, spec)
     validate_resources(policy, spec, spec_sha256, existing)
-    scope = policy["project"] + "-test"
-    state = Path("/var/lib/cnb-devops") / policy["project"] / "test/bootstrap"
+    scope = policy["project"] + "-" + policy["environment"]
+    state = Path("/var/lib/cnb-devops") / policy["project"] / policy["environment"] / "bootstrap"
     identity = {"schema": "cnb-first-host-state/v1", "policy_sha256": spec["policy_sha256"], "spec_sha256": spec_sha256}
     if state.exists() and any(state.iterdir()):
         recorded, _digest = bundle["host"].read_root_owned_json(state / "identity.json")
@@ -377,10 +377,12 @@ def apply_bootstrap(installer, bundle, spec, spec_sha256, runtime_import=None):
 
 
 @contextlib.contextmanager
-def bootstrap_lock(project):
+def bootstrap_lock(project, environment="test"):
     if os.geteuid() != 0:
         raise BootstrapError("root_administrator_required")
-    path = Path("/run/lock") / ("cnb-devops-" + project + "-test-bootstrap.lock")
+    if not isinstance(project, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", project) or environment not in ("test", "production"):
+        raise BootstrapError("bootstrap_scope_invalid")
+    path = Path("/run/lock") / ("cnb-devops-" + project + "-" + environment + "-bootstrap.lock")
     descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
     try:
         info = os.fstat(descriptor)
@@ -413,13 +415,14 @@ def main(argv=None):
     validate_spec(spec, bundle["policy"], bundle["host"].POLICY_SHA256, apply=args.apply)
     runtime = None
     if args.apply:
-        with bootstrap_lock(bundle["policy"]["project"]):
+        with bootstrap_lock(bundle["policy"]["project"], bundle["policy"]["environment"]):
             runtime = apply_bootstrap(installer, bundle, spec, args.spec_sha256, args.runtime_import)
     print(json.dumps({"schema": "cnb-first-host-result/v1", "status": "ready" if args.apply else "preview",
-                      "project": bundle["policy"]["project"], "environment": "test", "spec_sha256": args.spec_sha256,
+                      "project": bundle["policy"]["project"], "environment": bundle["policy"]["environment"], "spec_sha256": args.spec_sha256,
                       "missing_image_pins": sorted(key for key, value in spec["images"].items() if value is None),
                       "runtime_env_path": str(runtime) if runtime else None,
-                      "remaining": ["private TCR pull credential import", "approved proxy routes", "install-project.py", "test release verification"]}, sort_keys=True))
+                      "remaining": ["private TCR pull credential import", "approved proxy routes", "install-project.py",
+                                    bundle["policy"]["environment"] + " release verification"]}, sort_keys=True))
     return 0
 
 

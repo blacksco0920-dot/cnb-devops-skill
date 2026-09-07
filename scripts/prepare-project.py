@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate, preview and explicitly apply a pinned, offline project bundle."""
 import argparse
+import base64
 import copy
 import difflib
 import hashlib
@@ -187,46 +188,15 @@ def prepare(root, config_path):
     spec = importlib.util.spec_from_file_location('cnb_bundle_render', BUNDLE / 'templates/render.py')
     render = importlib.util.module_from_spec(spec)
     exec(compile(files['templates/render.py'], str(BUNDLE / 'templates/render.py'), 'exec'), render.__dict__)
-    policy, ci_config, compose = render.model(config, digest(files['host/tat-deploy-test.py']))
     host_spec = importlib.util.spec_from_file_location('cnb_host_policy', BUNDLE / 'host/tat-deploy-test.py')
     host_module = importlib.util.module_from_spec(host_spec)
     exec(compile(files['host/tat-deploy-test.py'], str(BUNDLE / 'host/tat-deploy-test.py'), 'exec'), host_module.__dict__)
-    try:
-        host_module.validate_host_policy(policy)
-    except host_module.DeploymentError as error:
-        raise PreparationError('project differences do not satisfy the host policy contract') from error
-    outputs = {str(VENDOR / relative): data for relative, data in files.items()
-               if relative.split('/')[0] in {'host', 'ci', 'dependencies'}}
-    outputs[str(VENDOR / 'bundle.json')] = json_bytes(manifest)
-    outputs[str(VENDOR / 'host-policy.json')] = json_bytes(policy)
-    outputs[str(VENDOR / 'ci-config.json')] = json_bytes(ci_config)
-    outputs[str(VENDOR / 'docker-compose.yml')] = compose
-    replacements = {'INSTALL_DIR': policy['install_dir'], 'RELEASE_USER': policy['release_user'],
-                    'RELEASE_HOME': policy['release_home'],
-                    'CONTROLLER_SHA256': digest(files['host/tat-deploy-test.py']),
-                    'POLICY_SHA256': digest(json_bytes(policy)), 'COMPOSE_SHA256': digest(compose)}
-    shim = files['host/tat-command.sh.tmpl'].decode()
-    for key, value in replacements.items():
-        shim = shim.replace('@' + key + '@', value)
-    if re.search(r'@[A-Z_]+@', shim):
-        raise PreparationError('unresolved TAT template field')
-    outputs[str(VENDOR / 'tat-command.sh')] = shim.encode()
-    command_spec = {'schema_version': 1, 'project': config['project'], 'environment': config['environment'],
-                    'version': manifest['version'], 'target': {'region': None, 'instance_id': None},
-                    'expected_artifacts': {'program_sha256': replacements['CONTROLLER_SHA256'],
-                                           'compose_sha256': replacements['COMPOSE_SHA256'],
-                                           'policy_sha256': replacements['POLICY_SHA256']},
-                    'expectedCommand': {'CommandName': config['project'][:12] + '-' + digest(config['project'].encode())[:8] + '-test-v' + manifest['version'],
-                                        'Description': 'Pinned project test release', 'CommandType': 'SHELL',
-                                        'Content': shim, 'Username': policy['release_user'],
-                                        'WorkingDirectory': policy['release_home'], 'Timeout': 3600,
-                                        'EnableParameter': True, 'DefaultParameters': {'release_request_b64url': 'INVALID'},
-                                        'DefaultParameterConfs': [{'ParameterName': 'release_request_b64url',
-                                                                   'ParameterValue': 'INVALID', 'ParameterDescription': ''}]}}
-    outputs[str(VENDOR / 'tat-spec.template.json')] = json_bytes(command_spec)
-    artifacts = {str(Path(name).relative_to(VENDOR)): digest(data) for name, data in outputs.items()}
-    outputs[str(VENDOR / 'artifact-lock.json')] = json_bytes({'schema': 'cnb-devops-artifacts/v1',
-                                                            'version': manifest['version'], 'files': artifacts})
+    generated = environment_artifacts(config, manifest, files, render, host_module)
+    outputs = {str(VENDOR / name): data for name, data in generated.items()}
+    if config.get('production'):
+        production = render.environment_config(config, 'production')
+        generated_production = environment_artifacts(production, manifest, files, render, host_module)
+        outputs.update({str(VENDOR / 'production' / name): data for name, data in generated_production.items()})
     new_pipeline = render.pipeline(config)
     lock_bytes = current_bytes(root, LOCK)
     previous = json.loads(lock_bytes) if lock_bytes else {}
@@ -240,7 +210,7 @@ def prepare(root, config_path):
     if journal and cnb is not None and digest(cnb) == journal.get('new_hashes', {}).get('.cnb.yml'):
         old_pipeline = new_pipeline
     outputs['.cnb.yml'] = merged_pipeline(cnb, new_pipeline, old_pipeline)
-    outputs['.cnb/tag_deploy.yml'] = render.yaml_bytes(render.tag_deploy())
+    outputs['.cnb/tag_deploy.yml'] = render.yaml_bytes(render.tag_deploy(bool(config.get('production'))))
     outputs['deploy/project.yml'] = render.yaml_bytes(config)
     if config.get('github_sync', False):
         sync = files['templates/github-sync.yml.tmpl'].decode()
@@ -283,6 +253,89 @@ def prepare(root, config_path):
     if stale:
         raise PreparationError('upgrade removes owned files; explicit migration required: ' + ', '.join(sorted(stale)))
     return outputs, plan_hash
+
+
+def environment_artifacts(config, manifest, files, render, host_module):
+    """Produce one independently installable environment with its own artifact lock."""
+    environment = config['environment']
+    policy, ci_config, compose = render.model(config, digest(files['host/tat-deploy-test.py']))
+    try:
+        host_module.validate_host_policy(policy)
+    except host_module.DeploymentError as error:
+        raise PreparationError('project differences do not satisfy the host policy contract') from error
+    outputs = {relative: data for relative, data in files.items()
+               if relative.split('/')[0] in {'host', 'ci', 'admin', 'dependencies'}}
+    outputs['bundle.json'] = json_bytes(manifest)
+    outputs['host-policy.json'] = json_bytes(policy)
+    outputs['docker-compose.yml'] = compose
+    replacements = {'INSTALL_DIR': policy['install_dir'], 'RELEASE_USER': policy['release_user'],
+                    'RELEASE_HOME': policy['release_home'],
+                    'CONTROLLER_SHA256': digest(files['host/tat-deploy-test.py']),
+                    'POLICY_SHA256': digest(json_bytes(policy)), 'COMPOSE_SHA256': digest(compose)}
+    shim = files['host/tat-command.sh.tmpl'].decode()
+    for key, value in replacements.items():
+        shim = shim.replace('@' + key + '@', value)
+    if re.search(r'@[A-Z_]+@', shim):
+        raise PreparationError('unresolved TAT template field')
+    if environment == 'production':
+        pem = config['production']['approval_public_key'].encode('ascii')
+        try:
+            encoded = pem.decode().splitlines()[1]
+            der = base64.b64decode(encoded, validate=True)
+            if len(der) != 44 or not der.startswith(bytes.fromhex('302a300506032b6570032100')):
+                raise ValueError('invalid Ed25519 SPKI')
+        except (ValueError, IndexError) as exc:
+            raise PreparationError('production approval key must be an Ed25519 public key') from exc
+        authority = {'schema': 'cnb-production-authority/v1', 'project': config['project'],
+                     'environment': 'production', 'controller_program_sha256': replacements['CONTROLLER_SHA256'],
+                     'host_policy_sha256': replacements['POLICY_SHA256'],
+                     'controller_compose_sha256': replacements['COMPOSE_SHA256'],
+                     'approval_public_key_sha256': digest(pem)}
+        outputs['approval-ed25519.pub'] = pem
+        outputs['production-authority.json'] = json_bytes(authority)
+        source = files.get('host/production-release.py')
+        if source is None:
+            raise PreparationError('production entry is missing from the bundle')
+        wrapper_spec = importlib.util.spec_from_file_location('cnb_production_entry', BUNDLE / 'host/production-release.py')
+        wrapper = importlib.util.module_from_spec(wrapper_spec)
+        exec(compile(source, str(BUNDLE / 'host/production-release.py'), 'exec'), wrapper.__dict__)
+        entry_sha, authority_sha = digest(source), digest(outputs['production-authority.json'])
+        shim = wrapper.render_tat_template(policy, entry_sha, authority_sha).decode('ascii')
+        replacements['CONTROLLER_SHA256'] = entry_sha
+        ci_config.update({'production_entry_sha256': entry_sha, 'production_authority_sha256': authority_sha,
+                          'approval_public_key_sha256': digest(pem), 'production_branch': config['production_branch']})
+    outputs['ci-config.json'] = json_bytes(ci_config)
+    if config.get('recovery'):
+        recovery = config['recovery']
+        mount_names = {Path(mount['source']).name for service in policy['services'].values() for mount in service['mounts']}
+        if set(recovery['mounts']) != mount_names:
+            raise PreparationError('recovery classifications must cover every persistent directory exactly')
+        table_names = [(table['schema'], table['name']) for table in recovery['required_nonempty_tables']]
+        if len(table_names) != len(set(table_names)):
+            raise PreparationError('recovery evidence table names must be unique')
+        outputs['recovery-policy.json'] = json_bytes({'schema': 'cnb-recovery-policy/v1',
+            'project': config['project'], 'environment': environment, 'host_policy_sha256': replacements['POLICY_SHA256'],
+            'mounts': recovery['mounts'], 'required_nonempty_tables': recovery['required_nonempty_tables']})
+    outputs['tat-command.sh'] = shim.encode()
+    command_spec = {'schema_version': 1, 'project': config['project'], 'environment': config['environment'],
+                    'version': manifest['version'], 'target': {'region': None, 'instance_id': None},
+                    'expected_artifacts': {'program_sha256': replacements['CONTROLLER_SHA256'],
+                                           'compose_sha256': replacements['COMPOSE_SHA256'],
+                                           'policy_sha256': replacements['POLICY_SHA256']},
+                    'expectedCommand': {'CommandName': config['project'][:12] + '-' + digest(config['project'].encode())[:8] + '-' + environment + '-v' + manifest['version'],
+                                        'Description': 'Pinned project ' + environment + ' release', 'CommandType': 'SHELL',
+                                        'Content': shim, 'Username': policy['release_user'],
+                                        'WorkingDirectory': policy['release_home'], 'Timeout': 3600,
+                                        'EnableParameter': True, 'DefaultParameters': {'release_request_b64url': 'INVALID'},
+                                        'DefaultParameterConfs': [{'ParameterName': 'release_request_b64url',
+                                                                   'ParameterValue': 'INVALID', 'ParameterDescription': ''}]}}
+    if environment == 'production':
+        command_spec['production_authority_b64url'] = base64.urlsafe_b64encode(outputs['production-authority.json']).rstrip(b'=').decode('ascii')
+    outputs['tat-spec.template.json'] = json_bytes(command_spec)
+    artifacts = {name: digest(data) for name, data in outputs.items()}
+    outputs['artifact-lock.json'] = json_bytes({'schema': 'cnb-devops-artifacts/v1',
+                                                            'version': manifest['version'], 'files': artifacts})
+    return outputs
 
 
 def main():

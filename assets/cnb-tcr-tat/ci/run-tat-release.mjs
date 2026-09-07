@@ -68,11 +68,11 @@ function exactInvocationTask(response, { invocationId, commandId, instanceId }) 
 }
 
 export function validateBinding(binding, config) {
-  if (binding?.schema !== 'cnb-tat-binding/v1' || binding.project !== config.project || binding.environment !== config.environment || binding.environment !== 'test') fail('TAT protected binding mismatch');
+  if (binding?.schema !== 'cnb-tat-binding/v1' || binding.project !== config.project || binding.environment !== config.environment || !['test','production'].includes(binding.environment)) fail('TAT protected binding mismatch');
   for (const [field,pattern] of Object.entries({region:/^[a-z]+-[a-z]+[0-9]*$/u,instance_id:/^(?:lhins|ins)-[A-Za-z0-9-]{8,64}$/u,command_id:COMMAND_ID_PATTERN,command_sha256:/^[0-9a-f]{64}$/u,program_sha256:/^[0-9a-f]{64}$/u,compose_sha256:/^[0-9a-f]{64}$/u,policy_sha256:/^[0-9a-f]{64}$/u,username:/^[a-z_][a-z0-9_-]{0,31}$/u,working_directory:/^\/[A-Za-z0-9_./-]+$/u})) {
     if(typeof binding[field] !== 'string' || !pattern.test(binding[field])) fail(`invalid protected binding ${field}`);
   }
-  for(const [field,configField] of [['program_sha256','controller_program_sha256'],['compose_sha256','controller_compose_sha256'],['policy_sha256','policy_sha256']]) if(binding[field]!==config[configField]) fail('protected binding does not match the generated controller, Compose or policy');
+  for(const [field,configField] of [['program_sha256',config.environment==='production'?'production_entry_sha256':'controller_program_sha256'],['compose_sha256','controller_compose_sha256'],['policy_sha256','policy_sha256']]) if(binding[field]!==config[configField]) fail('protected binding does not match the generated controller, Compose or policy');
   if(binding.command_id==='cmd-PENDING0' || binding.working_directory.split('/').includes('..') || !Number.isInteger(binding.timeout) || binding.timeout<1 || binding.timeout>3600) fail('invalid protected command policy');
   return binding;
 }
@@ -101,7 +101,7 @@ function validateSavedCommand(response, binding) {
   if(!Buffer.from(text,'utf8').equals(content) || text.split('{{release_request_b64url}}').length!==2 || /\{\{|\}\}/u.test(text.replace('{{release_request_b64url}}',''))) fail('saved TAT command parameter contract is invalid');
   return text;
 }
-function readReleaseReceipt(task, invocationId, binding, request, config, expectedScript) {
+function readReleaseReceipt(task, invocationId, binding, request, config, expectedScript, receiptValidator=validateReleaseReceipt) {
   if(task.TaskStatus!=='SUCCESS' || task.TaskResult?.ExitCode!==0 || task.TaskResult?.Dropped!==0) fail('TAT task receipt does not match invocation',invocationId);
   const document=task.CommandDocument;
   if(document?.Content!==Buffer.from(expectedScript,'utf8').toString('base64') || document.CommandType!=='SHELL' || document.Username!==binding.username || document.WorkingDirectory!==binding.working_directory || document.Timeout!==binding.timeout || (document.OutputCOSBucketUrl??'')!=='' || (document.OutputCOSKeyPrefix??'')!=='') fail('executed TAT command does not match the protected command and parameters',invocationId);
@@ -112,7 +112,7 @@ function readReleaseReceipt(task, invocationId, binding, request, config, expect
   let receipt;
   try {receipt=JSON.parse(raw.toString('utf8'));} catch {fail('TAT receipt is invalid JSON',invocationId);}
   if(raw.toString('utf8')!==JSON.stringify(receipt)+'\n') fail('TAT receipt is not exact JSON',invocationId);
-  try {return validateReleaseReceipt(receipt,request,config,binding);} catch {fail('TAT release receipt mismatches the bound request',invocationId);}
+  try {return receiptValidator(receipt,request,config,binding);} catch {fail('TAT release receipt mismatches the bound request',invocationId);}
 }
 
 function reportProgress(onProgress, invocationId, status) {
@@ -141,7 +141,7 @@ export function renderTatEvidenceOutputs({ invocationId, completedAt }) {
   );
 }
 
-export async function runTatRelease({
+export async function runTatCommand({
   client,
   request,
   config,
@@ -151,19 +151,22 @@ export async function runTatRelease({
   deadlineMs = 61 * 60 * 1000,
   pollIntervalMs = 5_000,
   onProgress = () => {},
+  parseRequest,
+  receiptValidator,
 }) {
   if (
     !client ||
     typeof client.DescribeCommands !== 'function' ||
     typeof client.InvokeCommand !== 'function' ||
     typeof client.DescribeInvocationTasks !== 'function' ||
-    typeof onProgress !== 'function'
+    typeof onProgress !== 'function' || typeof parseRequest !== 'function' || typeof receiptValidator !== 'function'
   ) {
     fail('TAT client is invalid');
   }
   validateBinding(binding,config);
   const {command_id:commandId,instance_id:instanceId}=binding;
-  const model=parseReleaseRequest(request,config);
+  if(typeof request!=='string'||!BASE64URL_PATTERN.test(request)||request.length>48*1024) fail('invalid TAT request size');
+  const model=parseRequest(request,config);
   const checkedRequest=request;
   if(!Number.isFinite(deadlineMs)||deadlineMs<=0||deadlineMs>61*60*1000||!Number.isFinite(pollIntervalMs)||pollIntervalMs<=0) fail('invalid TAT polling bounds');
   const parameters = JSON.stringify({ release_request_b64url: checkedRequest });
@@ -174,6 +177,7 @@ export async function runTatRelease({
   });
   const commandTemplate=validateSavedCommand(commandResponse, binding);
   const expectedScript=commandTemplate.replace('{{release_request_b64url}}',checkedRequest);
+  if(Buffer.byteLength(expectedScript,'utf8')>64*1024) fail('executed TAT command is too large');
   const response = await client.InvokeCommand({
     CommandId: commandId,
     InstanceIds: [instanceId],
@@ -207,7 +211,7 @@ export async function runTatRelease({
       const completedAt = new Date(Math.floor(now() / 1000) * 1000)
         .toISOString()
         .replace('.000Z', 'Z');
-      const receipt=readReleaseReceipt(task,invocationId,binding,model,config,expectedScript);
+      const receipt=readReleaseReceipt(task,invocationId,binding,model,config,expectedScript,receiptValidator);
       return { invocationId, completedAt, receipt };
     }
     if (!PENDING_STATUSES.has(status)) {
@@ -219,6 +223,33 @@ export async function runTatRelease({
     await sleep(pollIntervalMs);
   }
   fail('TAT invocation polling deadline exceeded', invocationId);
+}
+
+export function runTatRelease(options) {
+  return runTatCommand({...options,parseRequest:parseReleaseRequest,receiptValidator:validateReleaseReceipt});
+}
+
+/** Independent administrator readback. This function has no Invoke path. */
+export async function verifyTatInvocation({client,request,config,binding,invocationId,parseRequest,receiptValidator}) {
+  validateBinding(binding,config);
+  if(!INVOCATION_ID_PATTERN.test(invocationId)||typeof request!=='string'||!BASE64URL_PATTERN.test(request)||request.length>48*1024||typeof parseRequest!=='function'||typeof receiptValidator!=='function') fail('invalid TAT verification inputs');
+  const model=parseRequest(request,config);
+  const template=validateSavedCommand(await client.DescribeCommands({CommandIds:[binding.command_id],Limit:1,Offset:0}),binding);
+  const script=template.replace('{{release_request_b64url}}',request);
+  if(Buffer.byteLength(script,'utf8')>64*1024) fail('executed TAT command is too large');
+  const task=exactInvocationTask(await client.DescribeInvocationTasks({Filters:[{Name:'invocation-id',Values:[invocationId]}],HideOutput:false,Limit:1,Offset:0}),{invocationId,commandId:binding.command_id,instanceId:binding.instance_id});
+  return {invocationId,receipt:readReleaseReceipt(task,invocationId,binding,model,config,script,receiptValidator)};
+}
+
+export function createTatClientFromEnvironment(region) {
+  const secretId=requiredEnvironment('TENCENTCLOUD_SECRET_ID'),secretKey=requiredEnvironment('TENCENTCLOUD_SECRET_KEY');
+  if(!SECRET_ID_PATTERN.test(secretId)) fail('TAT credentials are invalid');
+  delete process.env.TENCENTCLOUD_SECRET_ID;delete process.env.TENCENTCLOUD_SECRET_KEY;
+  const require=createRequire(new URL('../dependencies/package.json',import.meta.url));
+  const expected=require('../dependencies/package.json').dependencies['tencentcloud-sdk-nodejs-tat'];
+  if(require('tencentcloud-sdk-nodejs-tat/package.json').version!==expected) fail('Tencent SDK version does not match bundle lock');
+  const Client=resolveTatClient(require('tencentcloud-sdk-nodejs-tat'));
+  return new Client(createTatClientOptions({secretId,secretKey,region}));
 }
 
 export function createTatClientOptions({ secretId, secretKey, region }) {

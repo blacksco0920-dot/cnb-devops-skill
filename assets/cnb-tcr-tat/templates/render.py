@@ -18,6 +18,33 @@ def yaml_bytes(value):
     return yaml.safe_dump(value, sort_keys=False, allow_unicode=True, width=120).encode()
 
 
+def environment_config(config, environment):
+    """Select runtime differences; production retains the tested service/image set."""
+    if environment not in {'test', 'production'}:
+        raise ValueError('unsupported environment')
+    selected = copy.deepcopy(config)
+    if environment == 'test':
+        return selected
+    production = config.get('production')
+    if not isinstance(production, dict):
+        raise ValueError('production configuration is required')
+    overrides = production.get('services', {})
+    if set(overrides) - set(config['services']):
+        raise ValueError('production cannot add services')
+    for name, fields in overrides.items():
+        if set(fields) - {'environment', 'environment_refs', 'loopback_port'}:
+            raise ValueError('production cannot replace build or image identities')
+        for field, value in fields.items():
+            if field in {'environment', 'environment_refs'}:
+                selected['services'][name].setdefault(field, {}).update(copy.deepcopy(value))
+            else:
+                selected['services'][name][field] = value
+    selected['environment'] = environment
+    selected['host'] = copy.deepcopy(production['host'])
+    selected['secrets']['tat_import'] = production['tat_import']
+    return selected
+
+
 def model(config, controller_sha):
     project, environment = config['project'], config['environment']
     scope = f'{project}-{environment}'
@@ -135,17 +162,79 @@ def pipeline(config):
     blocked = {'name': f'cnb-devops-{project}-production-blocked', 'docker': {'image': config['ci']['image']},
                'stages': [{'name': 'production adapter pending verification',
                            'script': ['echo "Production is not enabled in this bundle version; staging candidates remain available." >&2\nexit 1']}]}
-    return {config['test_branch']: {'push': [job]}, project + '-candidate-*': {
-        'web_trigger_production_readiness': [copy.deepcopy(blocked)], 'tag_deploy': {'production': [blocked]}}}
+    production_jobs = {'web_trigger_production_readiness': [copy.deepcopy(blocked)],
+                       'tag_deploy': {'production': [blocked]}}
+    if config.get('production'):
+        production_jobs = {'web_trigger_production_readiness': [production_job(config, 'readiness')],
+                           'tag_deploy': {'production': [production_job(config, 'apply')]}}
+    return {config['test_branch']: {'push': [job]}, project + '-candidate-*': production_jobs}
 
 
-def tag_deploy():
+def production_job(config, phase):
+    q = shlex.quote
+    cfg = f'{VENDOR}/production/ci-config.json'
+    test_cfg = f'{VENDOR}/ci-config.json'
+    receipt = '.cnb-release/production-receipt.json'
+    status = 'production_readiness_status' if phase == 'readiness' else 'production_deploy_status'
+    def annotations(name, settings):
+        return {'name': name, 'image': ANNOTATIONS_IMAGE,
+                'settings': {'tag': '${CNB_BRANCH}', **settings}}
+    gate = (f'python3 {VENDOR}/ci/candidate_gate.py production --config {test_cfg}'
+            f' --tag "$CNB_BRANCH" --commit "$CNB_COMMIT" --branch {q(config["production_branch"])}'
+            f' --annotations .cnb-release/input-annotations.json --output-dir .cnb-release --phase {phase}')
+    run = (f'node {VENDOR}/ci/run-production-deploy.mjs {phase} --config={cfg}'
+           f' --candidate-config={test_cfg} --binding=.cnb-release/tat-binding.json'
+           f' --manifest=.cnb-release/candidate.json --receipt={receipt}')
+    if phase == 'apply':
+        run += ' --readiness=.cnb-release/readiness.json --approval=.cnb-release/approval.json'
+    exports = ({'production_readiness_b64url': 'PRODUCTION_READINESS_B64URL',
+                'production_prepared_sha256': 'PRODUCTION_PREPARED_SHA256',
+                'production_readiness_invocation_id': 'PRODUCTION_READINESS_INVOCATION_ID'}
+               if phase == 'readiness' else {'production_receipt_sha256': 'PRODUCTION_RECEIPT_SHA256'})
+    data = '\n'.join(key + '=${' + value + '}' for key, value in exports.items())
+    readback = (f'python3 {VENDOR}/ci/production_annotations.py --phase {phase} --receipt {receipt}'
+                ' --annotations .cnb-release/production-annotations.json')
+    if phase == 'readiness':
+        readback += ' --invocation-id "$PRODUCTION_READINESS_INVOCATION_ID"'
+    stages = [
+        {'name': 'prepare production candidate verification', 'script': [
+            'set -eu\numask 077\nmkdir -p .cnb-release\n'
+            'if ! command -v python3 >/dev/null || ! command -v git >/dev/null; then\n'
+            '  apt-get update\n  apt-get install --yes --no-install-recommends ca-certificates git python3\nfi\n'
+            f'npm ci --prefix {VENDOR}/dependencies --ignore-scripts --prefer-offline --registry {q(config["ci"]["npm_registry"])}']},
+        annotations('read candidate annotations', {'type': 'GET', 'toFile': '.cnb-release/input-annotations.json'}),
+        {'name': 'verify immutable candidate and governed branch', 'script': ['set -eu\n' + gate]},
+        annotations('mark production operation pending', {'type': 'ADD', 'data': status + '=pending'}),
+        {'name': 'verify production through fixed TAT command', 'imports': config['production']['tat_import'],
+         'script': ['set -eu\n: "${CNB_TAT_BINDING_JSON:?required}"\numask 077\n'
+                    'printf \'%s\\n\' "$CNB_TAT_BINDING_JSON" > .cnb-release/tat-binding.json\n' + run],
+         'exports': exports},
+        annotations('write production receipt evidence', {'type': 'ADD', 'data': data}),
+        annotations('read production receipt evidence', {'type': 'GET', 'toFile': '.cnb-release/production-annotations.json'}),
+        {'name': 'verify production evidence before passed status', 'script': [readback]},
+        annotations('mark production status passed last', {'type': 'ADD', 'data': status + '=passed'}),
+        annotations('read final production annotations', {'type': 'GET', 'toFile': '.cnb-release/production-annotations.json'}),
+        {'name': 'verify production annotation readback', 'script': [readback + ' --require-passed']},
+    ]
+    return {'name': f'cnb-devops-{config["project"]}-production-{phase}',
+            'lock': {'key': f'{config["project"]}-production-release', 'expires': 14400, 'timeout': 14400, 'wait': True},
+            'runner': {'tags': 'cnb:arch:amd64', 'cpus': 2},
+            'docker': {'image': config['ci']['image']}, 'stages': stages}
+
+
+def tag_deploy(production_enabled=False):
     return {'environments': [{'name': 'production',
-        'description': '生产执行尚未接通，当前仅交付测试候选。',
+        'description': ('将测试通过的同一批镜像发布到生产。先检查就绪，再由管理员确认候选。'
+                        if production_enabled else '生产执行尚未接通，当前仅交付测试候选。'),
         'permissions': {'roles': ['owner']},
         'button': [{'name': '检查生产就绪', 'event': 'web_trigger_production_readiness',
                     'permissions': {'roles': ['owner']}}],
-        'deploy': [{'name': '生产执行（尚未启用）'}],
+        'deploy': [{'name': '发布已确认的候选' if production_enabled else '生产执行（尚未启用）'}],
         'require': [{'annotation': 'candidate_status', 'expect': {'eq': 'ready'}},
+                    {'annotation': 'test_build_status', 'expect': {'eq': 'passed'}},
+                    {'annotation': 'test_runtime_status', 'expect': {'eq': 'passed'}},
+                    {'annotation': 'test_public_status', 'expect': {'eq': 'passed'}},
                     {'annotation': 'production_readiness_status', 'expect': {'eq': 'passed'}},
+                    *([{'annotation': 'production_approval_status', 'expect': {'eq': 'signed'}}]
+                      if production_enabled else []),
                     {'approver': {'roles': ['owner']}, 'title': '确认本候选的生产发布'}]}]}

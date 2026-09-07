@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { createHash, randomBytes } from 'node:crypto';
+import { parseStrictJson } from '../assets/cnb-tcr-tat/ci/strict-json.mjs';
 
 const SDK = 'tencentcloud-sdk-nodejs-tat', SDK_VERSION = '4.1.241';
 const fail = code => { throw new Error(code); };
@@ -26,8 +27,9 @@ function requireMatch(value, pattern) {
 }
 export function validateSpec(spec) {
   const hasArtifacts = object(spec) && Object.hasOwn(spec, 'expected_artifacts');
+  const hasAuthority = object(spec) && Object.hasOwn(spec, 'production_authority_b64url');
   keys(spec, ['schema_version', 'project', 'environment', 'version', 'target', 'expectedCommand',
-    ...(hasArtifacts ? ['expected_artifacts'] : [])]);
+    ...(hasArtifacts ? ['expected_artifacts'] : []), ...(hasAuthority ? ['production_authority_b64url'] : [])]);
   if (spec.schema_version !== 1 || !['test', 'staging', 'production'].includes(spec.environment)) fail('TAT_SPEC_INVALID');
   requireMatch(spec.project, /^[a-z][a-z0-9-]{0,62}$/);
   requireMatch(spec.version, /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[a-zA-Z0-9.-]+)?$/);
@@ -52,12 +54,31 @@ export function validateSpec(spec) {
   if (c.EnableParameter && c.DefaultParameters.release_request_b64url !== 'INVALID') fail('TAT_SPEC_INVALID');
   const expectedConfs = c.EnableParameter ? [{ ParameterName: 'release_request_b64url', ParameterValue: 'INVALID', ParameterDescription: '' }] : [];
   if (canonical(c.DefaultParameterConfs) !== canonical(expectedConfs)) fail('TAT_SPEC_INVALID');
+  if (hasAuthority && (!hasArtifacts || spec.environment !== 'production')) fail('TAT_SPEC_INVALID');
   if (hasArtifacts) {
     keys(spec.expected_artifacts, ['program_sha256', 'compose_sha256', 'policy_sha256']);
     for (const value of Object.values(spec.expected_artifacts)) requireMatch(value, /^[a-f0-9]{64}$/);
-    for (const [field, variable] of [['program_sha256', 'controller_sha256'], ['policy_sha256', 'policy_sha256']]) {
-      const assignments = c.Content.split('\n').filter(line => line.startsWith(`${variable}=`));
-      if (assignments.length !== 1 || assignments[0] !== `${variable}='${spec.expected_artifacts[field]}'`) fail('TAT_ARTIFACT_BINDING_MISMATCH');
+    if (hasAuthority) {
+      try {
+        const encoded = spec.production_authority_b64url;
+        if (typeof encoded !== 'string' || encoded.length > 16384 || !/^[A-Za-z0-9_-]+$/.test(encoded)) throw Error();
+        const raw = Buffer.from(encoded, 'base64url');
+        if (raw.toString('base64url') !== encoded) throw Error();
+        const authority = parseStrictJson(new TextDecoder('utf-8', {fatal: true}).decode(raw), {maxBytes: 8192});
+        keys(authority, ['schema', 'project', 'environment', 'controller_program_sha256', 'host_policy_sha256',
+          'controller_compose_sha256', 'approval_public_key_sha256']);
+        if (authority.schema !== 'cnb-production-authority/v1' || authority.project !== spec.project || authority.environment !== 'production' ||
+            authority.host_policy_sha256 !== spec.expected_artifacts.policy_sha256 || authority.controller_compose_sha256 !== spec.expected_artifacts.compose_sha256) throw Error();
+        for (const field of ['controller_program_sha256', 'host_policy_sha256', 'controller_compose_sha256', 'approval_public_key_sha256']) requireMatch(authority[field], /^[a-f0-9]{64}$/);
+        const expected = `for name, expected, mode in [('production-release.py', '${spec.expected_artifacts.program_sha256}', 0o555), ('production-authority.json', '${hash(raw)}', 0o444)]:`;
+        const tuples = c.Content.split('\n').filter(line => line.startsWith('for name, expected, mode in '));
+        if (tuples.length !== 1 || tuples[0] !== expected) throw Error();
+      } catch { fail('TAT_ARTIFACT_BINDING_MISMATCH'); }
+    } else {
+      for (const [field, variable] of [['program_sha256', 'controller_sha256'], ['policy_sha256', 'policy_sha256']]) {
+        const assignments = c.Content.split('\n').filter(line => line.startsWith(`${variable}=`));
+        if (assignments.length !== 1 || assignments[0] !== `${variable}='${spec.expected_artifacts[field]}'`) fail('TAT_ARTIFACT_BINDING_MISMATCH');
+      }
     }
     // The generator hashes the policy's exact bytes, which contain compose_sha256.
     // This CLI has no policy/host input: these are expected identities, not attestation.

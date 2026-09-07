@@ -15,7 +15,7 @@ function requirePattern(name, value, pattern) {
   return value;
 }
 export function validateConfig(config) {
-  if (config?.schema !== 'cnb-devops-ci/v1' || config.environment !== 'test') fail('unsupported CI configuration or environment; production is not implemented');
+  if (config?.schema !== 'cnb-devops-ci/v1' || !['test','production'].includes(config.environment)) fail('unsupported CI configuration or environment');
   requirePattern('project', config.project, NAME_PATTERN);
   requirePattern('controller', config.controller_id, /^[a-z][a-z0-9-]{0,95}$/u);
   if (!config.services || typeof config.services !== 'object' || Array.isArray(config.services) || !Object.keys(config.services).length) fail('services are required');

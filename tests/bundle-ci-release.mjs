@@ -15,6 +15,14 @@ function fixture(names) {
   const receipt={schema:'cnb-deploy-result/v1',status:'passed',project:'sample',environment:'test',controller:'sample-test-v1',git_sha:sha,controller_commit:sha,build_id:'cnb-build-123',images:values.images,controller_program_sha256:binding.program_sha256,controller_compose_sha256:binding.compose_sha256,policy_sha256:binding.policy_sha256,database_backup_sha256:'f'.repeat(64),container_count:names.length,probe_count:names.length,probes:names.map(name=>`https://${name}.example/health`).sort()};
   return {config,values,binding,receipt};
 }
+test('production request retains exact environment and same immutable application commit',()=>{
+  const {config,values}=fixture(['web']);
+  config.environment='production'; values.environment='production';
+  config.controller_id='sample-production-v1';values.controller=config.controller_id;
+  assert.deepEqual(parseReleaseRequest(renderReleaseRequest(values,config),config),values);
+  assert.throws(()=>renderReleaseRequest({...values,environment:'test'},config));
+  assert.throws(()=>renderReleaseRequest({...values,controller_commit:'f'.repeat(40)},config));
+});
 for (const names of [['web'],['api','portal','worker']]) {
   test(`${names.length} services request and receipt bind full deployment`,()=>{
     const {config,values,binding,receipt}=fixture(names);

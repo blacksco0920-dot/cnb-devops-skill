@@ -79,6 +79,33 @@ class NativeCaddyTests(unittest.TestCase):
     def run_config(self, apply=False):
         return self.m.configure('demo', self.policy_sha, self.baseline_sha, apply=apply)
 
+    def test_production_routes_use_only_production_policy_and_site(self):
+        production = copy.deepcopy(self.policy)
+        production['environment'] = 'production'
+        policy_path = self.root / 'opt/cnb-devops/demo/production/v1/host-policy.json'
+        policy_path.parent.mkdir(parents=True)
+        policy_path.write_text(json.dumps(production))
+        policy_sha = self.m.sha(policy_path.read_bytes())
+        result = self.m.configure('demo', policy_sha, self.baseline_sha, apply=True, environment='production')
+        production_site = self.root / 'etc/caddy/cnb-devops/demo-production.caddy'
+        self.assertEqual(result['environment'], 'production')
+        self.assertEqual(result['site_path'], str(production_site))
+        self.assertEqual(self.config.read_bytes(), self.original + ('\nimport ' + str(production_site) + '\n').encode())
+        self.assertFalse(self.site.exists())
+        self.assertEqual(self.m.configure('demo', policy_sha, self.baseline_sha, apply=True, environment='production')['status'], 'unchanged')
+        self.assertEqual(self.reload_count, 1)
+
+    def test_production_selector_rejects_test_policy_and_unknown_environment(self):
+        policy_path = self.root / 'opt/cnb-devops/demo/production/v1/host-policy.json'
+        policy_path.parent.mkdir(parents=True)
+        policy_path.write_text(json.dumps(self.policy))
+        with self.assertRaises(self.m.CaddyError):
+            self.m.configure('demo', self.policy_sha, self.baseline_sha, apply=True, environment='production')
+        with self.assertRaises(self.m.CaddyError):
+            self.m.paths('demo', '../test')
+        self.assertEqual(self.config.read_bytes(), self.original)
+        self.assertFalse(self.site.parent.exists())
+
     def test_preview_maps_domains_to_actual_loopback_ports_without_writes(self):
         result = self.run_config()
         self.assertEqual(result['status'], 'planned')

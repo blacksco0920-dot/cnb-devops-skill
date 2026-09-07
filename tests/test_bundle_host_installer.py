@@ -1,11 +1,14 @@
 """Installer checks use real local artifacts; privileged host activation is not a cloud test."""
 import hashlib
+import base64
 import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from types import ModuleType
 import tempfile
 import unittest
 from unittest import mock
@@ -27,10 +30,26 @@ class HostInstallerTests(unittest.TestCase):
     def setUp(self):
         self.installer = load_installer()
 
-    def bundle(self, root):
+    def test_production_preview_reports_policy_environment_without_installing(self):
+        plan = {"policy": {"project": "sample", "environment": "production", "install_dir": "/opt/cnb-devops/sample/production/v1"},
+                "version": "0.1.0", "lock_sha256": "a" * 64, "host": SimpleNamespace(APP_DIR=Path("/opt/apps/sample-production"))}
+        output = io.StringIO()
+        with mock.patch.object(self.installer, "verify_bundle", return_value=plan), \
+             mock.patch.object(self.installer, "apply_install", side_effect=AssertionError("preview mutated host")), \
+             contextlib.redirect_stdout(output):
+            self.installer.main(["--bundle-dir", "/reviewed", "--runtime-env", "/protected.env"])
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["environment"], "production")
+        self.assertEqual(result["status"], "preview")
+
+    def bundle(self, root, environment="test", recovery=False):
         host = load_host()
         policy = sample_policy()
-        compose = b"name: sample-test\nservices: {}\n"
+        if environment == "production":
+            policy = json.loads(json.dumps(policy).replace("sample-test", "sample-production")
+                                .replace("/sample/test/", "/sample/production/"))
+            policy["environment"] = environment
+        compose = f"name: sample-{environment}\nservices: {{}}\n".encode()
         policy["compose_sha256"] = hashlib.sha256(compose).hexdigest()
         policy_bytes = (json.dumps(policy, sort_keys=True) + "\n").encode()
         files = {
@@ -39,6 +58,11 @@ class HostInstallerTests(unittest.TestCase):
             "tat-command.sh": host.render_tat_template(policy, hashlib.sha256(HOST_PATH.read_bytes()).hexdigest(), hashlib.sha256(policy_bytes).hexdigest()),
             "bundle.json": b'{"version":"0.1.0"}\n',
         }
+        if recovery:
+            files["host/recover-project.py"] = HOST_PATH.with_name("recover-project.py").read_bytes()
+            files["recovery-policy.json"] = self.installer.canonical({"schema": "cnb-recovery-policy/v1", "project": "sample",
+                "environment": environment, "host_policy_sha256": hashlib.sha256(policy_bytes).hexdigest(), "mounts": {},
+                "required_nonempty_tables": [{"schema": "public", "name": "Orders", "minimum_rows": 1}]})
         for name, data in files.items():
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,6 +72,93 @@ class HostInstallerTests(unittest.TestCase):
         raw = (json.dumps(lock, sort_keys=True) + "\n").encode()
         (root / "artifact-lock.json").write_bytes(raw)
         return hashlib.sha256(raw).hexdigest()
+
+    def test_production_bundle_without_fixed_approval_entry_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            lock_sha = self.bundle(root, environment="production")
+            with self.assertRaises(self.installer.InstallError):
+                self.installer.verify_bundle(root, lock_sha)
+
+    def test_recovery_policy_drift_is_rejected_even_when_artifact_hashes_match(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.bundle(root, recovery=True)
+            policy = json.loads((root / "recovery-policy.json").read_bytes())
+            policy["host_policy_sha256"] = "f" * 64
+            raw = self.installer.canonical(policy)
+            (root / "recovery-policy.json").write_bytes(raw)
+            lock = json.loads((root / "artifact-lock.json").read_bytes())
+            lock["files"]["recovery-policy.json"] = hashlib.sha256(raw).hexdigest()
+            lock_raw = self.installer.canonical(lock)
+            (root / "artifact-lock.json").write_bytes(lock_raw)
+            with self.assertRaises(self.installer.InstallError):
+                self.installer.verify_bundle(root, hashlib.sha256(lock_raw).hexdigest())
+
+    def production_bundle(self, root):
+        self.bundle(root, environment="production")
+        source = HOST_PATH.with_name("production-release.py").read_bytes()
+        wrapper = ModuleType("production_installer_fixture")
+        exec(compile(source, "production-release.py", "exec"), wrapper.__dict__)
+        public = b"-----BEGIN PUBLIC KEY-----\n" + base64.b64encode(bytes.fromhex("302a300506032b6570032100") + bytes(range(32))) + b"\n-----END PUBLIC KEY-----\n"
+        (root / "host/production-release.py").write_bytes(source)
+        (root / "approval-ed25519.pub").write_bytes(public)
+        authority = {"schema": "cnb-production-authority/v1", "project": "sample", "environment": "production",
+                     "controller_program_sha256": hashlib.sha256((root / "host/tat-deploy-test.py").read_bytes()).hexdigest(),
+                     "host_policy_sha256": hashlib.sha256((root / "host-policy.json").read_bytes()).hexdigest(),
+                     "controller_compose_sha256": hashlib.sha256((root / "docker-compose.yml").read_bytes()).hexdigest(),
+                     "approval_public_key_sha256": hashlib.sha256(public).hexdigest()}
+        (root / "production-authority.json").write_bytes(self.installer.canonical(authority))
+        self.production_shim(root, wrapper)
+        return self.refresh_lock(root)
+
+    def production_shim(self, root, wrapper=None):
+        if wrapper is None:
+            wrapper = ModuleType("production_installer_fixture")
+            exec(compile((root / "host/production-release.py").read_bytes(), "production-release.py", "exec"), wrapper.__dict__)
+        template = wrapper.render_tat_template(json.loads((root / "host-policy.json").read_bytes()),
+                    hashlib.sha256((root / "host/production-release.py").read_bytes()).hexdigest(),
+                    hashlib.sha256((root / "production-authority.json").read_bytes()).hexdigest())
+        (root / "tat-command.sh").write_bytes(template)
+
+    def refresh_lock(self, root):
+        lock = json.loads((root / "artifact-lock.json").read_bytes())
+        names = set(lock["files"]) | {"host/production-release.py", "production-authority.json", "approval-ed25519.pub"}
+        lock["files"] = {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in names}
+        raw = self.installer.canonical(lock)
+        (root / "artifact-lock.json").write_bytes(raw)
+        return hashlib.sha256(raw).hexdigest()
+
+    def test_production_authority_binds_every_reviewed_file_and_fixed_template(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            lock_sha = self.production_bundle(root)
+            self.assertEqual(self.installer.verify_bundle(root, lock_sha)["policy"]["environment"], "production")
+            for field in ("controller_program_sha256", "host_policy_sha256", "controller_compose_sha256", "approval_public_key_sha256", "unknown"):
+                self.production_bundle(root)
+                authority = json.loads((root / "production-authority.json").read_bytes())
+                authority[field] = "f" * 64
+                (root / "production-authority.json").write_bytes(self.installer.canonical(authority))
+                self.production_shim(root)
+                with self.subTest(field=field), self.assertRaises(self.installer.InstallError):
+                    self.installer.verify_bundle(root, self.refresh_lock(root))
+            self.production_bundle(root)
+            (root / "tat-command.sh").write_bytes(b"#!/bin/sh\nexit 0\n")
+            with self.assertRaisesRegex(self.installer.InstallError, "tat_shim_mismatch"):
+                self.installer.verify_bundle(root, self.refresh_lock(root))
+
+    def test_production_rejects_multiple_keys_even_when_all_hashes_match(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.production_bundle(root)
+            public = (root / "approval-ed25519.pub").read_bytes() * 2
+            (root / "approval-ed25519.pub").write_bytes(public)
+            authority = json.loads((root / "production-authority.json").read_bytes())
+            authority["approval_public_key_sha256"] = hashlib.sha256(public).hexdigest()
+            (root / "production-authority.json").write_bytes(self.installer.canonical(authority))
+            self.production_shim(root)
+            with self.assertRaisesRegex(self.installer.InstallError, "approval_ed25519_spki_required"):
+                self.installer.verify_bundle(root, self.refresh_lock(root))
 
     def test_bundle_hash_policy_compose_and_fixed_shim_are_verified(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -113,23 +224,23 @@ class HostInstallerTests(unittest.TestCase):
                 host._assert_database_empty()
 
     @contextlib.contextmanager
-    def simulated_root_install(self, temporary):
+    def simulated_root_install(self, temporary, environment="test", recovery=False):
         """Real files/state machine, with root ownership and external dependencies simulated."""
         base = Path(temporary).resolve()
         bundle = base / "bundle"
         bundle.mkdir()
-        lock_sha = self.bundle(bundle)
+        lock_sha = self.production_bundle(bundle) if environment == "production" else self.bundle(bundle, recovery=recovery)
         plan = self.installer.verify_bundle(bundle, lock_sha)
         host = plan["host"]
         machine = base / "machine"
         machine.mkdir()
-        install = machine / "opt/cnb-devops/sample/test/v1"
-        app = machine / "opt/apps/sample-test"
+        install = machine / f"opt/cnb-devops/sample/{environment}/v1"
+        app = machine / f"opt/apps/sample-{environment}"
         plan["policy"]["install_dir"] = str(install)
         host.APP_DIR = app
         host.ENV_PATH, host.COMPOSE_PATH = app / ".env", app / "docker-compose.yml"
         host.RELEASE_PATH, host.TRANSACTION_PATH = app / ".release.json", app / ".release.transaction.json"
-        host.LOCK_PATH = app.parent / ".sample-test.deploy.lock"
+        host.LOCK_PATH = app.parent / f".sample-{environment}.deploy.lock"
         host.CONTROLLER_COMPOSE_PATH = install / "docker-compose.yml"
         runtime = base / "protected.env"
         runtime.write_bytes(b"DATABASE_URL=postgresql://sample_test_user:private@project-postgres:5432/sample_test\n")
@@ -164,6 +275,70 @@ class HostInstallerTests(unittest.TestCase):
              mock.patch.object(self.installer, "check_dependencies") as dependencies, \
              mock.patch.object(host, "_assert_database_empty") as empty:
             yield plan, runtime, install, app, simulated_file, dependencies, empty
+
+    def test_optional_recovery_files_are_installed_and_repeat_refuses_drift(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.simulated_root_install(temporary, recovery=True) as (plan, runtime, install, _app, _file, _dependencies, _empty):
+                self.assertEqual(self.installer.apply_install(plan, runtime), "installed")
+                for name, mode in (("recovery-policy.json", 0o444), ("recover-project.py", 0o555)):
+                    self.assertTrue((install / name).is_file())
+                    self.assertEqual((install / name).stat().st_mode & 0o777, mode)
+                runtime.unlink()
+                self.assertEqual(self.installer.apply_install(plan, runtime), "unchanged")
+                helper = install / "recover-project.py"
+                helper.chmod(0o644)
+                helper.write_bytes(b"drift")
+                with self.assertRaises(self.installer.InstallError):
+                    self.installer.apply_install(plan, runtime)
+                self.assertEqual(helper.read_bytes(), b"drift")
+
+    def test_production_install_preserves_extra_files_and_rejects_repeat_key_drift(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.simulated_root_install(temporary, "production") as (plan, runtime, install, app, _file, dependencies, empty):
+                self.assertEqual(self.installer.apply_install(plan, runtime), "installed")
+                for name, mode in (("production-release.py", 0o555), ("production-authority.json", 0o444), ("approval-ed25519.pub", 0o444)):
+                    self.assertEqual((install / name).stat().st_mode & 0o777, mode)
+                baseline = json.loads((app / ".release.json").read_bytes())
+                self.assertEqual(baseline["environment"], "production")
+                self.assertFalse((app / ".production").exists())
+                before = (app / ".env").read_bytes()
+                runtime.unlink()
+                dependencies.reset_mock()
+                empty.reset_mock()
+                self.assertEqual(self.installer.apply_install(plan, runtime), "unchanged")
+                dependencies.assert_not_called()
+                empty.assert_not_called()
+                key = install / "approval-ed25519.pub"
+                key.chmod(0o644)
+                key.write_bytes(b"changed")
+                with self.assertRaises(self.installer.InstallError):
+                    self.installer.apply_install(plan, runtime)
+                self.assertEqual(key.read_bytes(), b"changed")
+                self.assertEqual((app / ".env").read_bytes(), before)
+
+    def test_production_requires_openssl_before_dependency_commands(self):
+        host = load_host()
+        host.configure_policy(sample_policy())
+        host.POLICY["environment"] = "production"
+        account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+        commands = []
+        def regular(path, *_args):
+            if str(path) == "/usr/bin/openssl":
+                raise FileNotFoundError("openssl missing")
+            return SimpleNamespace(st_uid=account.pw_uid, st_gid=account.pw_gid)
+        def run(command, **_kwargs):
+            commands.append(command)
+            if command[-3:] == ["compose", "version", "--short"]:
+                return b"2.40.3\n"
+            if command[-1] == "SHOW server_version_num":
+                return b"160015\n"
+            return b"tool (PostgreSQL) 16.15\n"
+        with mock.patch.object(Path, "read_text", return_value='ID=ubuntu\nVERSION_ID="24.04"\n'), \
+             mock.patch.object(host, "_regular_file", side_effect=regular), \
+             mock.patch.object(host, "_run", side_effect=run):
+            with self.assertRaises(FileNotFoundError):
+                self.installer.check_dependencies(host, account)
+        self.assertEqual(commands, [])
 
     def test_unknown_existing_application_directory_is_preserved_without_installing_authority(self):
         with tempfile.TemporaryDirectory() as temporary:
