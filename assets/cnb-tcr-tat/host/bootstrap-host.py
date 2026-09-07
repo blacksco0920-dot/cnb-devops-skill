@@ -35,6 +35,28 @@ class BootstrapError(Exception):
     pass
 
 
+# Only these fixed program-defined reasons may leave administrator setup.
+SAFE_ERROR_CODES = frozenset({
+    'apt_caddy_install_failed', 'apt_caddy_update_failed', 'apt_docker_install_failed',
+    'apt_docker_update_failed', 'artifact_lock_mismatch', 'base_image_version_check_failed',
+    'base_image_version_mismatch', 'bootstrap_busy', 'bootstrap_lock_unsafe',
+    'bootstrap_receipt_mismatch', 'bootstrap_scope_invalid', 'bootstrap_spec_mismatch',
+    'bootstrap_state_mismatch', 'caddy_package_query_failed', 'caddy_service_start_failed',
+    'compose_v2_required', 'credential_state_invalid', 'database_authentication_failed',
+    'database_provision_failed', 'database_role_check_failed', 'database_role_mismatch',
+    'docker_compose_check_failed', 'docker_engine_check_failed', 'docker_group_assign_failed',
+    'docker_service_start_failed', 'exact_apt_package_versions_required', 'existing_compose_incompatible',
+    'existing_container_incompatible', 'existing_network_incompatible', 'existing_resource_not_owned',
+    'existing_volume_incompatible', 'external_runtime_values_required', 'host_command_failed',
+    'infrastructure_health_check_failed', 'infrastructure_start_failed', 'infrastructure_unhealthy',
+    'installer_identity_mismatch', 'network_create_failed', 'postgres_image_pull_failed',
+    'protected_runtime_import_required', 'redis_image_pull_failed', 'release_home_mismatch',
+    'release_user_create_failed', 'resource_inventory_invalid', 'resource_state_missing',
+    'root_administrator_required', 'runtime_import_invalid', 'ubuntu_24_04_required',
+    'unknown_bootstrap_state', 'unsupported_bootstrap_spec', 'volume_create_failed',
+})
+
+
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
@@ -43,16 +65,17 @@ def canonical(value):
     return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
-def run(command, *, input=None, timeout=180):
+def run(command, *, input=None, timeout=180, failure_code="host_command_failed"):
+    failure_code = failure_code if failure_code in SAFE_ERROR_CODES else "host_command_failed"
     try:
         result = subprocess.run(command, input=input, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                 timeout=timeout, check=False, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
                                 "HOME": "/root", "LANG": "C.UTF-8", "DEBIAN_FRONTEND": "noninteractive"})
         if result.returncode or len(result.stdout) > 4 * 1024 * 1024:
-            raise BootstrapError("host_command_failed")
+            raise BootstrapError(failure_code)
         return result.stdout
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise BootstrapError("host_command_failed") from exc
+        raise BootstrapError(failure_code) from exc
 
 
 def binary_exists(name):
@@ -109,9 +132,9 @@ def ensure_docker(spec):
     if not binary_exists("docker"):
         missing += ["docker.io", "docker-compose-v2"]
     else:
-        run(["/usr/bin/docker", "version", "--format", "{{.Server.Version}}"])
+        run(["/usr/bin/docker", "version", "--format", "{{.Server.Version}}"], failure_code="docker_engine_check_failed")
         try:
-            compose = run(["/usr/bin/docker", "compose", "version", "--short"]).strip()
+            compose = run(["/usr/bin/docker", "compose", "version", "--short"], failure_code="docker_compose_check_failed").strip()
         except BootstrapError:
             missing.append("docker-compose-v2")
         else:
@@ -122,13 +145,16 @@ def ensure_docker(spec):
     if missing:
         if any(name not in spec["docker_packages"] for name in missing):
             raise BootstrapError("exact_apt_package_versions_required")
-        run(["/usr/bin/apt-get", "update"], timeout=300)
-        run(["/usr/bin/apt-get", "install", "--yes", "--no-install-recommends",
-             *[name + "=" + spec["docker_packages"][name] for name in missing]], timeout=600)
+        run(["/usr/bin/apt-get", "update"], timeout=300, failure_code="apt_docker_update_failed")
+        # APT 2.7.14 debSystem::Lock waits on dpkg locks; this does not cover apt lists locks.
+        # https://github.com/Debian/apt/blob/2.7.14/apt-pkg/deb/debsystem.cc
+        run(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "install", "--yes", "--no-install-recommends",
+             *[name + "=" + spec["docker_packages"][name] for name in missing]], timeout=720,
+            failure_code="apt_docker_install_failed")
         if "docker.io" in missing:
-            run(["/usr/bin/systemctl", "enable", "--now", "docker"])
-        run(["/usr/bin/docker", "version", "--format", "{{.Server.Version}}"])
-        version = run(["/usr/bin/docker", "compose", "version", "--short"]).strip()
+            run(["/usr/bin/systemctl", "enable", "--now", "docker"], failure_code="docker_service_start_failed")
+        run(["/usr/bin/docker", "version", "--format", "{{.Server.Version}}"], failure_code="docker_engine_check_failed")
+        version = run(["/usr/bin/docker", "compose", "version", "--short"], failure_code="docker_compose_check_failed").strip()
         if not re.fullmatch(rb"v?2\.[0-9]+\.[0-9]+[^\s]*", version):
             raise BootstrapError("compose_v2_required")
 
@@ -245,18 +271,18 @@ def provision_database(policy, credentials, execute=run, *, create=True):
            f"WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='{db['name']}') \\gexec\n")
     admin = docker(policy) + ["exec", "-i", db["container"], "psql", "--no-psqlrc", "-U", "postgres", "-d", "postgres", "--set", "ON_ERROR_STOP=1"]
     if create:
-        execute(admin, input=sql.encode())
+        execute(admin, input=sql.encode(), failure_code="database_provision_failed")
         # psql encrypts the password client-side, keeping plaintext out of server logs.
         # https://www.postgresql.org/docs/16/app-psql.html (\password)
-        execute(admin + ["--command", "\\password " + db["user"]], input=((password + "\n") * 2).encode())
+        execute(admin + ["--command", "\\password " + db["user"]], input=((password + "\n") * 2).encode(), failure_code="database_provision_failed")
     privilege_check = ("SELECT 'bootstrap_role_verified' FROM pg_roles r JOIN pg_database d ON d.datdba=r.oid "
                        f"WHERE r.rolname='{db['user']}' AND d.datname='{db['name']}' AND r.rolcanlogin "
                        "AND NOT r.rolsuper AND NOT r.rolcreatedb AND NOT r.rolcreaterole AND NOT r.rolreplication")
-    if execute(admin + ["-Atc", privilege_check]).strip() != b"bootstrap_role_verified":
+    if execute(admin + ["-Atc", privilege_check], failure_code="database_role_check_failed").strip() != b"bootstrap_role_verified":
         raise BootstrapError("database_role_mismatch")
     # 官方 PostgreSQL 镜像的 loopback 规则可能是 trust；使用应用实际访问的项目网络。
     auth = 'IFS= read -r PGPASSWORD; export PGPASSWORD; exec psql --no-psqlrc -h "$1" -U "$2" -d "$3" -Atc "SELECT current_user"'
-    result = execute(docker(policy) + ["exec", "-i", db["container"], "sh", "-ceu", auth, "sh", db["host"], db["user"], db["name"]], input=(password + "\n").encode())
+    result = execute(docker(policy) + ["exec", "-i", db["container"], "sh", "-ceu", auth, "sh", db["host"], db["user"], db["name"]], input=(password + "\n").encode(), failure_code="database_authentication_failed")
     if result.strip() != db["user"].encode():
         raise BootstrapError("database_authentication_failed")
 
@@ -337,28 +363,28 @@ def apply_bootstrap(installer, bundle, spec, spec_sha256, runtime_import=None):
         if account.pw_dir != policy["release_home"]:
             raise BootstrapError("release_home_mismatch")
     except KeyError:
-        run(["/usr/sbin/useradd", "--create-home", "--shell", "/bin/bash", policy["release_user"]])
-    run(["/usr/sbin/usermod", "--append", "--groups", "docker", policy["release_user"]])
+        run(["/usr/sbin/useradd", "--create-home", "--shell", "/bin/bash", policy["release_user"]], failure_code="release_user_create_failed")
+    run(["/usr/sbin/usermod", "--append", "--groups", "docker", policy["release_user"]], failure_code="docker_group_assign_failed")
     for role, image in spec["images"].items():
-        run(docker(policy) + ["pull", image], timeout=600)
+        run(docker(policy) + ["pull", image], timeout=600, failure_code=role + "_image_pull_failed")
         version = run(docker(policy) + ["run", "--rm", "--network", "none", "--entrypoint",
-                                     "postgres" if role == "postgres" else "redis-server", image, "--version"])
+                                     "postgres" if role == "postgres" else "redis-server", image, "--version"], failure_code="base_image_version_check_failed")
         if (role == "postgres" and re.search(rb"PostgreSQL\) 16\.", version) is None
             or role == "redis" and re.search(rb"v=7\.", version) is None):
             raise BootstrapError("base_image_version_mismatch")
     label_args = [item for key, value in labels(policy, spec_sha256).items() for item in ("--label", key + "=" + value)]
     if scope not in existing["network"]:
-        run(docker(policy) + ["network", "create", "--driver", "bridge", *label_args, scope])
+        run(docker(policy) + ["network", "create", "--driver", "bridge", *label_args, scope], failure_code="network_create_failed")
     for role in spec["images"]:
         volume = scope + "-" + role + "-data"
         if volume not in existing["volume"]:
-            run(docker(policy) + ["volume", "create", *label_args, volume])
+            run(docker(policy) + ["volume", "create", *label_args, volume], failure_code="volume_create_failed")
     compose = docker(policy) + ["compose", "--project-name", scope + "-data", "--env-file", str(credential_path), "-f", str(state / "compose.json")]
     # Existing compatible containers are only started; never recreated or removed.
-    run(compose + ["up", "-d", "--no-recreate", *spec["images"]], timeout=300)
+    run(compose + ["up", "-d", "--no-recreate", *spec["images"]], timeout=300, failure_code="infrastructure_start_failed")
     deadline = time.monotonic() + 180
     while True:
-        states = [run(docker(policy) + ["inspect", "--format", "{{.State.Health.Status}}", scope + "-" + role]).strip()
+        states = [run(docker(policy) + ["inspect", "--format", "{{.State.Health.Status}}", scope + "-" + role], failure_code="infrastructure_health_check_failed").strip()
                   for role in spec["images"]]
         if all(value == b"healthy" for value in states):
             break
@@ -430,6 +456,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        reason = str(exc) if isinstance(exc, BootstrapError) and re.fullmatch(r"[a-z0-9_]+", str(exc)) else "bootstrap_failed"
+        reason = str(exc) if isinstance(exc, BootstrapError) and str(exc) in SAFE_ERROR_CODES else "bootstrap_failed"
         print(json.dumps({"schema": "cnb-first-host-result/v1", "status": "failed", "reason": reason}, sort_keys=True))
         raise SystemExit(1)

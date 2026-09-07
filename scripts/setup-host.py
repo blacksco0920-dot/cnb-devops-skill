@@ -126,7 +126,7 @@ try:
 except Exception as error:
     code = str(error)
     if re.fullmatch('CADDY_[A-Z_]+', code): code = 'SETUP_' + code
-    print(json.dumps({'schema':'cnb-host-setup/v1','status':'failed','code':code if re.fullmatch('SETUP_[A-Z_]+', code) else 'SETUP_REMOTE_FAILED'}))
+    print(json.dumps({'schema':'cnb-host-setup/v1','status':'failed','code':code if re.fullmatch('SETUP_[A-Z0-9_]+', code) else 'SETUP_REMOTE_FAILED'}))
     sys.exit(1)
 '''
 
@@ -175,7 +175,7 @@ def main(argv=None):
         except (OSError, subprocess.TimeoutExpired) as error:
             raise SetupError("SETUP_SSH_INCOMPLETE") from error
         if completed.returncode or type(response) is not dict or any(response.get(k) != result[k] for k in ("schema", "project", "environment", "lock_sha256")) or response.get("status") != "ready":
-            if type(response) is dict and type(response.get("code")) is str and re.fullmatch(r"SETUP_[A-Z_]+", response["code"]):
+            if type(response) is dict and type(response.get("code")) is str and re.fullmatch(r"SETUP_[A-Z0-9_]+", response["code"]):
                 raise SetupError(response["code"])
             raise SetupError("SETUP_REMOTE_NOT_VERIFIED")
         # Only selected non-secret receipt fields cross the process boundary.

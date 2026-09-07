@@ -230,6 +230,24 @@ class BootstrapTests(unittest.TestCase):
                 self.b.ensure_docker(self.spec)
         run.assert_not_called()
 
+    def test_apt_install_waits_for_dpkg_lock_and_reports_only_its_fixed_stage(self):
+        self.spec['docker_packages'] = {'docker.io': '28.2.2-0ubuntu1',
+                                       'docker-compose-v2': '2.37.1+ds1-0ubuntu1', 'curl': '8.5.0-2ubuntu10'}
+        calls = []
+        def execute(command, **kwargs):
+            calls.append((command, kwargs))
+            return subprocess.CompletedProcess(command, 100 if 'install' in command else 0,
+                                               b'private command output', b'private credential in stderr')
+        with mock.patch.object(self.b, 'binary_exists', return_value=False), \
+             mock.patch.object(self.b.subprocess, 'run', side_effect=execute):
+            with self.assertRaisesRegex(self.b.BootstrapError, '^apt_docker_install_failed$'):
+                self.b.ensure_docker(self.spec)
+        command, options = calls[-1]
+        self.assertEqual(command[:4], ['/usr/bin/apt-get', '-o', 'DPkg::Lock::Timeout=120', 'install'])
+        self.assertEqual(options['timeout'], 720)
+        self.assertEqual(options['stderr'], subprocess.DEVNULL)
+        self.assertEqual(sum('install' in command for command, _ in calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

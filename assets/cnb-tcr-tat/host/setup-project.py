@@ -27,6 +27,15 @@ def require(value, code):
         raise SetupError(code)
 
 
+def bootstrap_call(bootstrap, action, *args, **kwargs):
+    try:
+        return action(*args, **kwargs)
+    except bootstrap.BootstrapError as error:
+        reason = str(error)
+        code = 'SETUP_BOOTSTRAP_' + reason.upper() if reason in bootstrap.SAFE_ERROR_CODES else 'SETUP_REMOTE_FAILED'
+        raise SetupError(code) from None
+
+
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
@@ -73,7 +82,7 @@ def validate_inputs(files, expected):
     policy = core.validate_host_policy(strict_json(files["bundle/host-policy.json"]))
     bootstrap, caddy = module(files, "bootstrap-host.py"), module(files, "configure-native-caddy.py")
     caddy.render_sites(policy, policy["project"], sha(files["bundle/host-policy.json"]), policy["environment"])
-    spec = bootstrap.validate_spec(strict_json(files["bootstrap-spec.json"]), policy, sha(files["bundle/host-policy.json"]), apply=True)
+    spec = bootstrap_call(bootstrap, bootstrap.validate_spec, strict_json(files["bootstrap-spec.json"]), policy, sha(files["bundle/host-policy.json"]), apply=True)
     config = strict_json(files["docker-config.json"])
     registries = {s["image_repository"].split("/", 1)[0] for s in policy["services"].values()}
     registries |= {image.split("/", 1)[0] for image in spec["images"].values()}
@@ -146,10 +155,10 @@ def ensure_caddy(spec, baseline_sha, task, installer, bootstrap, caddy):
     require(not config.exists() and not config.is_symlink() and not receipt.exists(), "SETUP_EXISTING_CADDY_CONFIG")
     version = spec["docker_packages"].get("caddy")
     require(type(version) is str and re.fullmatch(r"[0-9][A-Za-z0-9.+:~_-]{0,127}", version), "SETUP_PINNED_CADDY_REQUIRED")
-    bootstrap.run(["/usr/bin/apt-get", "update"], timeout=300)
-    bootstrap.run(["/usr/bin/apt-get", "install", "--yes", "--no-install-recommends", "caddy=" + version], timeout=600)
-    require(bootstrap.run(["/usr/bin/dpkg-query", "--show", "--showformat=${Version}", "caddy"]).decode().strip() == version, "SETUP_CADDY_PACKAGE_MISMATCH")
-    bootstrap.run(["/usr/bin/systemctl", "enable", "--now", "caddy"])
+    bootstrap.run(["/usr/bin/apt-get", "update"], timeout=300, failure_code="apt_caddy_update_failed")
+    bootstrap.run(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "install", "--yes", "--no-install-recommends", "caddy=" + version], timeout=720, failure_code="apt_caddy_install_failed")
+    require(bootstrap.run(["/usr/bin/dpkg-query", "--show", "--showformat=${Version}", "caddy"], failure_code="caddy_package_query_failed").decode().strip() == version, "SETUP_CADDY_PACKAGE_MISMATCH")
+    bootstrap.run(["/usr/bin/systemctl", "enable", "--now", "caddy"], failure_code="caddy_service_start_failed")
     caddy.check_system()
     actual = sha(caddy.read_safe(config)[0])
     require(baseline_sha in (None, actual), "SETUP_CADDY_BASELINE_DRIFT")
@@ -190,7 +199,7 @@ def setup_archive(raw, expected):
             require(installed.exists(), "SETUP_REVIEWED_INSTALLATION_MISSING")
             # Verify an existing authority before Caddy/account/infrastructure mutations.
             installer.apply_install(plan, runtime, installed_lock_sha256=expected.get("installed_lock_sha256"))
-        baseline_sha = ensure_caddy(spec, expected["caddy_baseline_sha256"], task, installer, bootstrap, caddy)
+        baseline_sha = bootstrap_call(bootstrap, ensure_caddy, spec, expected["caddy_baseline_sha256"], task, installer, bootstrap, caddy)
         # Preflight the reviewed existing proxy before infrastructure or account changes.
         config, site, _policy_path = caddy.paths(policy["project"], policy["environment"])
         original = caddy.read_safe(config)[0]
@@ -200,7 +209,7 @@ def setup_archive(raw, expected):
         try:
             account = pwd.getpwnam(policy["release_user"])
         except KeyError:
-            bootstrap.run(["/usr/sbin/useradd", "--create-home", "--shell", "/bin/bash", policy["release_user"]])
+            bootstrap_call(bootstrap, bootstrap.run, ["/usr/sbin/useradd", "--create-home", "--shell", "/bin/bash", policy["release_user"]], failure_code="release_user_create_failed")
             account = pwd.getpwnam(policy["release_user"])
         require(account.pw_dir == policy["release_home"], "SETUP_RELEASE_HOME_MISMATCH")
         docker_config = Path(policy["docker_config"])
@@ -208,7 +217,7 @@ def setup_archive(raw, expected):
         installer.install_file(docker_config, files["docker-config.json"], 0o600, account.pw_uid, account.pw_gid)
         if not installed.exists():
             with bootstrap.bootstrap_lock(policy["project"], policy["environment"]):
-                runtime = bootstrap.apply_bootstrap(installer, plan, spec, expected["spec_sha256"])
+                runtime = bootstrap_call(bootstrap, bootstrap.apply_bootstrap, installer, plan, spec, expected["spec_sha256"])
         installer.apply_install(plan, runtime, installed_lock_sha256=expected.get("installed_lock_sha256"))
         with caddy.locked():
             result = caddy.configure(policy["project"], sha(files["bundle/host-policy.json"]), baseline_sha, apply=True, environment=policy["environment"])

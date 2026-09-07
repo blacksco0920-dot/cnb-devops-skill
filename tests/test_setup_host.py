@@ -151,6 +151,30 @@ class SetupHostTests(unittest.TestCase):
             with self.assertRaises(self.m.SetupError):
                 self.m.main(self.args + ["--apply"])
 
+    def test_root_gate_preserves_only_known_typed_bootstrap_reasons(self):
+        driver_source = HOST_PATH.with_name('setup-project.py').read_text()
+        bootstrap_source = HOST_PATH.with_name('bootstrap-host.py').read_bytes()
+        for error, expected in [
+            ('bootstrap.BootstrapError("apt_docker_install_failed")', 'SETUP_BOOTSTRAP_APT_DOCKER_INSTALL_FAILED'),
+            ('bootstrap.BootstrapError("database_authentication_failed")', 'SETUP_BOOTSTRAP_DATABASE_AUTHENTICATION_FAILED'),
+            ('bootstrap.BootstrapError("compose_v2_required")', 'SETUP_BOOTSTRAP_COMPOSE_V2_REQUIRED'),
+            ('bootstrap.BootstrapError("do_not_emit_private_value")', 'SETUP_REMOTE_FAILED'),
+            ('RuntimeError("database_authentication_failed")', 'SETUP_REMOTE_FAILED'),
+        ]:
+            with self.subTest(error=error):
+                fixture = ("\ndef setup_archive(_raw, _expected):\n"
+                           f"    bootstrap = module({{'bundle/host/bootstrap-host.py': {bootstrap_source!r}}}, 'bootstrap-host.py')\n"
+                           f"    def fail():\n        raise {error}\n"
+                           "    return bootstrap_call(bootstrap, fail)\n")
+                raw = (driver_source + fixture).encode()
+                result = subprocess.run([sys.executable, '-I', '-c', self.m.ROOT_GATE,
+                                         hashlib.sha256(raw).hexdigest(), '{}'],
+                    input=self.m.archive_bytes({'bundle/host/setup-project.py': raw}), capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(json.loads(result.stdout)['code'], expected)
+                self.assertEqual(result.stderr, b'')
+                self.assertNotIn(b'do_not_emit_private_value', result.stdout)
+
     def test_root_gate_rejects_changed_driver_before_executing_it(self):
         _plan, files, expected, _target = self.m.prepare(self.args_namespace())
         driver_sha = hashlib.sha256(files["bundle/host/setup-project.py"]).hexdigest()
@@ -197,6 +221,7 @@ class SetupHostTests(unittest.TestCase):
         def run(command, **_kwargs):
             calls.append(command)
             if "caddy=" + version in command:
+                self.assertEqual(_kwargs['timeout'], 720)
                 binpath.write_bytes(b"synthetic binary")
                 config.write_bytes(default)
             return version.encode() if command[0] == "/usr/bin/dpkg-query" else b""
@@ -209,7 +234,7 @@ class SetupHostTests(unittest.TestCase):
         with mock.patch.object(driver, "Path", side_effect=mapped):
             baseline = driver.ensure_caddy({"docker_packages": {"caddy": version}}, None, self.root, installer, bootstrap, caddy)
             self.assertEqual(baseline, hashlib.sha256(default).hexdigest())
-            self.assertIn(["/usr/bin/apt-get", "install", "--yes", "--no-install-recommends", "caddy=" + version], calls)
+            self.assertIn(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "install", "--yes", "--no-install-recommends", "caddy=" + version], calls)
             self.assertEqual((self.root / "caddy-baseline.json").stat().st_mode & 0o777, 0o600)
             (self.root / "caddy-baseline.json").unlink()
             calls.clear()
