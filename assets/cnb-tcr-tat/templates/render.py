@@ -227,7 +227,8 @@ def tag_deploy(production_enabled=False):
         'description': ('将测试通过的同一批镜像发布到生产。先检查就绪，再由管理员确认候选。'
                         if production_enabled else '生产执行尚未接通，当前仅交付测试候选。'),
         'permissions': {'roles': ['owner']},
-        'button': [{'name': '检查生产就绪', 'event': 'web_trigger_production_readiness',
+        'button': [{'name': '检查生产就绪', 'description': '检查选中候选的生产就绪状态。',
+                    'event': 'web_trigger_production_readiness',
                     'permissions': {'roles': ['owner']}}],
         'deploy': [{'name': '发布已确认的候选' if production_enabled else '生产执行（尚未启用）'}],
         'require': [{'annotation': 'candidate_status', 'expect': {'eq': 'ready'}},

@@ -92,6 +92,17 @@ class TwoEnvironmentTests(unittest.TestCase):
         requirements = {item.get('annotation') for item in ui['require']}
         self.assertTrue({'candidate_status', 'test_runtime_status', 'test_public_status', 'production_readiness_status', 'production_approval_status'} <= requirements)
 
+    def test_readiness_button_includes_cnb_required_description(self):
+        # Required button fields from CNB's tag-deploy-schema-zh.json (2026-09-07).
+        button_schema = {'type': 'object', 'required': ['name', 'description', 'event'],
+                         'properties': {key: {'type': 'string', 'minLength': 1}
+                                        for key in ['name', 'description', 'event']}}
+        for production_enabled in (False, True):
+            with self.subTest(production_enabled=production_enabled):
+                button = render.tag_deploy(production_enabled)['environments'][0]['button'][0]
+                errors = list(jsonschema.Draft7Validator(button_schema).iter_errors(button))
+                self.assertEqual([error.message for error in errors], [])
+
 
 if __name__ == '__main__':
     unittest.main()
