@@ -2,6 +2,8 @@
 
 AI 接入兼容项目时先运行生成器，不重新编写发布控制器。用户只需提供业务选择、完成必须本人操作的步骤；本页的命令和配置由 AI 处理。
 
+AI 执行时配合[完整输入与命令](bootstrap-inputs.md)：包含双环境包路径、SSH/APT 盘点、bootstrap spec、Docker 拉取配置、生产签名与导出下载。示例只用非秘密占位；实际值留在项目批准的私密目录，沿用已有阶段授权。
+
 当前 0.2 包提供**测试与候选、显式配置的生产、SSH 首装和隔离恢复**入口，本地可运行及接口检查已通过，完整云端链路仍待验。此前 FinAgent 的 0.1 测试与候选结果见[执行包实测](../docs/history/2026-09-06-bundle-staging-rehearsal.md)，不能替代本版生产验收。支持 Ubuntu 24.04、Docker Compose、PostgreSQL、同仓同提交的应用与发布程序；已有共享主机仍需按实际拓扑核对。不兼容时列出具体差异。
 
 ## 1．生成项目文件
@@ -56,7 +58,7 @@ python3 "$SKILL_DIR/scripts/setup-host.py" \
 
 ### 首次安装运行依赖
 
-`setup-host` 使用 `host/bootstrap-host.py`：填写与该环境 policy 摘要绑定的 `bootstrap-spec.json`，固定 PostgreSQL 16 / Redis 7 的 TCR 摘要及盘点得到的 APT 版本，`generate_env` 声明在主机生成的随机值。它安装缺失的 Docker/Compose，建立独立网络、数据库/用户和可选 Redis；秘密留在主机，已有资源必须属于同一安装记录。也可通过已授权管理员通道单独预览此固定入口：
+`setup-host` 使用 `host/bootstrap-host.py`：按[输入示例](bootstrap-inputs.md#bootstrap-spec)填写与该环境 policy 摘要绑定的 `bootstrap-spec.json`，固定 PostgreSQL 16 / Redis 7 的 TCR 摘要及盘点得到的 APT 版本，`generate_env` 声明在主机生成的随机值。它安装缺失的 Docker/Compose，建立独立网络、数据库/用户和可选 Redis；秘密留在主机，已有资源必须属于同一安装记录。也可通过已授权管理员通道单独预览此固定入口：
 
 ```sh
 python3 "$HOST_BUNDLE_DIR/host/bootstrap-host.py" \
@@ -124,7 +126,11 @@ AI 按 `secrets.tcr_import`、`secrets.tat_import` 和生产的 `production.tat_
 
 ## 5．发布、续接和验收
 
-主机安装及权限核验通过后，按项目授权推送测试分支。CNB 自动执行检查→构建/TCR→TAT→运行与公网核验→候选 Tag→annotations 回读，最后才设 ready。只修失败阶段的实际问题；不手工创建候选绕过流水线，不把 TAT SUCCESS 单独当成验收。
+主机安装及权限核验通过、生成配置通过[完整 CNB 格式检查](bootstrap-inputs.md)后，按项目授权推送测试分支。CNB 自动执行检查→构建/TCR→TAT→运行与公网核验→候选 Tag→annotations 回读，最后才设 ready。只修失败阶段的实际问题；不手工创建候选绕过流水线，不把 TAT SUCCESS 单独当成验收。
+
+核验部署、候选创建和最终 ready 回读这些必需阶段均实际成功，再核对 Tag 和主机回执。`breakIfModify` 提前结束旧构建时，总状态可能仍为 success，而后续发布步骤是 skipped；这种构建不算部署成功。
+
+业务验收使用项目已有测试与实际接口，覆盖登录、业务写入、文件和结果回读等适用路径；记录请求对应的发布身份及真实后端，mock 结果与真实外部服务分开写明。恢复要求非空的业务表应由这些已授权业务操作产生数据。把项目命令与证据位置写入项目部署文档，不另建通用测试平台。
 
 依赖使用锁文件、配置的国内 npm 源和已有缓存；不会在发布前清理全局镜像缓存。首次依赖/镜像下载与后续缓存命中的时间分开记录；缓存不能替代同提交检查或镜像 digest。
 
@@ -136,11 +142,15 @@ AI 按 `secrets.tcr_import`、`secrets.tat_import` 和生产的 `production.tat_
 
 AI 将已测试候选提交纳入配置的 `production_branch`（通常 main），保留原候选 Tag 与 digest。在 Tag 页面触发 `web_trigger_production_readiness`，流水线核验分支祖先、清单和固定 TAT 就绪回执。取得明确生产意图后，AI 在本机运行生产子包的 `admin/sign-production-approval.mjs`，用 `--readiness-invocation-id` 独立回读 TAT，带 `--authorize-production-apply` 签发绑定 prepared 的限时授权。
 
+候选和就绪文件的取得方式、依赖与完整 CLI 见[本机签名与发布](bootstrap-inputs.md#production)。这两个入口使用 `--key=value`；签名授权或发布执行开关放在命令末尾。
+
 随后本机运行 `admin/publish-production-approval.mjs`，先预览，再用 `--apply` 和私密环境中的项目 PAT（`CNB_TOKEN`，含 `repo-release:rw`）发布并逐项回读授权，最后才标记 signed。CNB owner 在同一 Tag 批准发布，`tag_deploy.production` 校验签名后调用固定生产入口，使用候选的同一组镜像。原生审批不会替代或生成本机 Ed25519 签名，CI 不接触私钥；已有具体授权仍有效时不要求用户重复确认。
 
 ## 7．导出、下载与隔离恢复
 
 已安装 `recovery` 策略时，AI 在授权的短暂停写窗口调用固定 `host/recover-project.py export`，传入项目、环境及 core/policy/recovery-policy 三摘要和唯一 export-id；先预览，`--apply` 才暂停应用、导出数据库与声明目录并恢复源服务。通过已授权 SSH/SFTP 下载私密导出包及回执，核对 archive/manifest 摘要；没有另一个 download 子命令。
+
+完整 export、回执路径读取与下载命令见[离机恢复](bootstrap-inputs.md#recovery)。下载由管理员读取受保护文件，不放宽源端备份权限。
 
 ```sh
 python3 "$ENV_BUNDLE_DIR/host/recover-project.py" restore-local \
