@@ -72,8 +72,51 @@
   "schema": "cnb-devops-bundle/v1",
   "status": "local-preview",
   "validation": {
-    "clean_host_install": "not_run",
+    "clean_host_install": "completed on two freshly reset Ubuntu 24.04 hosts in round 1; final Caddy step required an administrator-helper compatibility fix and explicit same-runtime resume; uninterrupted repeat installation still pending",
     "cloud_evidence": {
+      "accepted_installed_locks": {
+        "production": "2517cf5b6fe9304ea4211de82e062522df270b8dc3843c3ea2df5a41a1df727c",
+        "test": "47b7c8f2f5594c4f580eb476e27fb837157709b9f3c32d6f35628a9d54b4eb13"
+      },
+      "application_commit": "14515ee0afef31e8c3c835e91bb4c6589f9a13c9",
+      "candidate_generated_locks": {
+        "production": "e813a4c09806bc6be7ffbf3570e63fe02d8580739b644a891fdb87ac82e6c23d",
+        "test": "46c65219902276f6f5a9a9d761b13c674efa8f48117d604c59d3fa0bc1d61c80"
+      },
+      "candidate_manifest_sha256": "2bee413752f6341a98e21af23bf18722b57e1b1167b7038a44c5f3d49a1eeb0e",
+      "candidate_tag": "finagent-candidate-cnb-egm-1k1tcd7rn",
+      "date": "2026-09-07",
+      "external_restore_receipts": {
+        "production_restore_receipt_sha256": "ecd632192ffbaf21bb44a360fb4175329c7eb5fc35e8b3582b8bca6aea6e12c0",
+        "test_independent_verification_sha256": "bd66433cd4fdcebadf7df5ba7d123a0d23ea31dac745e022a98ed536ba1df1e8"
+      },
+      "limitations": [
+        "round 1 required fixes and retained original installed locks after same-runtime helper resume",
+        "uninterrupted repeat clean installation pending",
+        "second-project cloud reuse pending",
+        "real PaddleOCR but MockExtractor; no real MiniMax acceptance",
+        "no full H5 UI, tenant-isolation or production-load acceptance",
+        "Redis excluded, OCR models rebuildable; not full-host, runtime-secret or cluster-role recovery"
+      ],
+      "metadata_note": "Evidence applies only to the exact accepted installations and candidate above. Updating this metadata does not upgrade an installation or attest a newly generated artifact lock.",
+      "production_build_url": "https://cnb.cool/laoma-ai/finagent/-/build/logs/cnb-jsg-1k1tdbedb",
+      "production_receipt_sha256": "990a682889218ce0f5e0b20484946ea4317d7fb9dac39658b6f9e1b723da53a4",
+      "report": "docs/history/2026-09-07-complete-rehearsal.md",
+      "round": 1,
+      "scope": "two clean hosts, isolated test and production, actual pipeline/candidate/approval/release, 18 synthetic business checks per environment, PostgreSQL and uploads off-host recovery",
+      "skill_commit": "7658643",
+      "target_met": false,
+      "target_seconds": 1800,
+      "test_build_url": "https://cnb.cool/laoma-ai/finagent/-/build/logs/cnb-egm-1k1tcd7rn",
+      "wall_clock_seconds": 5281.384
+    },
+    "external_restore": "passed for both cloud environments using standard export and restore-local on a different Docker daemon: PostgreSQL 16 schema/all 12 tables/sequences and declared uploads reconciled, original source containers resumed, isolated target stopped without network or ports",
+    "first_host_bootstrap": "passed on two pure Ubuntu 24.04 hosts: pinned APT dependencies, isolated PostgreSQL 16 and Redis 7, protected host-generated runtime values",
+    "local_contract_tests": "passed locally: generated stages, Docker Compose config, canonical host request, candidate and TAT binding with mocked cloud boundary",
+    "local_two_project_generation": "passed: one and three services, identical copied core hashes",
+    "native_caddy_setup": "passed on both hosts with Ubuntu Caddy 2.6.2 after /dev/stdin compatibility fix; default site preserved, installed/running configuration matched, six HTTPS domains and release identities verified",
+    "new_bundle_cloud_deployment": "0.2 round 1 complete for the exact accepted installations in cloud_evidence; 88.0 minute wall clock exceeded the 30 minute target; repeat clean rounds and second-project cloud reuse pending",
+    "previous_cloud_evidence": {
       "application_commit": "0594267c31561a28070aa1965297875f1803e511",
       "artifact_lock_sha256": "9a62de1efe9dc5bc8ea8e5525f0fb224023c35454f31ca03a8996652bc85060d",
       "build_url": "https://cnb.cool/laoma-ai/finagent/-/build/logs/cnb-ejk-1k1rir9iu",
@@ -83,14 +126,8 @@
       "scope": "test deployment, database backup before migration, runtime and public availability/release identity, automatic annotated candidate and ready readback; not full business or restore acceptance",
       "skill_commit": "bde8bd35b9cac3dace29f33b716257e22e51167a"
     },
-    "external_restore": "implemented and local PostgreSQL 16/file restore verified; current artifact off-host cloud acceptance pending",
-    "first_host_bootstrap": "passed on one reset Tencent Cloud Ubuntu 24.04 host with preinstalled Hermes/native Caddy; existing services preserved; see cloud_evidence",
-    "local_contract_tests": "passed locally: generated stages, Docker Compose config, canonical host request, candidate and TAT binding with mocked cloud boundary",
-    "local_two_project_generation": "passed: one and three services, identical copied core hashes",
-    "native_caddy_setup": "passed on the same cloud host: Caddy 2.11.4, existing default site preserved, installed config and running config matched, all three test domains passed HTTPS checks",
-    "new_bundle_cloud_deployment": "current 0.2 artifact pending; cloud_evidence below records previous 0.1 test deployment only",
-    "production": "implemented and contract-tested; current artifact cloud acceptance pending",
-    "project_installation": "passed on the same cloud host from an explicitly empty isolated PostgreSQL database; clean image without preinstalled services not tested"
+    "production": "passed: immutable tested candidate, governed branch, fixed-TAT readiness, independently verified local Ed25519 approval, native owner approval, same-digest deployment, final annotation readback and synthetic business acceptance",
+    "project_installation": "passed for isolated empty test and production databases, with original installation records retained through administrator-helper resume; active-version upgrade and a second project on shared hosts not tested"
   },
   "version": "0.2.0-preview.1"
 }
