@@ -39,6 +39,8 @@ AI 先形成一批具体材料，避免逐个猜测、重复申请：
 | 生产授权 | 本机 Ed25519 私钥及匹配公钥；发布授权 annotations 的本机 PAT 限定目标仓库并具备 `repo-release:rw`，与 TAT 云凭据分开 |
 | 应用 | 真实迁移命令或明确无迁移、每服务身份探针、必要业务验收和其他持久数据范围 |
 
+重装后核对 TAT Agent 实际在线；免密登录开关开启不代表 Agent 已安装。缺失时使用已授权管理员通道或[腾讯云安装入口](https://cloud.tencent.com/document/product/1340/51945)补装；控制台一键安装会重启实例，须在已有重启授权范围内执行。
+
 新服务器先盘点预装服务和端口。AI 用 `scripts/setup-host.py` 串联已有 bootstrap、installer 和原生 Caddy 入口，分别安装 test/production 子包；默认只预览，不连接 SSH。私密 target JSON 恰好包含上表五个 SSH 字段，文件 0600；运行用户须有无交互 sudo 或使用 root。StrictHostKeyChecking/BatchMode 固定开启，root 先核验捕获代码摘要再执行，秘密通过 SSH stdin 传输。
 
 ```sh

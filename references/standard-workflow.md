@@ -40,6 +40,8 @@
 
 生成器按测试分支接 push，候选 Tag 下使用 `web_trigger_production_readiness` 和 `tag_deploy.production`。候选创建是成功流水线的一步；本机 publisher 只发布已签的生产授权，不代替流水线创建候选。具体命令与私密输入见[接入步骤](bootstrap.md)。
 
+既有授权有效且输入已审时，按[恢复命令](bootstrap-inputs.md#recovery)的依赖顺序连续批量执行标准 export preview/apply、严格下载、restore-local preview/apply；任一步非零立即停止后续依赖动作并保留失败证据。导出成功后，独立的源后态采集可与本机恢复并行。固定包、安装回执和目标未变且刚验的完整性证据仍有效时复用该证据；重装、换包或发现漂移时重新核验受影响部分。标准程序负责全表、序列和声明备份文件的实际恢复与对账，AI 不重写同一验证。AI 核对标准回执及其绑定清单的 project/environment/commit/build/hash/scope 与成功断言。源容器及公网前后态、隔离容器状态各一次采齐，并记录整个操作窗口墙钟；保持既有验收范围，缺失、失败或 unchecked 状态不得宣称成功。
+
 门禁细节按需读[CNB 部署页面](cnb-deployment-ui.md)、[发布安全](release-safety.md)。现有 [production-gates 示例](cnb-deployment-ui/examples/candidate-production-gates.yml)是契约示例，内含阻断占位，不能拿它充当已适配的生产执行器。
 
 ## 下一次发布与故障续接
