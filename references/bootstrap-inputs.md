@@ -255,6 +255,8 @@ publisher 使用本机项目 PAT 的 `CNB_TOKEN`，不加载签名私钥；先�
 
 先用项目实际接口完成业务验收和声明的非空表数据；回执写明 mock/真实服务、上传文件和结果回读范围。重新选择要导出的 `ENVIRONMENT`、`ENV_BUNDLE_DIR`、`PRIVATE_DIR`、`TARGET` 并重建上文 SSH 数组。下面的 source 命令在对应主机运行，`export` 和 `resume-source` 均默认预览；导出 `--apply` 使用已授权短暂停写窗口。
 
+恢复前以**已接受的实际安装记录**为准：从该记录取得安装锁摘要，核对主机 `installation.json.lock_sha256` 与已安装 `artifact-lock.json` 原始摘要；逐项核对核心、policy、Compose、固定 TAT、恢复入口及恢复策略的已审字节和权限。经过文档支持的管理员 helper 兼容续接或仅 CI/包元数据更新后，当前生成锁可以不同于保留的安装锁；只要实际运行边界仍匹配已接受记录，就保留原锁和回执继续。不能直接要求两份整包锁相等，也不能据此覆盖安装记录或略过运行文件核验。
+
 ```sh
 json_value() {
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"
