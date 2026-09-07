@@ -53,9 +53,10 @@ def module(files, name):
 
 
 def validate_inputs(files, expected):
-    require(type(expected) is dict and set(expected) == {"lock_sha256", "spec_sha256", "docker_config_sha256", "caddy_baseline_sha256"}, "SETUP_EXPECTATION_INVALID")
+    keys = {"lock_sha256", "spec_sha256", "docker_config_sha256", "caddy_baseline_sha256"}
+    require(type(expected) is dict and set(expected) in (keys, keys | {"installed_lock_sha256"}), "SETUP_EXPECTATION_INVALID")
     require(all(type(value) is str and re.fullmatch(r"[0-9a-f]{64}", value)
-                for key, value in expected.items() if key != "caddy_baseline_sha256" or value is not None), "SETUP_EXPECTATION_INVALID")
+                for key, value in expected.items() if key not in ("caddy_baseline_sha256", "installed_lock_sha256") or value is not None), "SETUP_EXPECTATION_INVALID")
     require(sha(files["bundle/artifact-lock.json"]) == expected["lock_sha256"], "SETUP_LOCK_MISMATCH")
     lock = strict_json(files["bundle/artifact-lock.json"])
     require(type(lock) is dict and set(lock) == {"schema", "version", "files"} and lock["schema"] == "cnb-devops-artifacts/v1"
@@ -184,6 +185,11 @@ def setup_archive(raw, expected):
         installed = Path(policy["install_dir"]) / "installation.json"
         app = Path(policy["app_dir"])
         require(installed.exists() or not app.exists() or not any(app.iterdir()), "SETUP_EXISTING_APPLICATION")
+        runtime = state / "bootstrap/runtime.env"
+        if installed.exists() or expected.get("installed_lock_sha256") is not None:
+            require(installed.exists(), "SETUP_REVIEWED_INSTALLATION_MISSING")
+            # Verify an existing authority before Caddy/account/infrastructure mutations.
+            installer.apply_install(plan, runtime, installed_lock_sha256=expected.get("installed_lock_sha256"))
         baseline_sha = ensure_caddy(spec, expected["caddy_baseline_sha256"], task, installer, bootstrap, caddy)
         # Preflight the reviewed existing proxy before infrastructure or account changes.
         config, site, _policy_path = caddy.paths(policy["project"], policy["environment"])
@@ -200,16 +206,16 @@ def setup_archive(raw, expected):
         docker_config = Path(policy["docker_config"])
         installer.ensure_directory(docker_config.parent, 0o700, account.pw_uid, account.pw_gid)
         installer.install_file(docker_config, files["docker-config.json"], 0o600, account.pw_uid, account.pw_gid)
-        runtime = state / "bootstrap/runtime.env"
         if not installed.exists():
             with bootstrap.bootstrap_lock(policy["project"], policy["environment"]):
                 runtime = bootstrap.apply_bootstrap(installer, plan, spec, expected["spec_sha256"])
-        installer.apply_install(plan, runtime)
+        installer.apply_install(plan, runtime, installed_lock_sha256=expected.get("installed_lock_sha256"))
         with caddy.locked():
             result = caddy.configure(policy["project"], sha(files["bundle/host-policy.json"]), baseline_sha, apply=True, environment=policy["environment"])
         receipt_path = task / "setup-receipt.json"
         receipt = {"schema": "cnb-host-setup/v1", "status": "ready", "project": policy["project"], "environment": policy["environment"],
                    "lock_sha256": expected["lock_sha256"], "spec_sha256": expected["spec_sha256"], "docker_config_sha256": expected["docker_config_sha256"],
+                   "installed_lock_sha256": plan["installed_lock_sha256"],
                    "caddy_baseline_sha256": baseline_sha, "site_sha256": result["site_sha256"], "receipt_path": str(receipt_path),
                    "release_executed": False, "https_verified": False}
         installer.install_file(receipt_path, canonical(receipt), 0o600, 0, 0)

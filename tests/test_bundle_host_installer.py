@@ -292,6 +292,41 @@ class HostInstallerTests(unittest.TestCase):
                     self.installer.apply_install(plan, runtime)
                 self.assertEqual(helper.read_bytes(), b"drift")
 
+    def test_explicit_helper_only_resume_keeps_installed_authority_and_receipt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.simulated_root_install(temporary, "production") as (plan, runtime, install, app, _file, dependencies, empty):
+                def changed_file(name, raw):
+                    plan["files"][name] = raw
+                    lock = json.loads(plan["raw_lock"])
+                    lock["files"][name] = hashlib.sha256(raw).hexdigest()
+                    plan["raw_lock"] = self.installer.canonical(lock)
+                    plan["lock_sha256"] = hashlib.sha256(plan["raw_lock"]).hexdigest()
+                changed_file("host/configure-native-caddy.py", b"# reviewed original helper\n")
+                self.installer.apply_install(plan, runtime)
+                original_lock = plan["lock_sha256"]
+                before = {p: (p.read_bytes(), p.stat().st_ino) for p in [*install.iterdir(), app / ".env", app / ".release.json"]}
+                changed_file("host/configure-native-caddy.py", b"# reviewed Caddy compatibility fix\n")
+                with self.assertRaises(self.installer.InstallError):
+                    self.installer.apply_install(plan, runtime)
+                with self.assertRaises(self.installer.InstallError):
+                    self.installer.apply_install(plan, runtime, installed_lock_sha256="f" * 64)
+                dependencies.reset_mock(); empty.reset_mock(); runtime.unlink()
+                self.assertEqual(self.installer.apply_install(plan, runtime, installed_lock_sha256=original_lock), "unchanged")
+                self.assertEqual(plan["installed_lock_sha256"], original_lock)
+                dependencies.assert_not_called(); empty.assert_not_called()
+                for p, pair in before.items():
+                    self.assertEqual((p.read_bytes(), p.stat().st_ino), pair)
+                for name in ("host/tat-deploy-test.py", "host-policy.json", "ci/new-code.mjs"):
+                    saved_files, saved_raw, saved_sha = dict(plan["files"]), plan["raw_lock"], plan["lock_sha256"]
+                    changed_file(name, b"changed outside administrator helpers\n")
+                    with self.subTest(name=name), self.assertRaises(self.installer.InstallError):
+                        self.installer.apply_install(plan, runtime, installed_lock_sha256=original_lock)
+                    plan["files"], plan["raw_lock"], plan["lock_sha256"] = saved_files, saved_raw, saved_sha
+                installed = install / "production-release.py"
+                installed.chmod(0o755); installed.write_bytes(b"host drift\n"); installed.chmod(0o555)
+                with self.assertRaises(self.installer.InstallError):
+                    self.installer.apply_install(plan, runtime, installed_lock_sha256=original_lock)
+
     def test_production_install_preserves_extra_files_and_rejects_repeat_key_drift(self):
         with tempfile.TemporaryDirectory() as temporary:
             with self.simulated_root_install(temporary, "production") as (plan, runtime, install, app, _file, dependencies, empty):

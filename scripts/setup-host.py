@@ -86,7 +86,8 @@ def prepare(args):
         files["bootstrap-spec.json"] = read_safe(args.bootstrap_spec, {0o600})
         files["docker-config.json"] = read_safe(args.tcr_docker_config, {0o600})
         expected = {"lock_sha256": args.lock_sha256, "spec_sha256": sha(files["bootstrap-spec.json"]),
-                    "docker_config_sha256": sha(files["docker-config.json"]), "caddy_baseline_sha256": args.caddy_baseline_sha256}
+                    "docker_config_sha256": sha(files["docker-config.json"]), "caddy_baseline_sha256": args.caddy_baseline_sha256,
+                    "installed_lock_sha256": getattr(args, "installed_lock_sha256", None)}
         driver = ModuleType("setup_local_driver")
         driver.__file__ = str(args.bundle_dir / "host/setup-project.py")
         driver_raw = files["bundle/host/setup-project.py"]
@@ -124,6 +125,7 @@ try:
     print(json.dumps(namespace['setup_archive'](archive, json.loads(sys.argv[2])), sort_keys=True))
 except Exception as error:
     code = str(error)
+    if re.fullmatch('CADDY_[A-Z_]+', code): code = 'SETUP_' + code
     print(json.dumps({'schema':'cnb-host-setup/v1','status':'failed','code':code if re.fullmatch('SETUP_[A-Z_]+', code) else 'SETUP_REMOTE_FAILED'}))
     sys.exit(1)
 '''
@@ -147,6 +149,7 @@ def main(argv=None):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--lock-sha256", required=True)
     parser.add_argument("--caddy-baseline-sha256")
+    parser.add_argument("--installed-lock-sha256", help="explicit reviewed prior lock; permits only administrator helper compatibility changes")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     plan, files, expected, target = prepare(args)
@@ -176,8 +179,11 @@ def main(argv=None):
                 raise SetupError(response["code"])
             raise SetupError("SETUP_REMOTE_NOT_VERIFIED")
         # Only selected non-secret receipt fields cross the process boundary.
+        actual_installed = response.get("installed_lock_sha256")
+        if actual_installed != (args.installed_lock_sha256 or args.lock_sha256):
+            raise SetupError("SETUP_INSTALLED_LOCK_MISMATCH")
         result = {key: response[key] for key in ("schema", "status", "project", "environment", "lock_sha256")}
-        result.update(release_executed=False, receipt_path=response.get("receipt_path"), caddy_baseline_sha256=response.get("caddy_baseline_sha256"))
+        result.update(installed_lock_sha256=actual_installed, release_executed=False, receipt_path=response.get("receipt_path"), caddy_baseline_sha256=response.get("caddy_baseline_sha256"))
     print(json.dumps(result, sort_keys=True))
     return 0
 

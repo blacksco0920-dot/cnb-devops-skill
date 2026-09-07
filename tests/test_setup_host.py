@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 from pathlib import Path
 from types import SimpleNamespace
 import subprocess
@@ -83,6 +84,14 @@ class SetupHostTests(unittest.TestCase):
         self.assertNotIn(self.secret, output.getvalue())
         self.assertNotIn(base64.b64encode(self.secret.encode()).decode(), output.getvalue())
 
+    def test_reviewed_installed_lock_is_explicit_and_validated_in_preview(self):
+        output = io.StringIO()
+        with mock.patch.object(self.m.subprocess, "run", side_effect=AssertionError("preview opened SSH")), contextlib.redirect_stdout(output):
+            self.assertEqual(self.m.main(self.args + ["--installed-lock-sha256", "b" * 64]), 0)
+            with self.assertRaises(self.m.SetupError):
+                self.m.main(self.args + ["--installed-lock-sha256", "invalid"])
+        self.assertEqual(json.loads(output.getvalue())["installed_lock_sha256"], "b" * 64)
+
     def test_apply_uses_one_strict_ssh_and_streams_private_input_not_argv(self):
         calls = []
         def execute(argv, **options):
@@ -97,10 +106,26 @@ class SetupHostTests(unittest.TestCase):
             with tarfile.open(fileobj=io.BytesIO(options["input"]), mode="r:") as archive:
                 self.assertEqual(archive.extractfile("docker-config.json").read(), self.config.read_bytes())
                 self.assertTrue(all(member.mode == 0o600 and member.isfile() for member in archive))
-            return subprocess.CompletedProcess(argv, 0, json.dumps({"schema": "cnb-host-setup/v1", "status": "ready", "project": "sample", "environment": "test", "lock_sha256": self.lock}).encode(), b'')
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"schema": "cnb-host-setup/v1", "status": "ready", "project": "sample", "environment": "test", "lock_sha256": self.lock, "installed_lock_sha256": self.lock}).encode(), b'')
         with mock.patch.object(self.m.subprocess, "run", side_effect=execute), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.m.main(self.args + ["--apply"]), 0)
         self.assertEqual(len(calls), 1)
+
+    def test_resume_transports_prior_lock_and_rejects_a_different_installed_receipt(self):
+        original_lock = "b" * 64
+        actual = original_lock
+        def execute(argv, **_options):
+            expected = json.loads(shlex.split(argv[-1])[-1])
+            self.assertEqual(expected["installed_lock_sha256"], original_lock)
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"schema": "cnb-host-setup/v1", "status": "ready",
+                "project": "sample", "environment": "test", "lock_sha256": self.lock, "installed_lock_sha256": actual}).encode(), b'')
+        output = io.StringIO()
+        with mock.patch.object(self.m.subprocess, "run", side_effect=execute), contextlib.redirect_stdout(output):
+            self.m.main(self.args + ["--installed-lock-sha256", original_lock, "--apply"])
+            actual = "c" * 64
+            with self.assertRaisesRegex(self.m.SetupError, "SETUP_INSTALLED_LOCK_MISMATCH"):
+                self.m.main(self.args + ["--installed-lock-sha256", original_lock, "--apply"])
+        self.assertEqual(json.loads(output.getvalue())["installed_lock_sha256"], original_lock)
 
     def test_private_modes_symlinks_target_injection_and_bundle_drift_block_ssh(self):
         with mock.patch.object(self.m.subprocess, "run", side_effect=AssertionError("invalid input opened SSH")):

@@ -50,6 +50,8 @@ python3 "$SKILL_DIR/scripts/setup-host.py" \
 
 已有 Caddy 必须给已审 baseline，保留不升级；缺失 Caddy 时，可在受审 spec 的 `docker_packages.caddy` 固定实际 APT 版本，由 driver 首次安装并记录默认 baseline，此时可省略 baseline 参数。匹配的已安装版本重复调用不会重装，漂移停止。setup 的 ready 只表示配置完成，仍需实际发布、HTTPS 和业务验收。其他共享拓扑按[共享 Caddy 契约](shared-caddy-v1/contract.md)接入。
 
+若首装已留下安装回执、仅管理员 helper 的兼容问题使最后步骤失败，修复后可给新包的 `--lock-sha256`，并显式补上原回执的 `--installed-lock-sha256` 和已核验的 Caddy baseline 继续。工具只允许同版本、同文件清单内的四个管理员 helper 与包摘要变化，逐字核对已安装运行文件，保留原安装回执；这不适用于控制器、策略、CI 或业务升级。新的 setup 回执分别记录此次包摘要和实际安装摘要。
+
 运行秘密通过已有管理员安全通道写入受保护文件，能在主机生成的值就在主机生成。TAT 正文、普通仓库和聊天不承载秘密；不新增凭据网页或传输服务。首次空库与接管现有数据必须显式区分，不能因为找不到历史回执就假定是空项目。
 
 ### 首次安装运行依赖

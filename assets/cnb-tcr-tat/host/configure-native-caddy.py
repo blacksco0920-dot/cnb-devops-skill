@@ -153,13 +153,13 @@ def running_config():
 
 
 def adapt(raw):
-    model = strict_json(command([CADDY, 'adapt', '--config', '-', '--adapter', 'caddyfile'], raw))
+    model = strict_json(command([CADDY, 'adapt', '--config', '/dev/stdin', '--adapter', 'caddyfile'], raw))
     def filename(value):
         if isinstance(value, dict):
             # Caddy 自动隐藏配置文件；stdin 的虚拟文件名须对应已固定的实际主配置。
             hides = value.get('hide')
-            if value.get('handler') == 'file_server' and isinstance(hides, list) and './-' in hides:
-                hides[hides.index('./-')] = str(ROOT / 'etc/caddy/Caddyfile')
+            if value.get('handler') == 'file_server' and isinstance(hides, list) and '/dev/stdin' in hides:
+                hides[hides.index('/dev/stdin')] = str(ROOT / 'etc/caddy/Caddyfile')
             for item in value.values():
                 filename(item)
         elif isinstance(value, list):
@@ -257,7 +257,7 @@ def configure(project, policy_sha, baseline_sha, apply=False, environment='test'
     if not apply or existing:
         return result
     # Validate the exact expanded candidate before either configuration file changes.
-    command([CADDY, 'validate', '--config', '-'], json.dumps(candidate).encode())
+    command([CADDY, 'validate', '--config', '/dev/stdin'], json.dumps(candidate).encode())
     require(read_safe(config_path)[0] == original and read_safe(policy_path)[0] == policy_raw
             and running_config() == before, 'CADDY_PREWRITE_DRIFT')
     created_dir = not site_path.parent.exists()

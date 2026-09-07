@@ -312,9 +312,11 @@ def assert_new_or_matching_install(plan, env_raw, account, fixed):
         raise InstallError("existing_application_unrecognized") from exc
 
 
-def apply_install(plan, runtime_env):
+def apply_install(plan, runtime_env, *, installed_lock_sha256=None):
     if os.geteuid() != 0:
         raise InstallError("root_administrator_required")
+    if installed_lock_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", installed_lock_sha256):
+        raise InstallError("reviewed_installed_lock_invalid")
     host, policy = plan["host"], plan["policy"]
     account = pwd.getpwnam(policy["release_user"])
     if account.pw_dir != policy["release_home"]:
@@ -334,14 +336,34 @@ def apply_install(plan, runtime_env):
     receipt_path = install / "installation.json"
     if receipt_path.exists():
         receipt, _sha = host.read_root_owned_json(receipt_path)
+        if installed_lock_sha256 is not None and receipt != {"schema": "cnb-test-installation/v1", "lock_sha256": installed_lock_sha256}:
+            raise InstallError("reviewed_installed_lock_mismatch")
         if receipt != {"schema": "cnb-test-installation/v1", "lock_sha256": plan["lock_sha256"]}:
-            raise InstallError("installed_version_mismatch")
+            if installed_lock_sha256 is None:
+                raise InstallError("installed_version_mismatch")
+            old_raw = read_file(install / "artifact-lock.json")
+            verify_file(install / "artifact-lock.json", old_raw, 0o444, 0, 0)
+            old, new = strict_json(old_raw), strict_json(plan["raw_lock"])
+            helpers = {"bundle.json", "host/bootstrap-host.py", "host/install-project.py",
+                       "host/setup-project.py", "host/configure-native-caddy.py"}
+            if (digest(old_raw) != installed_lock_sha256 or type(old) is not dict
+                or set(old) != {"schema", "version", "files"} or old["schema"] != new["schema"]
+                or old["version"] != new["version"] or type(old["files"]) is not dict
+                or old["files"].keys() != new["files"].keys()
+                or any(not isinstance(v, str) or not re.fullmatch(r"[0-9a-f]{64}", v) for v in old["files"].values())
+                or any(old["files"][name] != value and name not in helpers for name, value in new["files"].items())):
+                raise InstallError("administrator_helper_only_resume_required")
+            # The installed authority and its original receipt remain byte-for-byte intact.
+            fixed["artifact-lock.json"] = (old_raw, 0o444)
         for name, (raw, mode) in fixed.items():
             if not (install / name).exists():
                 raise InstallError("installed_file_missing")
             install_file(install / name, raw, mode, 0, 0)
         host._installed_empty_baseline()
+        plan["installed_lock_sha256"] = receipt["lock_sha256"]
         return "unchanged"
+    if installed_lock_sha256 is not None:
+        raise InstallError("reviewed_installation_missing")
     check_dependencies(host, account)
     info = runtime_env.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) not in (0o400, 0o600):
@@ -396,6 +418,7 @@ def apply_install(plan, runtime_env):
         install_file(host.RELEASE_PATH, canonical(baseline), 0o600, account.pw_uid, account.pw_gid)
         # Receipt is last; absent receipt permits only exact-content interrupted-install resumption.
         install_file(receipt_path, canonical({"schema": "cnb-test-installation/v1", "lock_sha256": plan["lock_sha256"]}), 0o444, 0, 0)
+        plan["installed_lock_sha256"] = plan["lock_sha256"]
         return "installed"
     finally:
         os.close(lock_fd)

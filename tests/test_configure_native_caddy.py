@@ -142,6 +142,18 @@ class NativeCaddyTests(unittest.TestCase):
         self.assertFalse(self.site.exists())
         self.assertEqual(self.reload_count, 0)
 
+    def test_ubuntu_caddy_26_reads_adapt_and_validate_from_dev_stdin(self):
+        original_command = self.m.command
+        observed = []
+        def command(args, data=None):
+            if args[1] in ('adapt', 'validate'):
+                self.assertEqual(args[args.index('--config') + 1], '/dev/stdin')
+                observed.append(args[1])
+            return original_command(args, data)
+        with patch.object(self.m, 'command', side_effect=command):
+            self.assertEqual(self.run_config(True)['status'], 'installed')
+        self.assertEqual(observed, ['adapt', 'adapt', 'validate'])
+
     def test_baseline_or_live_config_drift_refuses_before_writes(self):
         for drift in ['file', 'live', 'policy']:
             with self.subTest(drift=drift):
@@ -185,8 +197,8 @@ class NativeCaddyTests(unittest.TestCase):
 
     def test_only_automatic_stdin_file_server_hide_is_corrected(self):
         model = {'handler': 'subroute', 'routes': [{'handle': [
-            {'handler': 'file_server', 'hide': ['./-', 'private.txt'], 'browse': {}},
-            {'handler': 'other', 'hide': ['./-']},
+            {'handler': 'file_server', 'hide': ['/dev/stdin', 'private.txt'], 'browse': {}},
+            {'handler': 'other', 'hide': ['/dev/stdin']},
             {'handler': 'file_server', 'hide': ['unexpected-file']},
         ]}]}
         with patch.object(self.m, 'command', return_value=json.dumps(model).encode()):
