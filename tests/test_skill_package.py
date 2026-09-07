@@ -113,7 +113,6 @@ class SkillPackageTests(unittest.TestCase):
             "controller path contract",
             "numeric UID/GID",
             "compatibility receipt",
-            "Last verified: 2026-09-03",
         ):
             self.assertIn(phrase, handoffs)
 
@@ -178,7 +177,6 @@ class SkillPackageTests(unittest.TestCase):
             "TCR Personal",
             "PullRepositoryPersonal",
             "cross-account role",
-            "Last verified: 2026-09-03",
         ):
             self.assertIn(phrase, handoffs)
 

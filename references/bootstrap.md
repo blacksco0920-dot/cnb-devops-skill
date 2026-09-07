@@ -32,6 +32,8 @@ python3 "$SKILL_DIR/scripts/prepare-project.py" \
 
 ## 2．一次核对账号和主机
 
+新账号或权限缺口按[账号与 API 接入](api-onboarding.md)复用官方登录，自动准备仓库和构建设置；腾讯云临时会话导出的私密三元组可直接作为下述配置器的 `--credentials`。有效登录和成功资源不重复建立。
+
 AI 先形成一批具体材料，避免逐个猜测、重复申请：
 
 | 位置 | 材料与核验 |
@@ -115,15 +117,16 @@ node "$SKILL_DIR/scripts/configure-tat.mjs" \
   --output "$PRIVATE_DIR/tat-binding.json"
 ```
 
-工具先 Describe：同版本同内容复用，不一致停止；不存在才 Create，再回读内容和全部相关元数据。创建结果不确定时不重试写入；下一次先查询。输出文件不覆盖已有文件，重查时使用新的证据文件名。绑定中的三项摘要是**预期工件**，命令配置成功仍不等于主机已安装或部署成功。
+工具先核对目标地域的实际 CVM/Lighthouse 实例运行状态与 Linux TAT Agent 在线，再 Describe 命令：同版本同内容复用，不一致停止；不存在才 Create，再回读内容和全部相关元数据。初始化身份需有对应实例及 Agent 的只读查询权限。创建结果不确定时不重试写入；下一次先查询。输出文件不覆盖已有文件，重查时使用新的证据文件名。`target_verified` 仅指云实例和 Agent；绑定中的三项摘要仍是**预期工件**，命令配置成功不等于主机已安装或部署成功。
 模板显式约束唯一参数 `release_request_b64url=INVALID` 及空描述；按[官方 CreateCommand 接口](https://cloud.tencent.com/document/api/1340/52684)的互斥要求，创建只发送 `DefaultParameterConfs`，回读仍精确校验它与规范 `DefaultParameters`，额外参数、默认值或描述变化均拒绝。
 
 ## 4．人只完成必须的控制台步骤
 
-AI 按[公开创建接口](cnb-openapi.md#secret-repositories)创建或复用密钥仓库并回读类型，随后按 `secrets.tcr_import`、`secrets.tat_import` 和生产的 `production.tat_import` 准备 Secret 文件、对应仓库/ref/event 范围及校验步骤：
+AI 用[仓库配置器](api-onboarding.md#2自动准备-cnb-仓库和构建设置)创建或复用密钥仓库并回读类型，随后按 `secrets.tcr_import`、`secrets.tat_import` 和生产的 `production.tat_import` 准备 Secret 文件、对应仓库/ref/event 范围及校验步骤：
 
 - TCR 文件提供 `TCR_USERNAME`、`TCR_PASSWORD`。
 - TAT 文件提供 `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`、`CNB_TAT_BINDING_JSON`，后者来自上一步受保护绑定。
+- 已验收的临时云凭据路径还必须提供 `TENCENTCLOUD_TOKEN`，有效期覆盖本次操作；本机初始化会话不作为 CI 长期身份。
 - 候选 Tag 使用该仓库受支持的 `CNB_TOKEN`，可选 `CNB_TOKEN_USER_NAME`；不把管理员云凭据用于 Git 推送。
 
 [CNB Secret](https://docs.cnb.cool/zh/repo/secret.html)要求在 Web 编辑，不能用 Git 本地推送替代。用户完成实名、验证码及这类没有可用 API 的配置，AI 负责材料和验收。这里不依赖 AI 操作浏览器；普通终端、Git、HTTP/API 能完成其余已支持步骤。

@@ -12,12 +12,14 @@
 
 1. **读项目并列差异。** 从已有配置确定服务清单、Dockerfile/构建上下文、验证命令、运行端口、数据存储、源码同步路径；再确定测试/受控分支、候选前缀、TCR 镜像命名和目标环境。人只补查不到的账号、域名、数据范围和业务选择，完成本人验证与必要审批；可从项目或已有授权查到的信息不重复询问。
 2. **先复用再适配。** 先运行包内生成器；已有项目则核对下表对应工件、版本、依赖和验收记录。列出“直接复用／参数适配／缺失”及原因；同一阶段已有合用实现就不重写。目标、路径和允许镜像仓库仍由项目批准的固定配置约束，不能变成任意流水线输入。
-3. **接通基础条件。** AI 从一份配置生成本次范围内的环境（完整接入包含测试和生产），用私密 SSH 目标和已审摘要运行 `scripts/setup-host.py`，再配置各环境固定 TAT、TCR 推拉权限和 Secret。生产配置只含批准公钥，私钥留本机；本机授权发布 PAT 需目标仓库的 `repo-release:rw`。新主机先盘点预装服务，已有共享主机按[接入分类](project-adoption.md#host-and-account-classification)处理。
+3. **接通基础条件。** 按[API 接入](api-onboarding.md)复用官方登录，自动准备仓库、构建设置和固定 TAT。AI 从一份配置生成本次范围内的环境（完整接入包含测试和生产），用私密 SSH 目标和已审摘要运行 `scripts/setup-host.py`，核对 TCR 推拉权限和 Secret。生产配置只含批准公钥，私钥留本机；本机授权发布 PAT 需目标仓库的 `repo-release:rw`。新主机先盘点预装服务，已有共享主机按[接入分类](project-adoption.md#host-and-account-classification)处理。
 4. **完成必须的人为操作。** 按[人员交接](human-handoffs.md)给出实际页面、已备材料、一个动作和完成标志。本人登录/实名、没有可用 API 的 Secret 控制台配置、项目规定的审批由人完成；不要让人写命令、设计权限或整理技术回执。已完成的操作不重复要求。
 5. **先通测试路径。** 用 Git、受支持的 API/CLI 发起已授权构建并核验结果。普通终端可完成的动作不依赖 Computer Use；浏览器不可控时保留同一流程，仅将必要控制台操作交给人，不为切换工具重建凭据或控制程序。
 
 | 包内入口 | 复用内容 | 新项目需要适配 |
 | --- | --- | --- |
+| `scripts/configure-cnb.mjs`、`scripts/tencent-session.py`、`scripts/configure-tat.mjs` | 官方登录与刷新、仓库/构建设置续接、云目标及固定命令核对 | 已选账号、组织/仓库、目标与私密状态位置 |
+| `scripts/configure-cam.mjs` | 环境专用发布用户、固定命令/实例权限和关联读回 | 已核验绑定与账号；密钥签发仍是独立步骤 |
 | `scripts/prepare-project.py`、`scripts/setup-host.py` | 双环境生成、SSH 串联固定首装入口 | 项目配置、私密目标、APT/镜像摘要和 Caddy 基线 |
 | `ci/run-tat-release.mjs`、`host/tat-deploy-test.py` | 固定命令回读、发布事务及运行/公网核验 | 服务、迁移、探针、目标绑定与环境隔离 |
 | `ci/candidate_manifest.py`、`ci/publish-candidate-tag.sh` | 完整镜像清单、不可变候选及 annotations 回读 | 项目仓库、候选前缀及受控分支 |

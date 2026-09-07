@@ -52,8 +52,8 @@ POLICY_SHA256="$(sha256_file "$ENV_BUNDLE_DIR/host-policy.json")"
 | `docker-config.json`，`0600` | 仅 `auths`，每个所需 registry 仅 `auth`；只读拉取身份 |
 | TAT spec / binding | 由本环境 `tat-spec.template.json` 填 `target.region`、`target.instance_id`；binding 保存为 `0600` |
 | TAT 管理员凭据 | `configure-tat --credentials` 接受 `0600` JSON：`secretId`、`secretKey`，可选 `token`；或环境变量 `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`、可选 `TENCENTCLOUD_TOKEN` |
-| 日常 TAT / 本机 signer | 当前发布入口使用专用直接 CAM 身份的 `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`；不能从管理员 CLI 的可选 token 推断发布链支持 STS |
-| CNB Secret | TCR 文件：`TCR_USERNAME`、`TCR_PASSWORD`；每环境 TAT 文件：上述两项云键与 `CNB_TAT_BINDING_JSON` |
+| 日常 TAT / 本机 signer | 默认使用专用直接 CAM 身份的 `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`；已验收的临时身份必须同时加载 `TENCENTCLOUD_TOKEN`，有效期覆盖完整操作。客户端已支持三元组，OIDC 的真实流水线验收仍独立进行 |
+| CNB Secret | TCR 文件：`TCR_USERNAME`、`TCR_PASSWORD`；每环境 TAT 文件：所选身份的云凭据及 `CNB_TAT_BINDING_JSON`；临时身份不能遗漏 Token |
 | 本机生产授权 | Ed25519 私钥文件 `0600`，匹配生成的 `approval-ed25519.pub`；publisher 环境 `CNB_TOKEN` 限定本仓库且有 `repo-release:rw`；不把私钥送入 CI/主机 |
 
 路径各级须为当前用户或 root 所有、无符号链接、不可由组/其他人写入。保留现有合用的私密文件，示例写入均不覆盖。
@@ -243,7 +243,7 @@ python3 "$BUNDLE_DIR/ci/candidate_gate.py" production \
 
 标准 gate 使用 `CNB_TOKEN`（可选 `CNB_TOKEN_USER_NAME`）fetch 并核对治理分支、Tag 类型、完整提交、ready annotations，写出 Tag message 的原始 `candidate.json`。这里 `--phase readiness` 只表示导出候选，不重复触发远端 readiness。`--phase apply` 会要求已存在的 approval，因此不能用于签名前下载。不要重新序列化 `candidate.json`、`readiness.json` 或稍后的 `approval.json`。
 
-按已明确的生产意图签发当前候选的限时授权；本机环境先安全加载专用直接 CAM 的两项 TAT 键。signer 没有离线签名模式或 `--readiness` 参数，指定 invocation 后直接独立回读；输出私钥匹配检查后的 `0600` 授权文件，已有文件时停止。
+按已明确的生产意图签发当前候选的限时授权；本机环境先安全加载专用直接 CAM 的两项 TAT 键。若使用已验收的短期身份，须同时加载 `TENCENTCLOUD_TOKEN` 并核对剩余有效期，不能把本机初始化管理员会话直接当成发布身份。signer 没有离线签名模式或 `--readiness` 参数，指定 invocation 后直接独立回读；输出私钥匹配检查后的 `0600` 授权文件，已有文件时停止。
 
 ```sh
 PRODUCTION_BINDING="<已核验的生产tat-binding.json绝对路径>"

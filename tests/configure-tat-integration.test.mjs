@@ -38,7 +38,10 @@ test('actual generated spec, exact mock query, and generated CI binding validati
   assert.equal((await configureTat({ spec })).status, 'planned');
   const requests = [];
   const commandId = `cmd-${'c'.repeat(8)}`;
-  const client = { async DescribeCommands(request) {
+  const client = { region: spec.target.region,
+    async DescribeInstances() { return { TotalCount: 1, InstanceSet: [{ InstanceId: spec.target.instance_id, InstanceState: 'RUNNING' }], RequestId: 'instance-query' }; },
+    async DescribeAutomationAgentStatus() { return { TotalCount: 1, AutomationAgentSet: [{ InstanceId: spec.target.instance_id, AgentStatus: 'Online', Environment: 'Linux' }], RequestId: 'agent-query' }; },
+    async DescribeCommands(request) {
     requests.push(request);
     return { TotalCount: 1, CommandSet: [{ ...spec.expectedCommand,
       CommandId: commandId, CreatedBy: 'USER',
@@ -55,6 +58,6 @@ test('actual generated spec, exact mock query, and generated CI binding validati
   assert.equal(ci.validateBinding(binding, config).command_id, commandId);
   const incomplete = { ...binding }; delete incomplete.program_sha256;
   assert.throws(() => ci.validateBinding(incomplete, config));
-  assert.equal(binding.target_verified, false);
+  assert.equal(binding.target_verified, true);
   assert.equal(binding.deployment_ready, false);
 });

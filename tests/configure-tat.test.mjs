@@ -36,7 +36,10 @@ function folder(t) {
 }
 function clientWith(replies) {
   const requests = [];
-  return { requests, async DescribeCommands(request) {
+  return { requests, region: 'ap-example',
+    async DescribeInstances(request) { return { TotalCount: 1, InstanceSet: [{ InstanceId: request.InstanceIds[0], InstanceState: 'RUNNING' }], RequestId: 'instance-query' }; },
+    async DescribeAutomationAgentStatus(request) { return { TotalCount: 1, AutomationAgentSet: [{ InstanceId: request.InstanceIds[0], AgentStatus: 'Online', Environment: 'Linux' }], RequestId: 'agent-query' }; },
+    async DescribeCommands(request) {
     requests.push(['DescribeCommands', request]);
     const result = replies.shift();
     if (result instanceof Error) throw result;
@@ -69,7 +72,7 @@ test('expected artifact hashes flow into the binding without claiming a verified
   assert.equal(result.policy_sha256, 'c'.repeat(64));
   assert.equal(result.artifacts_status, 'expected_not_host_verified');
   assert.equal(result.configuration_only, true);
-  assert.equal(result.target_verified, false);
+  assert.equal(result.target_verified, true);
   assert.equal(result.deployment_ready, false);
 });
 
@@ -103,7 +106,7 @@ test('matching existing name is reused without mutation and produces a private b
   assert.equal(result.schema, 'cnb-tat-binding/v1');
   assert.equal(result.username, 'ubuntu');
   assert.equal(result.timeout, 3600);
-  assert.equal(result.target_verified, false);
+  assert.equal(result.target_verified, true);
   assert.deepEqual(JSON.parse(fs.readFileSync(output)), result);
   assert.equal(fs.statSync(output).mode & 0o777, 0o600);
 });
@@ -131,6 +134,7 @@ test('new version sends exact Base64/API metadata then verifies ID and unique na
   const result = await module.configureTat({ spec: input, apply: true, client,
     output: path.join(folder(t), 'binding.json') });
   assert.equal(result.command_id, 'cmd-example1');
+  assert.equal(result.target_verified, true);
   assert.deepEqual(client.requests[1], ['CreateCommand', {
     CommandName: 'example-staging-v0.2.0', Description: 'Reviewed staging entry', CommandType: 'SHELL',
     Content: Buffer.from(text).toString('base64'), Username: 'ubuntu', WorkingDirectory: '/home/ubuntu',
@@ -229,7 +233,7 @@ test('private child of the root-owned sticky system temp directory is usable', a
 
 test('an output created during readback is not replaced', async t => {
   const output = path.join(folder(t), 'binding.json');
-  const client = { async DescribeCommands() {
+  const client = { ...clientWith([]), async DescribeCommands() {
     fs.writeFileSync(output, 'concurrent owner', { flag: 'wx', mode: 0o600 });
     return response([remote()]);
   } };
@@ -245,5 +249,67 @@ test('invalid version, template defaults, paths, target, and unknown fields are 
     s => s.expectedCommand.Content += '\0', s => s.expectedCommand.Username = 'root;id']) {
     const input = spec(); edit(input);
     await assert.rejects(module.configureTat({ spec: input }));
+  }
+});
+
+function targetClients(input, { instanceState = 'RUNNING', agentStatus = 'Online', instanceId = input.target.instance_id,
+  agentId = input.target.instance_id, count = 1, region = input.target.region, environment = 'Linux' } = {}) {
+  const client = clientWith([response([remote()])]);
+  client.region = input.target.region;
+  client.DescribeAutomationAgentStatus = async request => {
+    assert.deepEqual(request, { InstanceIds: [input.target.instance_id], Limit: 1, Offset: 0 });
+    return { TotalCount: 1, AutomationAgentSet: [{ InstanceId: agentId, AgentStatus: agentStatus,
+      Environment: environment, Version: '1.0', LastHeartbeatTime: '2026-01-01T00:00:00Z' }], RequestId: 'agent-query' };
+  };
+  const instanceClient = { region, async DescribeInstances(request) {
+    assert.deepEqual(request, { InstanceIds: [input.target.instance_id], Limit: 1, Offset: 0 });
+    return { TotalCount: count, InstanceSet: count ? [{ InstanceId: instanceId, InstanceState: instanceState }] : [], RequestId: 'instance-query' };
+  } };
+  return { client, instanceClient };
+}
+
+test('apply verifies the exact running CVM or Lighthouse target and online Linux agent without attesting host artifacts', async t => {
+  for (const [instance_id, service] of [['ins-demo', 'cvm'], ['lhins-demo', 'lighthouse']]) {
+    const input = spec(); input.target.instance_id = instance_id;
+    const output = path.join(folder(t), 'binding.json');
+    const result = await module.configureTat({ spec: input, apply: true, output, ...targetClients(input) });
+    assert.equal(result.target_verified, true);
+    assert.deepEqual(result.target_status, { scope: 'cloud_instance_and_agent', service,
+      region: 'ap-example', instance_id, instance_state: 'RUNNING', agent_status: 'Online',
+      instance_request_id: 'instance-query', agent_request_id: 'agent-query' });
+    assert.equal(result.configuration_only, true);
+    assert.equal(result.deployment_ready, false);
+    assert.deepEqual(JSON.parse(fs.readFileSync(output)), result);
+  }
+});
+
+test('missing, mismatched, stopped or offline targets never publish a successful binding', async t => {
+  for (const [change, code] of [[{ count: 0 }, 'TAT_TARGET_NOT_FOUND'], [{ count: 2 }, 'TAT_TARGET_RESPONSE_INVALID'],
+    [{ instanceId: 'lhins-other' }, 'TAT_TARGET_RESPONSE_INVALID'], [{ instanceState: 'STOPPED' }, 'TAT_TARGET_NOT_RUNNING'],
+    [{ agentId: 'lhins-other' }, 'TAT_AGENT_RESPONSE_INVALID'], [{ agentStatus: 'Offline' }, 'TAT_AGENT_NOT_ONLINE'],
+    [{ environment: 'Windows' }, 'TAT_AGENT_ENVIRONMENT_MISMATCH'], [{ region: 'ap-other' }, 'TAT_TARGET_REGION_MISMATCH']]) {
+    const input = spec(), output = path.join(folder(t), 'binding.json');
+    await assert.rejects(module.configureTat({ spec: input, apply: true, output, ...targetClients(input, change) }), { message: code });
+    assert.equal(fs.existsSync(output), false);
+  }
+});
+
+test('an offline new target fails before creating its saved command', async t => {
+  const input = spec(), output = path.join(folder(t), 'binding.json');
+  const client = clientWith([response([]), response([remote()]), response([remote()])]);
+  client.DescribeAutomationAgentStatus = async () => ({TotalCount: 1, RequestId: 'agent-query',
+    AutomationAgentSet: [{InstanceId: input.target.instance_id, AgentStatus: 'Offline', Environment: 'Linux'}]});
+  await assert.rejects(module.configureTat({spec: input, apply: true, output, client}), /TAT_AGENT_NOT_ONLINE/);
+  assert.equal(client.requests.some(([action]) => action === 'CreateCommand'), false);
+});
+
+test('readiness query errors expose fixed codes and leave the existing command reusable', async t => {
+  for (const [side, action, code] of [['instanceClient', 'DescribeInstances', 'TAT_TARGET_QUERY_FAILED'],
+    ['client', 'DescribeAutomationAgentStatus', 'TAT_AGENT_QUERY_FAILED']]) {
+    const input = spec(), output = path.join(folder(t), 'binding.json'), clients = targetClients(input);
+    clients[side][action] = async () => { throw new Error('synthetic-private-transport'); };
+    await assert.rejects(module.configureTat({ spec: input, apply: true, output, ...clients }), { message: code });
+    assert.equal(fs.existsSync(output), false);
+    assert.equal(clients.client.requests.some(([action]) => action !== 'DescribeCommands'), false);
   }
 });

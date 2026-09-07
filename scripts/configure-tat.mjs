@@ -11,6 +11,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { parseStrictJson } from '../assets/cnb-tcr-tat/ci/strict-json.mjs';
 
 const SDK = 'tencentcloud-sdk-nodejs-tat', SDK_VERSION = '4.1.241';
+const COMMON_SDK = 'tencentcloud-sdk-nodejs-common', COMMON_SDK_VERSION = '4.1.220';
 const fail = code => { throw new Error(code); };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -35,7 +36,7 @@ export function validateSpec(spec) {
   requireMatch(spec.version, /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[a-zA-Z0-9.-]+)?$/);
   keys(spec.target, ['region', 'instance_id']);
   requireMatch(spec.target.region, /^[a-z]{2,8}-[a-z][a-z0-9-]{1,29}$/);
-  requireMatch(spec.target.instance_id, /^(?:lhins|ins|mi)-[a-z0-9]{4,32}$/);
+  requireMatch(spec.target.instance_id, /^(?:lhins|ins)-[a-z0-9]{4,32}$/);
   const c = spec.expectedCommand;
   keys(c, ['CommandName', 'Description', 'CommandType', 'Content', 'Username', 'WorkingDirectory',
     'Timeout', 'EnableParameter', 'DefaultParameters', 'DefaultParameterConfs']);
@@ -157,7 +158,31 @@ async function describe(client, request) {
       response.TotalCount > 1) fail('TAT_QUERY_AMBIGUOUS');
   return response.CommandSet;
 }
-export async function configureTat({ spec, apply = false, client, output }) {
+async function verifyTarget(target, client, instanceClient) {
+  if (!client || typeof client.DescribeAutomationAgentStatus !== 'function' ||
+      !instanceClient || typeof instanceClient.DescribeInstances !== 'function') fail('TAT_TARGET_CLIENT_REQUIRED');
+  if (client.region !== target.region || instanceClient.region !== target.region) fail('TAT_TARGET_REGION_MISMATCH');
+  const request = { InstanceIds: [target.instance_id], Limit: 1, Offset: 0 };
+  let instances, agents;
+  try { instances = await instanceClient.DescribeInstances(request); }
+  catch { fail('TAT_TARGET_QUERY_FAILED'); }
+  if (object(instances) && instances.TotalCount === 0 && Array.isArray(instances.InstanceSet) && !instances.InstanceSet.length) fail('TAT_TARGET_NOT_FOUND');
+  if (!object(instances) || instances.TotalCount !== 1 || !Array.isArray(instances.InstanceSet) ||
+      instances.InstanceSet.length !== 1 || instances.InstanceSet[0]?.InstanceId !== target.instance_id ||
+      typeof instances.RequestId !== 'string' || !/^[A-Za-z0-9-]{1,128}$/.test(instances.RequestId)) fail('TAT_TARGET_RESPONSE_INVALID');
+  if (instances.InstanceSet[0].InstanceState !== 'RUNNING') fail('TAT_TARGET_NOT_RUNNING');
+  try { agents = await client.DescribeAutomationAgentStatus(request); }
+  catch { fail('TAT_AGENT_QUERY_FAILED'); }
+  if (!object(agents) || agents.TotalCount !== 1 || !Array.isArray(agents.AutomationAgentSet) ||
+      agents.AutomationAgentSet.length !== 1 || agents.AutomationAgentSet[0]?.InstanceId !== target.instance_id ||
+      typeof agents.RequestId !== 'string' || !/^[A-Za-z0-9-]{1,128}$/.test(agents.RequestId)) fail('TAT_AGENT_RESPONSE_INVALID');
+  if (agents.AutomationAgentSet[0].AgentStatus !== 'Online') fail('TAT_AGENT_NOT_ONLINE');
+  if (agents.AutomationAgentSet[0].Environment !== 'Linux') fail('TAT_AGENT_ENVIRONMENT_MISMATCH');
+  return { scope: 'cloud_instance_and_agent', service: target.instance_id.startsWith('lhins-') ? 'lighthouse' : 'cvm',
+    region: target.region, instance_id: target.instance_id, instance_state: 'RUNNING', agent_status: 'Online',
+    instance_request_id: instances.RequestId, agent_request_id: agents.RequestId };
+}
+export async function configureTat({ spec, apply = false, client, instanceClient = client, output }) {
   validateSpec(spec);
   if (typeof apply !== 'boolean') fail('TAT_APPLY_INVALID');
   const filename = output ? outputAvailable(output) : undefined;
@@ -173,6 +198,7 @@ export async function configureTat({ spec, apply = false, client, output }) {
     ...(spec.expected_artifacts || {}), status: 'planned' };
   if (apply) {
     if (!client || typeof client.DescribeCommands !== 'function') fail('TAT_CLIENT_REQUIRED');
+    const targetStatus = await verifyTarget(spec.target, client, instanceClient);
     const filter = { Filters: [{ Name: 'command-name', Values: [c.CommandName] }] };
     const existing = await describe(client, filter);
     let id;
@@ -194,7 +220,7 @@ export async function configureTat({ spec, apply = false, client, output }) {
       if (byName.length !== 1) fail('TAT_READBACK_INCOMPLETE');
       verifyCommand(byName[0], c, id);
     }
-    Object.assign(result, { status: 'verified', command_id: id });
+    Object.assign(result, { status: 'verified', command_id: id, target_verified: true, target_status: targetStatus });
   }
   if (filename) writeExclusive(filename, result);
   return result;
@@ -227,11 +253,22 @@ function clientFactory(sdkRoot) {
   const require = createRequire(path.join(root, 'package.json'));
   const actual = require(`${SDK}/package.json`);
   if (actual.version !== SDK_VERSION || !require.resolve(`${SDK}/package.json`).startsWith(`${root}/node_modules/`)) fail('TAT_SDK_VERSION_MISMATCH');
+  const common = require(`${COMMON_SDK}/package.json`);
+  if (lock.packages?.[`node_modules/${COMMON_SDK}`]?.version !== COMMON_SDK_VERSION || common.version !== COMMON_SDK_VERSION ||
+      !require.resolve(`${COMMON_SDK}/package.json`).startsWith(`${root}/node_modules/`)) fail('TAT_SDK_VERSION_MISMATCH');
   const Client = require(SDK).tat.v20201028.Client;
-  return (credential, region) => new Client({ credential, region, profile: {
-    signMethod: 'TC3-HMAC-SHA256', httpProfile: { endpoint: 'tat.tencentcloudapi.com',
-      protocol: 'https://', reqMethod: 'POST', reqTimeout: 30 },
-  } });
+  const { AbstractClient } = require(COMMON_SDK);
+  return (credential, target) => {
+    const config = endpoint => ({ credential, region: target.region, profile: {
+      signMethod: 'TC3-HMAC-SHA256', httpProfile: { endpoint, protocol: 'https://', reqMethod: 'POST', reqTimeout: 30 },
+    } });
+    const service = target.instance_id.startsWith('lhins-') ? 'lighthouse' : 'cvm';
+    const endpoint = `${service}.tencentcloudapi.com`;
+    const api = new AbstractClient(endpoint, service === 'lighthouse' ? '2020-03-24' : '2017-03-12', config(endpoint));
+    return { client: new Client(config('tat.tencentcloudapi.com')), instanceClient: {
+      region: target.region, DescribeInstances: request => api.request('DescribeInstances', request),
+    } };
+  };
 }
 export async function main(args = process.argv.slice(2)) {
   const options = {};
@@ -248,14 +285,14 @@ export async function main(args = process.argv.slice(2)) {
   const spec = validateSpec(readJson(options['--spec']));
   const output = options['--output'];
   if (output) outputAvailable(output);
-  let client;
+  let clients;
   if (options['--apply']) {
     if (!output) fail('TAT_OUTPUT_REQUIRED');
     if (process.env.NODE_DEBUG || process.env.NODE_DEBUG_NATIVE || process.env.NODE_OPTIONS) fail('TAT_DEBUG_ENV_REFUSED');
     const makeClient = clientFactory(options['--sdk-root'] || fileURLToPath(new URL('../assets/cnb-tcr-tat/dependencies', import.meta.url)));
-    client = makeClient(credentials(options['--credentials']), spec.target.region); // Credentials read last.
+    clients = makeClient(credentials(options['--credentials']), spec.target); // Same credentials and region for both APIs; read last.
   }
-  return configureTat({ spec, output, client, apply: options['--apply'] === true });
+  return configureTat({ spec, output, ...clients, apply: options['--apply'] === true });
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().then(result => process.stdout.write(`${canonical(result)}\n`)).catch(error => {

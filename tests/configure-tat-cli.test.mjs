@@ -23,13 +23,13 @@ function fixture(t) {
     });
   } };
 }
-function sdkFixture(dir, spec, version = '4.1.241') {
+function sdkFixture(dir, spec, version = '4.1.241', instanceState = 'RUNNING') {
   const sdkRoot = path.join(dir, 'dependencies'), name = 'tencentcloud-sdk-nodejs-tat';
   const installed = path.join(sdkRoot, 'node_modules', name);
   fs.mkdirSync(installed, { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(sdkRoot, 'package.json'), JSON.stringify({ dependencies: { [name]: version } }));
   fs.writeFileSync(path.join(sdkRoot, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3,
-    packages: { [`node_modules/${name}`]: { version } } }));
+    packages: { [`node_modules/${name}`]: { version }, 'node_modules/tencentcloud-sdk-nodejs-common': { version: '4.1.220' } } }));
   fs.writeFileSync(path.join(installed, 'package.json'), JSON.stringify({ name, version, main: 'index.js' }));
   const command = { ...spec.expectedCommand, CommandId: 'cmd-example1', CreatedBy: 'USER',
     Content: Buffer.from(spec.expectedCommand.Content).toString('base64'),
@@ -39,16 +39,39 @@ function sdkFixture(dir, spec, version = '4.1.241') {
 const fs = require('node:fs');
 module.exports = { tat: { v20201028: { Client: class {
   constructor(config) {
+    this.region = config.region;
     fs.writeFileSync(${JSON.stringify(path.join(dir, 'client.json'))}, JSON.stringify({
       region: config.region, profile: config.profile,
       credentialMatches: config.credential.secretId === 'synthetic-id' && config.credential.secretKey === 'synthetic-private-key'
     }));
+  }
+  async DescribeAutomationAgentStatus(request) {
+    return { TotalCount: 1, AutomationAgentSet: [{ InstanceId: request.InstanceIds[0], AgentStatus: 'Online', Environment: 'Linux' }], RequestId: 'agent-query' };
   }
   async DescribeCommands(request) {
     fs.writeFileSync(${JSON.stringify(path.join(dir, 'request.json'))}, JSON.stringify(request));
     return ${JSON.stringify({ TotalCount: 1, CommandSet: [command], RequestId: 'synthetic' })};
   }
 } } } };
+`);
+  const common = path.join(sdkRoot, 'node_modules', 'tencentcloud-sdk-nodejs-common');
+  fs.mkdirSync(common, { mode: 0o700 });
+  fs.writeFileSync(path.join(common, 'package.json'), JSON.stringify({ version: '4.1.220', main: 'index.js' }));
+  fs.writeFileSync(path.join(common, 'index.js'), `
+const fs = require('node:fs');
+module.exports = { AbstractClient: class {
+  constructor(endpoint, version, config) {
+    this.region = config.region;
+    fs.writeFileSync(${JSON.stringify(path.join(dir, 'instance-client.json'))}, JSON.stringify({ endpoint, version,
+      region: config.region, profile: config.profile,
+      credentialMatches: config.credential.secretId === 'synthetic-id' && config.credential.secretKey === 'synthetic-private-key'
+    }));
+  }
+  async request(action, request) {
+    fs.writeFileSync(${JSON.stringify(path.join(dir, 'instance-request.json'))}, JSON.stringify({ action, request }));
+    return { TotalCount: 1, InstanceSet: [{ InstanceId: ${JSON.stringify(spec.target.instance_id)}, InstanceState: ${JSON.stringify(instanceState)} }], RequestId: 'instance-query' };
+  }
+} };
 `);
   return sdkRoot;
 }
@@ -108,4 +131,38 @@ test('debug environments and unknown CLI flags are rejected with no credential o
   assert.equal(unknown.status, 1);
   assert.equal(unknown.stdout, '');
   assert.equal(unknown.stderr, 'TAT_ARGUMENTS_INVALID\n');
+});
+
+
+test('CLI target queries use the same credentials and region with the correct public CVM or Lighthouse API', t => {
+  for (const [instance_id, endpoint, version] of [['ins-demo', 'cvm.tencentcloudapi.com', '2017-03-12'],
+    ['lhins-demo', 'lighthouse.tencentcloudapi.com', '2020-03-24']]) {
+    const f = fixture(t); f.spec.target.instance_id = instance_id;
+    fs.writeFileSync(path.join(f.dir, 'spec.json'), JSON.stringify(f.spec), { mode: 0o600 });
+    const sdk = sdkFixture(f.dir, f.spec), output = path.join(f.dir, 'binding.json');
+    const result = f.run(['--apply', '--sdk-root', sdk, '--output', output], {
+      TENCENTCLOUD_SECRET_ID: 'synthetic-id', TENCENTCLOUD_SECRET_KEY: 'synthetic-private-key',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).target_verified, true);
+    assert.equal(JSON.parse(result.stdout).deployment_ready, false);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.dir, 'instance-client.json'))), {
+      endpoint, version, region: 'ap-example', credentialMatches: true,
+      profile: { signMethod: 'TC3-HMAC-SHA256', httpProfile: { endpoint, protocol: 'https://', reqMethod: 'POST', reqTimeout: 30 } },
+    });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.dir, 'instance-request.json'))), {
+      action: 'DescribeInstances', request: { InstanceIds: [instance_id], Limit: 1, Offset: 0 },
+    });
+  }
+});
+
+test('CLI stopped target fails privately after command reuse without publishing a binding', t => {
+  const f = fixture(t), sdk = sdkFixture(f.dir, f.spec, '4.1.241', 'STOPPED'), output = path.join(f.dir, 'binding.json');
+  const result = f.run(['--apply', '--sdk-root', sdk, '--output', output], {
+    TENCENTCLOUD_SECRET_ID: 'synthetic-id', TENCENTCLOUD_SECRET_KEY: 'synthetic-private-key',
+  });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, 'TAT_TARGET_NOT_RUNNING\n');
+  assert.equal(fs.existsSync(output), false);
 });

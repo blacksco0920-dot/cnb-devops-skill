@@ -22,8 +22,9 @@ work, the [official CNB CLI](https://docs.cnb.cool/zh/develops/cnb-cli.html)
 supports `cnb login` device authorization: AI runs the command and the person
 completes the official authorization page. Check the granted resource/operation
 scope and account role; login does not grant every requested operation. Keep
-debug logging off. This does not make existing bundle programs automatically
-consume or refresh the CLI login store.
+debug logging off. The [repository setup executor](api-onboarding.md) uses this
+login and refresh path. Other bundle consumers still use their declared
+credential inputs; they do not implicitly read the CLI login store.
 
 If a required integration still needs a PAT, use **Personal settings → Access
 token → Add access token** with only its required scope. Never place a token in
@@ -180,5 +181,6 @@ ready-last transition. See the
 
 [Public API and low-interaction onboarding findings](../docs/history/2026-09-07-api-onboarding.md)
 record the official CLI login paths, TAT maintenance APIs and CNB OIDC plugin.
-The current release runner and signer do not yet consume STS session tokens;
-research evidence is not acceptance of a new authentication path.
+The current release runner and signer support the complete STS credential triple.
+[API onboarding](api-onboarding.md) describes the implemented setup tools and
+remaining boundaries; OIDC federation and real pipeline acceptance remain pending.

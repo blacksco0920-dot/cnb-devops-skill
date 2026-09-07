@@ -242,19 +242,23 @@ export async function verifyTatInvocation({client,request,config,binding,invocat
 }
 
 export function createTatClientFromEnvironment(region) {
-  const secretId=requiredEnvironment('TENCENTCLOUD_SECRET_ID'),secretKey=requiredEnvironment('TENCENTCLOUD_SECRET_KEY');
-  if(!SECRET_ID_PATTERN.test(secretId)) fail('TAT credentials are invalid');
-  delete process.env.TENCENTCLOUD_SECRET_ID;delete process.env.TENCENTCLOUD_SECRET_KEY;
+  const names=['TENCENTCLOUD_SECRET_ID','TENCENTCLOUD_SECRET_KEY','TENCENTCLOUD_TOKEN','TENCENTCLOUD_SECURITY_TOKEN'];
+  const [secretId,secretKey,token,alias]=names.map(name=>process.env[name]);
+  for(const name of names) delete process.env[name];
+  if(token!==undefined && alias!==undefined && token!==alias) fail('TAT credentials are invalid');
+  const options=createTatClientOptions({secretId,secretKey,region,token:token??alias});
   const require=createRequire(new URL('../dependencies/package.json',import.meta.url));
   const expected=require('../dependencies/package.json').dependencies['tencentcloud-sdk-nodejs-tat'];
   if(require('tencentcloud-sdk-nodejs-tat/package.json').version!==expected) fail('Tencent SDK version does not match bundle lock');
   const Client=resolveTatClient(require('tencentcloud-sdk-nodejs-tat'));
-  return new Client(createTatClientOptions({secretId,secretKey,region}));
+  return new Client(options);
 }
 
-export function createTatClientOptions({ secretId, secretKey, region }) {
+export function createTatClientOptions({ secretId, secretKey, region, token }) {
+  const valid=value=>typeof value==='string' && value.length>0 && value.length<=16384 && !/[\s\0]/u.test(value);
+  if(!valid(secretId) || !SECRET_ID_PATTERN.test(secretId) || !valid(secretKey) || (token!==undefined && !valid(token))) fail('TAT credentials are invalid');
   return {
-    credential: { secretId, secretKey },
+    credential: { secretId, secretKey, ...(token===undefined?{}:{token}) },
     region,
     profile: {
       httpProfile: {
@@ -284,16 +288,9 @@ async function main() {
   const config=JSON.parse(await readFile(args.config,'utf8'));
   const binding=JSON.parse(await readFile(args.binding,'utf8'));
   validateBinding(binding,config);
-  const secretId=requiredEnvironment('TENCENTCLOUD_SECRET_ID');
-  const secretKey=requiredEnvironment('TENCENTCLOUD_SECRET_KEY');
-  if(!SECRET_ID_PATTERN.test(secretId)) fail('TAT credentials are invalid');
   const gitSha=requiredEnvironment('CNB_COMMIT');
   const request=renderReleaseRequest({schema:'cnb-release-request/v1',project:config.project,environment:config.environment,controller:config.controller_id,git_sha:gitSha,controller_commit:gitSha,build_id:requiredEnvironment('CNB_BUILD_ID'),images:JSON.parse(await readFile(args.images,'utf8'))},config);
-  const require=createRequire(new URL('../dependencies/package.json',import.meta.url));
-  const expected=require('../dependencies/package.json').dependencies['tencentcloud-sdk-nodejs-tat'];
-  if(require('tencentcloud-sdk-nodejs-tat/package.json').version!==expected) fail('Tencent SDK version does not match bundle lock');
-  const Client=resolveTatClient(require('tencentcloud-sdk-nodejs-tat'));
-  const client=new Client(createTatClientOptions({secretId,secretKey,region:binding.region}));
+  const client=createTatClientFromEnvironment(binding.region);
   const result=await runTatRelease({client,request,config,binding,onProgress:({invocationId,status})=>process.stdout.write(`tat_invocation_id=${invocationId}\ntat_invocation_status=${status}\n`)});
   const raw=JSON.stringify(result.receipt)+'\n';
   await writeFile(args.receipt,raw,{mode:0o600,flag:'wx'});
