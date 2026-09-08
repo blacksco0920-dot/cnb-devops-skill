@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, cp, writeFile, readFile, readdir, rm, chmod, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, cp, writeFile, readFile, readdir, rm, chmod, access, symlink } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir, hostname } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -92,6 +92,18 @@ test('entry provides a bounded CLI instead of requiring inline shell assembly', 
   assert.equal(await exists(entry), true, 'release-session CLI must exist');
   const result = await execute(process.execPath, [entry, '--help']);
   assert.match(result.stdout, /prepare\|candidate\|sign\|publish\|status/);
+});
+
+test('installed symlink entry runs the CLI while an imported entry remains silent', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'release-session-link-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const installed = join(directory, 'skill');
+  await symlink(ROOT, installed, 'dir');
+  const linkedEntry = join(installed, 'scripts/release-session.mjs');
+  const help = await execute(process.execPath, [linkedEntry, '--help']);
+  assert.match(help.stdout, /prepare\|candidate\|sign\|publish\|status/);
+  const imported = await execute(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(pathToFileURL(linkedEntry).href)})`]);
+  assert.equal(imported.stdout, ''); assert.equal(imported.stderr, '');
 });
 
 test('prepare is offline in preview, installs production dependencies once and never reads private key or credentials', async t => {

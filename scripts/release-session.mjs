@@ -383,6 +383,7 @@ async function main() {
   const result = await runSession({ action, specPath: options['--spec'], apply: options['--apply'] === true, authorized: options['--authorize-production-apply'] === true });
   process.stdout.write(JSON.stringify(result) + '\n');
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(error => {
+const invokedPath = process.argv[1] ? await realpath(resolve(process.argv[1])).catch(() => null) : null;
+if (invokedPath === await realpath(fileURLToPath(import.meta.url))) main().catch(error => {
   process.stderr.write(JSON.stringify({ status: 'stopped', code: error instanceof SessionError ? error.code : 'SESSION_INPUT_INVALID' }) + '\n'); process.exitCode = 1;
 });
