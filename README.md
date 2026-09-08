@@ -68,6 +68,8 @@ AI 优先复用官方登录或已有初始化凭据。CNB 默认登录缺少创�
 
 新增接入方案已实测官方登录、腾讯云固定命令和专用身份的配置与复用，以及通过私密初始化令牌创建 CNB 私有/Secret 仓库、修改并回读构建设置、重复运行复用资源。完整新账号自动初始化及首次接入耗时仍待验证，OIDC 未切换为默认发布方式。见[API 实测结果](docs/history/2026-09-07-api-live-validation.md)和[初始化令牌入口](references/api-onboarding.md#cnb-bootstrap-token)。
 
+新 API 入口也已衔接既有环境完成一次重新构建、双环境发布与恢复验收。该轮沿用已安装运行包，整轮提效仍不理想；具体耗时、人工操作及问题见[日常发布复测](docs/history/2026-09-08-api-release-rehearsal.md)。
+
 以下内容主要供 AI 按需读取，使用者不必逐篇学习：
 
 - [SKILL.md](SKILL.md)：按任务选择执行入口。
