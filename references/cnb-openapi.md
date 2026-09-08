@@ -23,7 +23,8 @@ supports `cnb login` device authorization: AI runs the command and the person
 completes the official authorization page. Check the granted resource/operation
 scope and account role; login does not grant every requested operation. Keep
 debug logging off. The [repository setup executor](api-onboarding.md) uses this
-login and refresh path. Other bundle consumers still use their declared
+login and refresh path by default, or an explicit private `--token-file` for
+initialization; it never switches identities on failure. Other bundle consumers still use their declared
 credential inputs; they do not implicitly read the CLI login store.
 
 Live validation on 2026-09-07 found that CLI 1.15.18's default `cnb_cli`
@@ -31,13 +32,17 @@ authorization could read the selected resources but repository creation failed
 with `403`, `errcode: 10023`, missing `group-resource:rw`, despite an Owner
 organization role. This CLI has no login `--scope` option. Do not retry login
 as a permission fix. The executor reports `CNB_SCOPE_REQUIRED` with allowlisted
-`required_scopes`; use the [onboarding fallback](api-onboarding.md) and retain
+`required_scopes`; use the [private token entry](api-onboarding.md#cnb-bootstrap-token) and retain
 successful resources. Build-setting PUT was not exercised in this validation.
 
 If a required integration still needs a PAT, use **Personal settings → Access
 token → Add access token** with only its required scope. Never place a token in
 a URL, Git remote, command argument, log, example value, ordinary repository,
-or AI conversation.
+or AI conversation. The setup executor accepts an explicitly selected private
+token file and passes its value only to the official CLI child process; it
+ignores ambient CI/assistant credentials. A token does not bypass repository
+roles or Secret content restrictions. Do not promise a resource selector can
+bind an uncreated repository; verify the actual supported scope first.
 
 CNB pipelines expose a temporary `CNB_TOKEN` that is destroyed after the build.
 Do not copy it out of the job or turn it into a long-lived credential.

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, chmod, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, chmod, rm, symlink, link } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -379,4 +379,143 @@ test('profile metadata must select the official API and OAuth issuer without exp
   await chmod(profile, 0o600);
   const link = join(dir, 'linked-token'); await symlink(profile, link);
   await assert.rejects(api.verifyCnbProfile(link), { code: 'CNB_PROFILE_NOT_PRIVATE' });
+}));
+
+test('explicit PAT file reaches only the child environment without requiring or changing an OAuth profile', { skip: !api }, async () => fixture(async dir => {
+  const bin = join(dir, 'cnb'), tokenFile = join(dir, 'pat'), input = join(dir, 'spec.json'), calls = join(dir, 'calls.jsonl');
+  const token = 'synthetic.PAT_~+/-==';
+  await writeFile(tokenFile, `${token}\r\n`, { mode: 0o600 });
+  await writeFile(input, JSON.stringify({ schema_version: 1, repositories: [{ slug: 'team/app', visibility: 'private' }] }));
+  await writeFile(bin, `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args.includes('--version')) { if (process.env.CNB_TOKEN) process.exit(8); console.log('1.15.18'); }
+else {
+  if (process.env.CNB_API_ENDPOINT !== 'https://api.cnb.cool') process.exit(9);
+  if (['CNB_TOKEN_FOR_CODEBUDDY','AGENTOS_RUNTIME_ID','CNB_NPC_NAME','CNB_NPC_SLUG','OAUTH2_CLIENT_ID'].some(key => process.env[key]) || Object.keys(process.env).some(key => key.startsWith('WORKBUDDY_TOKEN_URL_'))) process.exit(10);
+  if (args.includes(${JSON.stringify(tokenFile)}) || args.includes(${JSON.stringify(token)})) process.exit(11);
+  if (process.env.CNB_TOKEN && process.env.CNB_TOKEN !== ${JSON.stringify(token)}) process.exit(12);
+  fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({authentication: process.env.CNB_TOKEN ? 'token_file' : 'official_login'})+'\\n');
+  console.log(JSON.stringify({status:200,data:{id:'app-id',path:'team/app',visibility_level:'Private',access:'Owner'}}));
+}
+`, { mode: 0o700 });
+  const args = [new URL('../scripts/configure-cnb.mjs', import.meta.url).pathname, '--spec', input, '--cnb-bin', bin, '--state', join(dir, 'state.json')];
+  const env = { ...process.env, HOME: dir, CNB_TOKEN: 'ambient-private', CNB_API_ENDPOINT: 'https://wrong.invalid', CNB_TOKEN_FOR_CODEBUDDY: 'ambient-agent', AGENTOS_RUNTIME_ID: 'agent', CNB_NPC_NAME: 'CodeBuddy', CNB_NPC_SLUG: 'npc/example', OAUTH2_CLIENT_ID: 'wrong-client', WORKBUDDY_TOKEN_URL_CNB_APP: 'https://wrong.invalid/token', WORKBUDDY_TOKEN_URL_EXTRA: 'https://wrong.invalid/extra' };
+  const beforeEnv = { ...env };
+  const patResult = await promisify(execFile)(process.execPath, [...args, '--token-file', tokenFile], { env });
+  assert.equal(JSON.parse(patResult.stdout).authentication, 'token_file');
+  assert.equal(patResult.stderr, '');
+  assert.ok(!patResult.stdout.includes(token) && !patResult.stdout.includes(tokenFile));
+  await assert.rejects(readFile(join(dir, '.cnb', 'token')), { code: 'ENOENT' });
+  await mkdir(join(dir, '.cnb'), { mode: 0o700 });
+  const profile = JSON.stringify({ login_host: 'https://api.cnb.cool', platform_url: 'https://cnb.cool', client_id: 'cnb_cli', access_token: 'synthetic-oauth-token' });
+  await writeFile(join(dir, '.cnb', 'token'), profile, { mode: 0o600 });
+  assert.equal(JSON.parse((await promisify(execFile)(process.execPath, args, { env })).stdout).authentication, 'official_login');
+  assert.equal(JSON.parse((await promisify(execFile)(process.execPath, [...args, '--token-file', tokenFile], { env })).stdout).authentication, 'token_file');
+  for (const content of ['invalid secret with spaces', 'a\n\n', 'a\r', 'a\r\n\n']) {
+    await writeFile(tokenFile, content);
+    await assert.rejects(promisify(execFile)(process.execPath, [...args, '--token-file', tokenFile], { env }), error => {
+      assert.deepEqual(JSON.parse(error.stderr), { status: 'failed', code: 'CNB_TOKEN_FILE_INVALID' });
+      assert.equal(error.stdout, ''); return true;
+    });
+  }
+  assert.equal(await readFile(join(dir, '.cnb', 'token'), 'utf8'), profile);
+  assert.deepEqual((await readFile(calls, 'utf8')).trim().split('\n').map(JSON.parse), [{ authentication: 'token_file' }, { authentication: 'official_login' }, { authentication: 'token_file' }]);
+  assert.deepEqual(env, beforeEnv);
+}));
+
+test('PAT format bounds and rereads are enforced before an API subprocess', { skip: !api }, async () => fixture(async dir => {
+  const tokenFile = join(dir, 'pat'); let apiCalls = 0;
+  const client = new api.CnbCliClient('/explicit/cnb', { tokenFile, run: async (_, args, options) => {
+    if (args[0] === '--version') return { stdout: '1.15.18' };
+    apiCalls++;
+    assert.match(options.env.CNB_TOKEN, /^[A-Za-z0-9._~+/-]+=*$/);
+    return { stdout: JSON.stringify({ status: 200, data: repo('team/app', 'Private') }) };
+  } });
+  for (const content of ['A', 'a._~+/-==\n', 'A'.repeat(8192)+'\r\n']) {
+    await writeFile(tokenFile, content, { mode: 0o600 });
+    assert.equal((await client.getRepo('team/app')).path, 'team/app');
+  }
+  assert.equal(apiCalls, 3);
+  for (const content of ['', '=', 'a b', ' a', 'a\t', 'a\nb', 'a\n\n', 'a\r', 'a\r\nb', 'é', '{"token":"synthetic"}', 'A'.repeat(8193), 'A'.repeat(9000)]) {
+    await writeFile(tokenFile, content);
+    await assert.rejects(client.getRepo('team/app'), { code: 'CNB_TOKEN_FILE_INVALID' });
+  }
+  assert.equal(apiCalls, 3, 'invalid replacement cannot reuse the previous PAT');
+}));
+
+test('PAT unsafe filesystem objects and relative paths are rejected without fallback', { skip: !api, timeout: 5000 }, async () => fixture(async dir => {
+  assert.throws(() => new api.CnbCliClient('/explicit/cnb', { tokenFile: 'relative-pat' }), { code: 'CNB_TOKEN_FILE_MUST_BE_ABSOLUTE' });
+  for (const kind of ['missing', 'permissions', 'parent-permissions', 'symlink', 'parent-symlink', 'hardlink', 'directory', 'fifo']) {
+    const parent = join(dir, kind); await mkdir(parent, { mode: 0o700 });
+    let tokenFile = join(parent, 'pat');
+    if (kind === 'directory') await mkdir(tokenFile, { mode: 0o700 });
+    else if (kind === 'fifo') await promisify(execFile)('/usr/bin/mkfifo', [tokenFile]);
+    else if (kind !== 'missing') await writeFile(tokenFile, 'synthetic', { mode: 0o600 });
+    if (kind === 'permissions') await chmod(tokenFile, 0o640);
+    if (kind === 'parent-permissions') await chmod(parent, 0o750);
+    if (kind === 'hardlink') await link(tokenFile, join(parent, 'other-link'));
+    if (kind === 'symlink') { const path = join(parent, 'symlink'); await symlink(tokenFile, path); tokenFile = path; }
+    if (kind === 'parent-symlink') { const path = join(dir, 'linked-parent'); await symlink(parent, path); tokenFile = join(path, 'pat'); }
+    let calls = 0;
+    const client = new api.CnbCliClient('/explicit/cnb', { tokenFile, run: async (_, args) => {
+      if (args[0] === '--version') return { stdout: '1.15.18' };
+      calls++; return { stdout: JSON.stringify({ status: 200, data: repo('team/app', 'Private') }) };
+    } });
+    await assert.rejects(client.getRepo('team/app'), error => {
+      assert.equal(error.code, kind === 'missing' ? 'CNB_TOKEN_FILE_NOT_FOUND' : 'CNB_TOKEN_FILE_NOT_PRIVATE');
+      assert.equal(error.message, error.code); return true;
+    });
+    assert.equal(calls, 0);
+  }
+}));
+
+test('explicit PAT scope correction resumes the same journal without storing the credential', { skip: !api }, async () => fixture(async (dir, journal) => {
+  const tokenFile = join(dir, 'pat'); await writeFile(tokenFile, 'synthetic-denied', { mode: 0o600 });
+  let exists = false, posts = 0;
+  const client = new api.CnbCliClient('/explicit/cnb', { tokenFile, run: async (_, args, { env }) => {
+    if (args[0] === '--version') return { stdout: '1.15.18' };
+    let response;
+    if (args[1] === 'get-by-id') response = { status: exists ? 200 : 404, data: exists ? repo('team/app', 'Private') : null };
+    else if (args[1] === 'get-group') response = { status: 200, data: { path: 'team', access_role: 'Owner' } };
+    else if (args[1] === 'create-repo') {
+      posts++;
+      if (env.CNB_TOKEN === 'synthetic-denied') response = { status: 403, data: { errcode: 10023, errmsg: scopeMessage('group-resource:rw') } };
+      else { assert.equal(env.CNB_TOKEN, 'synthetic-granted'); exists = true; response = { status: 201, data: null }; }
+    } else throw new Error('unexpected operation');
+    return { stdout: JSON.stringify(response) };
+  } });
+  const input = { schema_version: 1, repositories: [{ slug: 'team/app', visibility: 'private' }] };
+  await assert.rejects(api.configureCnb({ spec: input, client, journal, apply: true }), error => {
+    assert.equal(error.code, 'CNB_SCOPE_REQUIRED'); assert.deepEqual(error.required_scopes, ['group-resource:rw']); return true;
+  });
+  assert.deepEqual((await journal.load()).creates, {});
+  assert.equal(posts, 1);
+  await writeFile(tokenFile, 'synthetic-granted');
+  const result = await api.configureCnb({ spec: input, client, journal, apply: true });
+  assert.equal(result.status, 'applied');
+  assert.equal(posts, 2);
+  assert.equal((await api.configureCnb({ spec: input, client, journal, apply: true })).status, 'unchanged');
+  const receiptAndState = JSON.stringify(result) + await readFile(journal.path, 'utf8');
+  assert.ok(!receiptAndState.includes('synthetic-') && !receiptAndState.includes(tokenFile));
+}));
+
+test('a failing PAT child cannot leak its environment or fall back to an existing login', { skip: !api }, async () => fixture(async dir => {
+  const bin = join(dir, 'cnb'), tokenFile = join(dir, 'pat'), input = join(dir, 'spec.json');
+  await writeFile(tokenFile, 'synthetic-PAT-private', { mode: 0o600 });
+  await mkdir(join(dir, '.cnb'), { mode: 0o700 });
+  const profile = JSON.stringify({ login_host: 'https://api.cnb.cool', platform_url: 'https://cnb.cool', client_id: 'cnb_cli', access_token: 'synthetic-OAuth-private' });
+  await writeFile(join(dir, '.cnb', 'token'), profile, { mode: 0o600 });
+  await writeFile(input, JSON.stringify({ schema_version: 1, repositories: [{ slug: 'team/app', visibility: 'private' }] }));
+  await writeFile(bin, `#!/usr/bin/env node
+if (process.argv.includes('--version')) console.log('1.15.18');
+else if (process.env.CNB_TOKEN) { console.log(process.env.CNB_TOKEN); console.error(process.env.CNB_TOKEN); process.exit(23); }
+else console.log(JSON.stringify({status:200,data:{id:'app-id',path:'team/app',visibility_level:'Private'}}));
+`, { mode: 0o700 });
+  await assert.rejects(promisify(execFile)(process.execPath, [new URL('../scripts/configure-cnb.mjs', import.meta.url).pathname, '--spec', input, '--cnb-bin', bin, '--state', join(dir, 'state.json'), '--token-file', tokenFile], { env: { ...process.env, HOME: dir } }), error => {
+    assert.equal(error.stdout, '');
+    assert.deepEqual(JSON.parse(error.stderr), { status: 'failed', code: 'CNB_CLI_FAILED' });
+    return true;
+  });
+  assert.equal(await readFile(join(dir, '.cnb', 'token'), 'utf8'), profile);
 }));

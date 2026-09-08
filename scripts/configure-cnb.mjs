@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Reconcile explicitly selected CNB repositories using @cnbcool/cnb-cli 1.15.18.
  * AI supplies the non-secret spec; the user supplies decisions and authorizes scope.
- * Login is a separate, interactive `cnb login --host cnb.cool` operation.
+ * Use a prior official login or an explicitly selected private token file.
  * No Secret content input, credential output, login, installation or internal APIs.
  */
 import { execFile } from 'node:child_process';
@@ -53,6 +53,43 @@ export async function verifyCnbProfile(filename) {
   } finally { if (handle) await handle.close(); }
 }
 
+/** Read only an explicitly selected, protected PAT. Never cache its contents. */
+async function readTokenFile(filename) {
+  let handle;
+  const bytes = Buffer.alloc(8195); // token <=8192 bytes, optional CRLF, one overflow byte
+  const privateParent = info => info.isDirectory() && !info.isSymbolicLink() && info.uid === process.getuid() && (info.mode & 0o7777) === 0o700;
+  const privateFile = info => info.isFile() && !info.isSymbolicLink() && info.uid === process.getuid() && info.nlink === 1 && (info.mode & 0o7777) === 0o600;
+  const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
+  try {
+    const parent = await lstat(dirname(filename));
+    if (!privateParent(parent)) fail('CNB_TOKEN_FILE_NOT_PRIVATE');
+    handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const before = await handle.stat();
+    if (!privateFile(before)) fail('CNB_TOKEN_FILE_NOT_PRIVATE');
+    if (before.size < 1 || before.size > 8194) fail('CNB_TOKEN_FILE_INVALID');
+    let length = 0;
+    while (length < bytes.length) {
+      const part = await handle.read(bytes, length, bytes.length - length, length);
+      if (!part.bytesRead) break;
+      length += part.bytesRead;
+    }
+    const after = await handle.stat(), current = await lstat(filename), currentParent = await lstat(dirname(filename));
+    if (!privateFile(after) || !privateFile(current) || !privateParent(currentParent)
+      || !sameFile(before, current) || !sameFile(parent, currentParent)
+      || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs
+      || length !== after.size) fail('CNB_TOKEN_FILE_NOT_PRIVATE');
+    const token = bytes.subarray(0, length).toString('latin1').replace(/\r?\n$/, '');
+    if (!token.length || token.length > 8192 || !/^[A-Za-z0-9._~+/-]+=*$/.test(token)) fail('CNB_TOKEN_FILE_INVALID');
+    return token;
+  } catch (error) {
+    if (error instanceof CnbFailure) throw error;
+    fail(error.code === 'ENOENT' ? 'CNB_TOKEN_FILE_NOT_FOUND' : 'CNB_TOKEN_FILE_NOT_PRIVATE');
+  } finally {
+    bytes.fill(0);
+    if (handle) await handle.close().catch(() => {});
+  }
+}
+
 export function validateSpec(spec) {
   if (!only(spec, ['schema_version', 'repositories']) || spec.schema_version !== 1 || !Array.isArray(spec.repositories) || !spec.repositories.length || spec.repositories.length > 20) fail('INVALID_SPEC');
   const slugs = new Set();
@@ -66,29 +103,30 @@ export function validateSpec(spec) {
 
 /** No retries; stderr and response bodies never escape this boundary. */
 export class CnbCliClient {
-  constructor(bin, { run } = {}) {
+  constructor(bin, { run, tokenFile } = {}) {
     if (!isAbsolute(bin || '')) fail('CNB_BIN_MUST_BE_ABSOLUTE');
+    if (tokenFile !== undefined && (typeof tokenFile !== 'string' || !isAbsolute(tokenFile) || tokenFile.includes('\0'))) fail('CNB_TOKEN_FILE_MUST_BE_ABSOLUTE');
     this.bin = bin;
-    this.run = run || (async (file, args) => {
+    this.tokenFile = tokenFile;
+    this.run = run || (async (file, args, options) => {
       await access(file, constants.X_OK);
-      if (args[0] !== '--version') await verifyCnbProfile(join(homedir(), '.cnb', 'token'));
-      const env = { ...process.env, CNB_API_ENDPOINT: 'https://api.cnb.cool', NO_COLOR: '1' };
-      // Reuse the CLI's authenticated profile and refresh logic, not an incidental
-      // pipeline/agent token. Metadata checks never replace CLI credential refresh.
-      delete env.CNB_TOKEN;
-      delete env.CNB_TOKEN_FOR_CODEBUDDY;
-      delete env.AGENTOS_RUNTIME_ID;
-      delete env.CNB_NPC_NAME;
-      delete env.CNB_NPC_SLUG;
-      delete env.OAUTH2_CLIENT_ID;
-      for (const key of Object.keys(env)) if (key.startsWith('WORKBUDDY_TOKEN_URL_')) delete env[key];
-      return execute(file, args, { env, timeout: 60_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true });
+      if (args[0] !== '--version' && this.tokenFile === undefined) await verifyCnbProfile(join(homedir(), '.cnb', 'token'));
+      return execute(file, args, options);
     });
     this.checked = false;
   }
   async invoke(args) {
+    const env = { ...process.env, CNB_API_ENDPOINT: 'https://api.cnb.cool', NO_COLOR: '1' };
+    // Authentication is explicit: use the official login by default, or only the
+    // selected PAT file. No ambient agent credentials or automatic fallback.
+    for (const key of ['CNB_TOKEN', 'CNB_TOKEN_FOR_CODEBUDDY', 'AGENTOS_RUNTIME_ID', 'CNB_NPC_NAME', 'CNB_NPC_SLUG', 'OAUTH2_CLIENT_ID']) delete env[key];
+    for (const key of Object.keys(env)) if (key.startsWith('WORKBUDDY_TOKEN_URL_')) delete env[key];
     let result;
-    try { result = await this.run(this.bin, args); } catch (error) { if (error instanceof CnbFailure) throw error; fail('CNB_CLI_FAILED'); }
+    try {
+      if (args[0] !== '--version' && this.tokenFile !== undefined) env.CNB_TOKEN = await readTokenFile(this.tokenFile);
+      result = await this.run(this.bin, args, { env, timeout: 60_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true });
+    } catch (error) { if (error instanceof CnbFailure) throw error; fail('CNB_CLI_FAILED'); }
+    finally { delete env.CNB_TOKEN; }
     if (typeof result?.stdout !== 'string') fail('CNB_CLI_RESPONSE_INVALID');
     return result.stdout;
   }
@@ -309,22 +347,23 @@ export async function configureCnb({ spec, client, journal, apply = false, onPla
 
 async function main(args) {
   if (args.length === 1 && args[0] === '--help') {
-    console.log('Usage: node scripts/configure-cnb.mjs --spec <AI-generated JSON> --cnb-bin <absolute cnb 1.15.18> --state <protected persistent JSON> [--apply]\nRequires prior cnb login --host cnb.cool. Preview only reads CNB. Keep the same state file across retries.\nSpec: {"schema_version":1,"repositories":[{"slug":"group/app","visibility":"private","build_settings":{"auto_trigger":true}},{"slug":"group/secrets","visibility":"secret"}]}');
+    console.log('Usage: node scripts/configure-cnb.mjs --spec <AI-generated JSON> --cnb-bin <absolute cnb 1.15.18> --state <protected persistent JSON> [--token-file <absolute private PAT file>] [--apply]\nUses prior cnb login --host cnb.cool unless --token-file is explicit. Preview only reads CNB. Keep the same state file across retries, including scope corrections.\nSpec: {"schema_version":1,"repositories":[{"slug":"group/app","visibility":"private","build_settings":{"auto_trigger":true}},{"slug":"group/secrets","visibility":"secret"}]}');
     return;
   }
   const options = {};
   for (let i = 0; i < args.length; i++) {
     const key = args[i];
-    if (!['--spec', '--cnb-bin', '--state', '--apply'].includes(key) || Object.hasOwn(options, key)) fail('INVALID_ARGUMENTS');
+    if (!['--spec', '--cnb-bin', '--state', '--token-file', '--apply'].includes(key) || Object.hasOwn(options, key)) fail('INVALID_ARGUMENTS');
     options[key] = key === '--apply' ? true : args[++i];
     if (options[key] === undefined || (typeof options[key] === 'string' && options[key].startsWith('--'))) fail('INVALID_ARGUMENTS');
   }
   if (!options['--spec'] || !options['--state'] || !options['--cnb-bin']) fail('INVALID_ARGUMENTS');
   let spec;
   try { spec = JSON.parse(await readFile(options['--spec'], 'utf8')); } catch { fail('INVALID_SPEC'); }
-  const result = await configureCnb({ spec, client: new CnbCliClient(options['--cnb-bin']), journal: new FileJournal(resolve(options['--state'])), apply: options['--apply'] === true,
-    onPlan: options['--apply'] ? plan => console.log(JSON.stringify(plan)) : undefined });
-  console.log(JSON.stringify(result));
+  const authentication = options['--token-file'] ? 'token_file' : 'official_login';
+  const result = await configureCnb({ spec, client: new CnbCliClient(options['--cnb-bin'], { tokenFile: options['--token-file'] }), journal: new FileJournal(resolve(options['--state'])), apply: options['--apply'] === true,
+    onPlan: options['--apply'] ? plan => console.log(JSON.stringify({ ...plan, authentication })) : undefined });
+  console.log(JSON.stringify({ ...result, authentication }));
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main(process.argv.slice(2)).catch(error => {

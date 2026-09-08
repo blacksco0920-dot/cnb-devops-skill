@@ -17,7 +17,7 @@ SESSION_PYTHON="$TOOLS_DIR/tencent/bin/python"
 "$SESSION_PYTHON" -m pip install --no-deps tccli==3.1.162.1
 ```
 
-已有 CNB 登录可用时直接做资源预览。确实需要登录时，AI 启动以下命令，让人只在命令提供的**官方页面**完成本人登录授权。腾讯云使用项目专用 profile，不能覆盖 default；不要另开凭据收集网页或让用户把令牌发到聊天。
+已有 CNB 登录可用时直接做资源预览；已有获准且适用的私密初始化令牌时，直接使用[令牌入口](#cnb-bootstrap-token)，无需再做 CNB OAuth 登录。确实需要登录时，AI 启动以下命令，让人只在命令提供的**官方页面**完成本人登录授权。腾讯云使用项目专用 profile，不能覆盖 default；不要另开凭据收集网页或让用户把令牌发到聊天。
 
 ```sh
 "$CNB_BIN" login --host cnb.cool
@@ -66,9 +66,43 @@ node "$SKILL_DIR/scripts/configure-cnb.mjs" \
 
 持久状态在创建前落盘，不确定结果先回查，不重复 POST。明确的平台拒绝且重新确认不存在时，配置器才解除本次 pending；超时、5xx 或回查失败仍保留。始终使用同一 `cnb-state.json`；`CREATE_RECONCILIATION_REQUIRED` 需要核对云端结果，不能删状态重试。进程中断遗留 `.lock` 时，AI 先确认原进程已结束，再清理锁，保留状态文件。
 
-执行器核对官方登录的主机与凭据文件权限，使用 CLI 自己的刷新，不使用意外继承的 CI/其他助手 token。组织须已经存在；公开 `POST /groups` 可创建组织，但也需要实际写权限，不能假定默认登录已具备。
+执行器默认核对官方登录的主机与凭据文件权限，使用 CLI 自己的刷新；显式 `--token-file` 则只使用该文件的值，不要求 OAuth profile。两种方式都固定访问官方 API，清除意外继承的 CI/其他助手 token；不因失败自动更换身份。组织须已经存在；公开 `POST /groups` 可创建组织，但需要另行核对该操作权限，本配置器不创建组织。
 
-出现 `CNB_SCOPE_REQUIRED` 时，记录 `required_scopes` 与失败步骤，停止相同权限下的写重试。有已批准且具备精确权限的组织集成时可使用其已验收通道；本配置器不接收 PAT 或其他 OAuth client。否则 AI 准备所选组织的官方仓库页、准确名称/类型及所需构建开关，把缺失的创建/设置与 Secret 保存集中交接，随后用配置器重新回读。不要让用户理解 scope、重登碰运气或为每个项目申请 OAuth 应用；[自建 OAuth 应用](https://docs.cnb.cool/zh/oauth/developer.html)需要平台审核，不是当前的即用方案。Secret 内容仍仅走官方 Web 保存。
+出现 `CNB_SCOPE_REQUIRED` 时，记录 `required_scopes` 与失败步骤，停止相同权限下的写重试。在已有授权内复用或准备下述初始化令牌，然后使用同一 spec 和状态文件重新预览；不要删 journal、反复登录或让用户学习 scope。没有可用初始化令牌且用户不准备新令牌时，才集中交接必要的官方网页创建/设置。Secret 内容仍仅走官方 Web 保存。
+
+<a id="cnb-bootstrap-token"></a>
+### 初始化令牌：一次交接，继续自动配置
+
+个人访问令牌可用于公开 API；CNB [官方 Terraform 工具](https://cnb.cool/cnb/sdk/terraform-cnb)也采用该方式创建仓库。这是默认 OAuth 缺权时的显式后备入口，不是新增一套部署流程。
+
+AI 先检查现有批准的凭据和有效期。确需新增时，在[官方令牌页](https://cnb.cool/profile/token)准备名称、较短有效期及下表选项，给用户具体操作；不套用包含删除等额外权限的通用预设。已选组织下的完整仓库配置需要：
+
+| 操作 | 所需权限 |
+| --- | --- |
+| 查询组织与仓库、创建私有/Secret 仓库 | `group-resource:rw` |
+| 回读普通仓库信息 | `repo-basic-info:r` |
+| 读取并修改构建设置 | `repo-manage:rw`；不操作构建设置时省略 |
+
+资源范围必须覆盖已选组织的创建动作和新仓库回读。公开资料未确认“指定尚不存在的仓库”或“指定组织自动包含未来仓库”的限制方式，不能承诺已做到；AI 核对官方页面实际可选范围，若超出已有授权则先准备清楚实际范围再交接。凭据仅用于本机初始化，不放进流水线充当日常身份。AI 私下记录实际范围、到期时间及用途；文件保存成功不能证明这些信息。
+
+用户在官方页面创建后，通过本机安全入口导入一次。AI 在用户可交互的终端准备以下命令，用户只粘贴令牌并回车；输入不回显、不会进入命令历史或聊天。已有安全存储可直接提供符合要求的文件，不重复导入。
+
+```sh
+python3 "$SKILL_DIR/scripts/save-cnb-token.py" \
+  --output "$PRIVATE_DIR/cnb-bootstrap.token"
+
+node "$SKILL_DIR/scripts/configure-cnb.mjs" \
+  --spec "$PRIVATE_DIR/cnb-spec.json" --cnb-bin "$CNB_BIN" \
+  --state "$PRIVATE_DIR/cnb-state.json" \
+  --token-file "$PRIVATE_DIR/cnb-bootstrap.token"
+# 预览符合既有授权时，同样的命令加 --apply；不要丢弃状态文件。
+```
+
+保存器只接收交互终端的隐藏输入，不接受值参数、管道或环境变量；无可交互终端时使用宿主已有的受保护凭据导入通道，两者都不可用就集中交接必要的官方网页创建/设置，不改成聊天粘贴或要求用户自行寻找工具。父目录须为本人所有的 0700 目录，文件为 0600 的单链接普通文件，不能是符号链接。格式为单行原始令牌，可带一个末尾换行；不需要用户写 JSON。输出不覆盖已有文件；轮换用新路径，确认消费者切换后处理旧凭据。
+
+配置器只向本次 CLI 子进程注入文件值，保留原 OAuth 存储；所选文件无效、过期或缺权时只报告当前失败，不回退到另一身份。原始令牌不包含本入口可核验的授权/到期证明，实际权限仍由 CNB 判断。范围或到期信息缺失时记为 unknown，先做同身份只读预览，只补影响当前操作的非秘密授权事实或必要官方操作；预览成功不证明写权限或有效期，不因此重登。服务端已确认拒绝的创建与结果未知的创建继续按同一 journal 规则处理。
+
+当前公开接口没有已核实的个人令牌自动签发或网页预填契约，不承诺免除这次人工创建与安全导入。[统一申请 OAuth 应用](https://docs.cnb.cool/zh/oauth/developer.html)可作为维护者后续方向，不能让每个使用者自行申请。此入口须经真实 PAT 创建与回读验收，才能记录云端通过。
 
 ## 3．接通固定 TAT 与专用云身份
 

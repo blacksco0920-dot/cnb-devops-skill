@@ -26,7 +26,7 @@ Last verified: 2026-09-07
 
 AI 先用已有事实准备可审阅的材料，完成当前授权内可执行的检查，再给人一个必要动作：明确页面、动作、范围和完成标志。账号或目标绑定缺失时，只请求能继续准备的最小前提；不让人编写技术回执，也不让人把敏感内容发到聊天。AI 核验实际结果后更新项目索引；未确认的草稿保持 pending，不编造授权、绑定或成功状态。
 
-账号初始化优先走[官方登录与 API 入口](api-onboarding.md)。AI 自动配置固定 TAT 与云身份权限；仓库与构建设置按实际写权限处理。CNB 默认 CLI 创建缺权时，AI 将必要创建/设置与 Secret 保存集中准备，按准确页面交接，不让用户学习 API 或反复登录。下文控制台细节仅在所选通道不可用或组织要求时参考。
+账号初始化优先走[官方登录与 API 入口](api-onboarding.md)。AI 自动配置固定 TAT 与云身份权限；CNB 默认 CLI 创建缺权时，按[初始化令牌入口](api-onboarding.md#cnb-bootstrap-token)复用已有凭据，或准备一次官方创建与本机隐藏输入交接，再继续同一配置器。只有没有可用令牌通道时才逐项交接网页创建/设置；必要的 Secret 保存仍集中准备，不让用户学习 API 或反复登录。
 
 区分 AI 权限确认、云控制台登录/验证码/本人验证，以及候选 Tag 部署页审批。AI 权限问题直接说明操作和回复方式；问题卡片不可见时用普通文字重述，不重启接入，已有明确且有效的授权不重复询问。候选审批必须指出具体 Tag 和页面；项目要求的机器授权记录由 AI 先准备并核验，按钮可见不代表执行条件已满足。
 
@@ -688,8 +688,10 @@ browser automation is optional, not a prerequisite.
 
 1. AI selects an existing **Secret repository**, or creates it through an
    authorized [public API](cnb-openapi.md#secret-repositories). If the current
-   channel lacks creation scope, prepare the exact name, type and organization
-   for the official Web creation, combined with the following save handoff.
+   login lacks scope, use the [private initialization token](api-onboarding.md#cnb-bootstrap-token)
+   and retain the same creation journal. Only when that channel is unavailable,
+   prepare the exact name, type and organization for official Web creation,
+   combined with the following save handoff.
    Verify metadata through the organization listing and prepare exact file links.
 2. AI classifies the consuming job and prepares the narrow repository/event/branch
    rules. Script/commands tasks omit `allow_images`; plugin tasks constrain the
