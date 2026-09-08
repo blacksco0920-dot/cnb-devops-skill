@@ -110,6 +110,15 @@ approved location, custodian, and checksum. A new session or machine must verify
 access to those files; a path in the index does not make them available. Append
 later acceptance evidence without rewriting an earlier immutable receipt.
 
+For standard production and recovery operations, index the private
+[execution session](bootstrap-inputs.md#production) or
+[recovery evidence directory](bootstrap-inputs.md#recovery), its fixed inputs and
+next stage. These are execution journals, not new approval sources. Read the
+existing journal before constructing commands; use the fixed entry to resume
+and verify its artifacts. A completed local stage cannot establish current
+cloud status, extend an expired signature, or justify repeating an uncertain
+export. Keep credential values and raw backup contents out of the project index.
+
 This compact synthetic example is a PROJECT_STATUS index, not a new receipt
 schema. Replace it with observed project facts; use explicit `unknown` or
 `not-applicable` when appropriate. Evidence/decision references resolve in the

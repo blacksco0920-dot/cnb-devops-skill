@@ -195,155 +195,97 @@ node "$SKILL_DIR/scripts/configure-tat.mjs" \
 同版本同正文/元数据先 Describe 后复用；只有不存在才 Create，漂移停止，不确定写入先查询。重装后实例 ID 不变也要核对实际 target；变更目标需重新批准绑定。回读不改既有命令，输出文件使用新名称。把核验后的 binding 作为该环境 CNB Secret 的 `CNB_TAT_BINDING_JSON`，不能把 setup ready 或配置命令成功当成发布证明。
 
 <a id="production"></a>
-## 本机签名与发布
+## 本机生产准备与授权续接
 
-使用已测试候选提交中的同一份生成包；本机 Node.js 22、Python 3.11+、Git 可用。候选已纳入 `production_branch`，在该 Tag 页面触发 `web_trigger_production_readiness`，等待它成功。此后本机从原 Tag 与 annotations 取材料；下面的下载仅 GET，签名仍会独立回读 TAT。环境中的 `CNB_TOKEN` 通过已有私密加载通道提供，不写到 curl 参数里。
+使用 `scripts/release-session.mjs`，不再临时编写候选下载、凭据加载或签名拼接程序。它调用候选提交中的标准 gate/signer/publisher；不合并 main、不点击 CNB 原生按钮、不执行生产部署。首次使用运行 `node "$SKILL_DIR/scripts/release-session.mjs" --help` 查看完整参数。
 
-```sh
-CANDIDATE_TAG="<本次流水线生成的不可变候选Tag>"
-EVIDENCE_DIR="<未被版本控制、本候选本次审批的新私密目录>"
-mkdir -m 700 "$EVIDENCE_DIR"
-node --input-type=module - "$BUNDLE_DIR/ci-config.json" "$CANDIDATE_TAG" "$EVIDENCE_DIR" <<'JS'
-import fs from 'node:fs';
-import path from 'node:path';
-const [configFile, tag, output] = process.argv.slice(2);
-const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-const response = await fetch(`https://api.cnb.cool/${config.cnb_repository}/-/git/tag-annotations/${encodeURIComponent(tag)}`, {
-  headers: {Authorization: `Bearer ${process.env.CNB_TOKEN}`, Accept: 'application/vnd.cnb.api+json'},
-  redirect: 'error', signal: AbortSignal.timeout(15000)
-});
-if (!response.ok) throw Error(`Annotation GET failed: HTTP ${response.status}`);
-const items = await response.json(), annotations = Object.create(null);
-if (!Array.isArray(items)) throw Error('Annotation array required');
-for (const item of items) {
-  if (typeof item.key !== 'string' || typeof item.value !== 'string' || Object.hasOwn(annotations, item.key))
-    throw Error('Invalid or duplicate annotation');
-  annotations[item.key] = item.value;
+AI 从本项目已审配置和私密凭据记录生成 `0600` 的 spec，并先建 `0700` 的 `session_dir`。路径均为绝对路径；`bundle_dir` 为测试生成包根目录，生产子包固定为其 `production/`。两份 lock 摘要来自已审生成记录；凭据沿用本项目已经批准的用途和范围，不要求用户再填写这些技术字段。
+
+```json
+{
+  "schema": "cnb-release-session/v1",
+  "project_dir": "<本项目目录>",
+  "bundle_dir": "<本项目的deploy/vendor/cnb-devops目录>",
+  "bundle_lock_sha256": "<已审测试artifact-lock.json原始摘要>",
+  "production_lock_sha256": "<已审生产artifact-lock.json原始摘要>",
+  "session_dir": "<本候选本次授权的私密目录>",
+  "candidate_tag": "<本轮流水线的精确候选Tag>",
+  "application_commit": "<本轮完整提交>",
+  "production_binding": "<已核验生产tat-binding.json路径>",
+  "approval_private_key": "<本机Ed25519私钥路径>",
+  "cnb_token_file": "<本机项目专用PAT文件路径>",
+  "tat_credentials_file": "<本机专用生产TAT凭据JSON路径>"
 }
-if (annotations.production_readiness_status !== 'passed') throw Error('Readiness has not passed');
-const encoded = annotations.production_readiness_b64url;
-if (typeof encoded !== 'string' || !/^[A-Za-z0-9_-]+$/.test(encoded)) throw Error('Readiness transport invalid');
-const readiness = Buffer.from(encoded, 'base64url');
-if (readiness.toString('base64url') !== encoded) throw Error('Noncanonical readiness transport');
-fs.writeFileSync(path.join(output, 'annotations.json'), JSON.stringify(annotations), {mode: 0o600, flag: 'wx'});
-fs.writeFileSync(path.join(output, 'readiness.json'), readiness, {mode: 0o600, flag: 'wx'});
-JS
-json_value() {
-  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"
-}
-CANDIDATE_COMMIT="$(json_value "$EVIDENCE_DIR/annotations.json" candidate_commit)"
-READINESS_INVOCATION_ID="$(json_value "$EVIDENCE_DIR/annotations.json" production_readiness_invocation_id)"
-PRODUCTION_BRANCH="$(json_value "$BUNDLE_DIR/production/ci-config.json" production_branch)"
-cd "$PROJECT_DIR"
-python3 "$BUNDLE_DIR/ci/candidate_gate.py" production \
-  --config "$BUNDLE_DIR/ci-config.json" --tag "$CANDIDATE_TAG" \
-  --commit "$CANDIDATE_COMMIT" --branch "$PRODUCTION_BRANCH" \
-  --annotations "$EVIDENCE_DIR/annotations.json" --output-dir "$EVIDENCE_DIR" --phase readiness
 ```
 
-标准 gate 使用 `CNB_TOKEN`（可选 `CNB_TOKEN_USER_NAME`）fetch 并核对治理分支、Tag 类型、完整提交、ready annotations，写出 Tag message 的原始 `candidate.json`。这里 `--phase readiness` 只表示导出候选，不重复触发远端 readiness。`--phase apply` 会要求已存在的 approval，因此不能用于签名前下载。不要重新序列化 `candidate.json`、`readiness.json` 或稍后的 `approval.json`。
+PAT 为纯令牌文件，可含一个末尾换行，需项目的 Git 读取、候选 annotations 读取和 `repo-release:rw`。TAT 凭据沿用配置器的 `secretId` / `secretKey` / 可选 `token` JSON 契约，必须是已批准的生产发布身份；本机初始化管理员会话不能直接替代它。凭据文件保持 `0600`，不要把值写入 spec、命令参数或聊天。
 
-按已明确的生产意图签发当前候选的限时授权；本机环境先安全加载专用直接 CAM 的两项 TAT 键。若使用已验收的短期身份，须同时加载 `TENCENTCLOUD_TOKEN` 并核对剩余有效期，不能把本机初始化管理员会话直接当成发布身份。signer 没有离线签名模式或 `--readiness` 参数，指定 invocation 后直接独立回读；输出私钥匹配检查后的 `0600` 授权文件，已有文件时停止。
+测试构建 ID 和精确提交已知时即可准备；候选是否实际存在和通过仍由稍后的 gate 验证。不要等用户触发就绪后才安装依赖。
 
 ```sh
-PRODUCTION_BINDING="<已核验的生产tat-binding.json绝对路径>"
-APPROVAL_PRIVATE_KEY="<已批准的Ed25519私钥绝对路径>"
-npm ci --ignore-scripts --prefix "$BUNDLE_DIR/production/dependencies"
-node "$BUNDLE_DIR/production/admin/sign-production-approval.mjs" \
-  --config="$BUNDLE_DIR/production/ci-config.json" \
-  --candidate-config="$BUNDLE_DIR/ci-config.json" \
-  --binding="$PRODUCTION_BINDING" --manifest="$EVIDENCE_DIR/candidate.json" \
-  --readiness-invocation-id="$READINESS_INVOCATION_ID" \
-  --private-key="$APPROVAL_PRIVATE_KEY" --output="$EVIDENCE_DIR/approval.json" \
-  --authorize-production-apply > "$EVIDENCE_DIR/sign-result.json"
-
-PUBLISH_ARGS=(--config="$BUNDLE_DIR/production/ci-config.json"
-  --candidate-config="$BUNDLE_DIR/ci-config.json"
-  --manifest="$EVIDENCE_DIR/candidate.json" --readiness="$EVIDENCE_DIR/readiness.json"
-  --approval="$EVIDENCE_DIR/approval.json" --readiness-invocation-id="$READINESS_INVOCATION_ID")
-node "$BUNDLE_DIR/production/admin/publish-production-approval.mjs" "${PUBLISH_ARGS[@]}"
-# preview 成功后，按已有生产授权发布；--apply 保持在末尾。
-node "$BUNDLE_DIR/production/admin/publish-production-approval.mjs" "${PUBLISH_ARGS[@]}" --apply \
-  > "$EVIDENCE_DIR/publication-result.json"
+node "$SKILL_DIR/scripts/release-session.mjs" prepare --spec "$PRIVATE_DIR/release-session.json"
+node "$SKILL_DIR/scripts/release-session.mjs" prepare --spec "$PRIVATE_DIR/release-session.json" --apply
 ```
 
-publisher 使用本机项目 PAT 的 `CNB_TOKEN`，不加载签名私钥；先写 pending，再写签名正文和摘要，逐项回读后才标 signed。生产 owner 在**同一 Tag**按项目配置批准，再触发 `tag_deploy.production`；该事件重新检查门禁并执行相同 digest 的生产部署。签名最长一小时且不超过 prepared 到期时间；过期、候选变化、恢复阻断后的重试按既定策略刷新 readiness 与审批。完成后分别记录实际 digest、HTTPS/发布身份和项目业务验收。
+`prepare` 检查本机工具、固定包和生产子包依赖，缺失时按锁文件安装到 `production/dependencies`，不能只安装测试包依赖。准备不会读取私钥或令牌正文，也不证明生产已就绪。
+
+按项目规则让受控分支纳入同一候选提交，在该 Tag 触发原生就绪检查，待真实流水线通过后，按顺序执行：
+
+```sh
+node "$SKILL_DIR/scripts/release-session.mjs" candidate --spec "$PRIVATE_DIR/release-session.json" --apply
+node "$SKILL_DIR/scripts/release-session.mjs" sign --spec "$PRIVATE_DIR/release-session.json" --apply --authorize-production-apply
+node "$SKILL_DIR/scripts/release-session.mjs" publish --spec "$PRIVATE_DIR/release-session.json"
+node "$SKILL_DIR/scripts/release-session.mjs" publish --spec "$PRIVATE_DIR/release-session.json" --apply
+```
+
+`candidate` 读取 annotations，并用标准 Git gate 验证受控分支、annotated Tag、完整提交和候选；不依赖 Tag 详情 API。保留 `candidate.json`、`readiness.json` 的原始字节。`sign` 必须有已明确的生产意图，按 invocation 独立回读 TAT；`publish` 使用限定仓库的 PAT，预览后写入并逐项回读授权，最后才标 signed。两阶段隔离凭据，CI 和主机不接触签名私钥。
+
+随后由 CNB owner 在同一 Tag 完成原生批准，`tag_deploy.production` 仍会独立校验签名并发布测试过的相同 digest。已有授权不重复询问；原生批准不代替本机签名。实际部署结束后再核对完整镜像、HTTPS/发布身份与项目业务。
+
+中断或换会话时先执行：
+
+```sh
+node "$SKILL_DIR/scripts/release-session.mjs" status --spec "$PRIVATE_DIR/release-session.json"
+```
+
+状态只说明本机执行到哪里，不作为云端成功或授权来源。保持同一 spec 和候选，按返回阶段续接；已有签名必须重新通过有效期、候选和 prepared 绑定校验，发布程序支持对同一已签内容回读复用。签名仅本机落盘：准备错误且尚无签名文件时，可修正输入条件后重新核验再签；已有不完整或非法签名则保留并阻断，不覆盖。不得删状态或证据来规避未知结果。签名最长一小时且不超过 prepared 到期；到期时 `status` 返回 blocked 和 `refresh_readiness_new_session`，按原门禁取得新就绪及授权，并保留旧会话记录。
 
 <a id="recovery"></a>
-## 导出、下载与离机恢复
+## 固定导出、下载与离机恢复
 
-先用项目实际接口完成业务验收和声明的非空表数据；回执写明 mock/真实服务、上传文件和结果回读范围。重新选择要导出的 `ENVIRONMENT`、`ENV_BUNDLE_DIR`、`PRIVATE_DIR`、`TARGET` 并重建上文 SSH 数组。下面的 source 命令在对应主机运行，`export` 和 `resume-source` 均默认预览；导出 `--apply` 使用已授权短暂停写窗口。
+使用 `scripts/rehearse-recovery.py` 串联原 `host/recover-project.py`。本入口负责固定 SSH 采集和阶段续接，原恢复器继续负责停写、源恢复、不同本机 daemon 上的隔离恢复，以及全部表/序列/声明目录对账。AI 不再临时编写主机采集或下载程序。
 
-恢复前以**已接受的实际安装记录**为准：从该记录取得安装锁摘要，核对主机 `installation.json.lock_sha256` 与已安装 `artifact-lock.json` 原始摘要；逐项核对核心、policy、Compose、固定 TAT、恢复入口及恢复策略的已审字节和权限。经过文档支持的管理员 helper 兼容续接或仅 CI/包元数据更新后，当前生成锁可以不同于保留的安装锁；只要实际运行边界仍匹配已接受记录，就保留原锁和回执继续。不能直接要求两份整包锁相等，也不能据此覆盖安装记录或略过运行文件核验。
+先完成项目实际业务验收及声明的非空表数据。AI 从已核验的部署记录取得以下输入：
 
-```sh
-json_value() {
-  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"
-}
-PROJECT_ID="$(json_value "$ENV_BUNDLE_DIR/host-policy.json" project)"
-INSTALL_DIR="$(json_value "$ENV_BUNDLE_DIR/host-policy.json" install_dir)"
-POLICY_SHA256="$(sha256_file "$ENV_BUNDLE_DIR/host-policy.json")"
-CORE_SHA256="$(sha256_file "$ENV_BUNDLE_DIR/host/tat-deploy-test.py")"
-RECOVERY_POLICY_SHA256="$(sha256_file "$ENV_BUNDLE_DIR/recovery-policy.json")"
-EXPORT_ID="recovery-$(date -u +%Y%m%dT%H%M%S | tr 'T' 't')"
-EXPORT_ARGS=(--project "$PROJECT_ID" --environment "$ENVIRONMENT"
-  --policy-sha256 "$POLICY_SHA256" --controller-sha256 "$CORE_SHA256"
-  --recovery-policy-sha256 "$RECOVERY_POLICY_SHA256" --export-id "$EXPORT_ID")
-ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "${SSH_ROOT[@]}" \
-  python3 "$INSTALL_DIR/recover-project.py" export "${EXPORT_ARGS[@]}"
-ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "${SSH_ROOT[@]}" \
-  python3 "$INSTALL_DIR/recover-project.py" export "${EXPORT_ARGS[@]}" --apply \
-  > "$PRIVATE_DIR/export-result-$EXPORT_ID.json"
-```
+- `ENV_BUNDLE_DIR`：本环境生成包；测试为根包、生产为 `production/` 子包。
+- `REVIEWED_ARTIFACT_LOCK_SHA256`：本环境当前已审生成锁摘要。
+- `TARGET`：沿用首装的 `0600` SSH 目标文件与严格主机密钥配置。
+- `ACCEPTED_INSTALLATION`：先前验收保存的原始主机 `installation.json`，保持 `0600`；不是让用户编写一个新验收证明。当前生成锁与实际安装锁可以不同，但固定运行文件必须匹配已审包；差异不能被解释成升级授权。
+- `GIT_SHA` / `BUILD_ID`：本环境当前实际发布的完整提交和业务构建 ID。生产仍使用测试构建 ID，不使用生产流水线 ID。
+- `EXPORT_ID` / `EVIDENCE_DIR`：本次唯一导出 ID 和 `0700` 私密证据目录；后续续接保持相同值。
 
-安装的程序为 `<host-policy.install_dir>/recover-project.py`，安装目录通常 `/opt/cnb-devops/<project>/<environment>/v1`。`--controller-sha256` 总是核心 `host/tat-deploy-test.py` 的摘要，**生产也不是 `production-release.py` 的摘要**。export-id 为小写字母开头、不超过 48 位的小写字母/数字/连字符，成功后不可复用。任何命令非零立即停下并保留现场；源容器未恢复时，用相同 `EXPORT_ARGS` 将 `export` 改成 `resume-source`，预览后按原授权加 `--apply` 恢复精确原容器，核对业务再继续。
-
-导出目录由标准入口固定为 `/var/lib/cnb-devops/<project>/<environment>/exports/<export-id>`。使用同一已核验 SSH 通道以管理员读取 root-only 文件到新本地目录，不改源端权限：
+构建运行时可先准备这些路径、依赖和恢复参数。完整参数见 `python3 "$SKILL_DIR/scripts/rehearse-recovery.py" --help`；预览不连接主机或读取云端状态。
 
 ```sh
-REMOTE_EXPORT_DIR="/var/lib/cnb-devops/$PROJECT_ID/$ENVIRONMENT/exports/$EXPORT_ID"
-DOWNLOAD_DIR="$PRIVATE_DIR/download-$EXPORT_ID"
-mkdir -m 700 "$DOWNLOAD_DIR"
-umask 077
-ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "${SSH_ROOT[@]}" \
-  cat "$REMOTE_EXPORT_DIR/export-receipt.json" > "$DOWNLOAD_DIR/export-receipt.json"
-ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "${SSH_ROOT[@]}" \
-  cat "$REMOTE_EXPORT_DIR/source-resumed.json" > "$DOWNLOAD_DIR/source-resumed.json"
-ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "${SSH_ROOT[@]}" \
-  cat "$REMOTE_EXPORT_DIR/export.tar" > "$DOWNLOAD_DIR/export.tar"
-ARCHIVE_SHA256="$(json_value "$DOWNLOAD_DIR/export-receipt.json" archive_sha256)"
-MANIFEST_SHA256="$(json_value "$DOWNLOAD_DIR/export-receipt.json" manifest_sha256)"
-test "$(sha256_file "$DOWNLOAD_DIR/export.tar")" = "$ARCHIVE_SHA256"
-POSTGRES_IMAGE="$(python3 - "$DOWNLOAD_DIR/export.tar" "$MANIFEST_SHA256" <<'PY'
-import hashlib, json, sys, tarfile
-with tarfile.open(sys.argv[1], 'r:') as archive:
-    raw = archive.extractfile('manifest.json').read()
-assert hashlib.sha256(raw).hexdigest() == sys.argv[2], 'Manifest checksum mismatch'
-print(json.loads(raw)['postgres']['image'])
-PY
-)"
+RECOVERY_ARGS=(
+  --bundle-dir "$ENV_BUNDLE_DIR"
+  --lock-sha256 "$REVIEWED_ARTIFACT_LOCK_SHA256"
+  --target "$TARGET"
+  --accepted-installation "$ACCEPTED_INSTALLATION"
+  --git-sha "$GIT_SHA" --build-id "$BUILD_ID"
+  --export-id "$EXPORT_ID" --evidence-dir "$EVIDENCE_DIR"
+)
+python3 "$SKILL_DIR/scripts/rehearse-recovery.py" "${RECOVERY_ARGS[@]}"
+# 业务验收通过，且已有导出短暂停写授权后：
+python3 "$SKILL_DIR/scripts/rehearse-recovery.py" "${RECOVERY_ARGS[@]}" --apply
 ```
 
-在与源端不同的本机 Docker daemon 上恢复；Python 3.11+，当前 Docker context 必须是本地 Unix socket。提前把上面导出记录指定的 `linux/amd64` PostgreSQL 16 镜像拉到此 daemon；恢复命令本身不联网、不拉镜像。下面把已有的只读 Docker 输入复制到独立拉取目录，不更改个人 Docker 登录配置：
+本机需 Python 3.11+、Docker 和本地 Unix socket daemon。执行器在停写前检查运行文件、精确发布身份、本机 daemon 与 PostgreSQL 镜像；缺少私有镜像时可加 `--pull-docker-config "$PRIVATE_DIR/docker-config.json"`，用独立认证目录拉取该摘要，不改个人 Docker 登录配置。恢复本身不联网、不发布端口。
 
-```sh
-unset DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG
-LOCAL_CONTEXT="$(docker context show)"
-LOCAL_ENDPOINT="$(docker context inspect "$LOCAL_CONTEXT" --format '{{.Endpoints.docker.Host}}')"
-case "$LOCAL_ENDPOINT" in unix:///*) ;; *) exit 1 ;; esac
-PULL_AUTH_DIR="$DOWNLOAD_DIR/pull-auth"
-mkdir -m 700 "$PULL_AUTH_DIR"
-install -m 600 "$PRIVATE_DIR/docker-config.json" "$PULL_AUTH_DIR/config.json"
-docker --host "$LOCAL_ENDPOINT" --config "$PULL_AUTH_DIR" \
-  pull --platform linux/amd64 "$POSTGRES_IMAGE"
-RESTORE_DIR="$PRIVATE_DIR/restore-$EXPORT_ID"  # 必须尚不存在，父目录已存在
-python3 "$ENV_BUNDLE_DIR/host/recover-project.py" restore-local \
-  --archive "$DOWNLOAD_DIR/export.tar" --archive-sha256 "$ARCHIVE_SHA256" \
-  --manifest-sha256 "$MANIFEST_SHA256" --destination "$RESTORE_DIR"
-python3 "$ENV_BUNDLE_DIR/host/recover-project.py" restore-local \
-  --archive "$DOWNLOAD_DIR/export.tar" --archive-sha256 "$ARCHIVE_SHA256" \
-  --manifest-sha256 "$MANIFEST_SHA256" --destination "$RESTORE_DIR" --apply \
-  > "$DOWNLOAD_DIR/restore-result.json"
-```
+入口按依赖顺序执行源前态、标准 export preview/apply、源恢复确认、固定文件下载、摘要与清单校验、标准 restore-local preview/apply 和后态核验。下载仅限 `journal.json`、`export-receipt.json`、`source-resumed.json` 和 `export.tar`，用 journal 独立核对源恢复回执。固定远端路径来自已审 policy；源文件仍为 root-only。每阶段保存开始/结束时间、结果与证据摘要，stdout 只给结果及断点，不输出备份或原始秘密。
 
-`$RESTORE_DIR/restore-receipt.json` 的 `status=verified`、`external_restore_verified=true` 才是离机恢复成功；源端 `export-receipt.json` 明确仍为 false。回执包含数据库 schema/全部表行/序列和声明备份目录的对账；本地独立容器无网络、无端口，结束后停止并保留卷。该范围不包含 Redis、未声明数据、主机全盘、原 runtime 秘密或集群角色。保留 `source-resumed.json`、导出/恢复回执及它们的 SHA256，在项目状态文档中只登记位置、范围和结果。
+失败后保留证据目录，用**同一条命令**续接可验证的已完成阶段。成功导出不重复执行；导出结果不明先核实远端记录；源服务恢复未确认则停在该边界。必要的 `resume-source` 是原恢复器的独立显式动作，使用同一 project/environment、core/policy/recovery-policy 三摘要和 export-id，先预览再按既有授权执行。`--controller-sha256` 始终为 `host/tat-deploy-test.py` 的摘要，生产也不改成 `production-release.py`。
+
+本地恢复已开始却没有完整成功回执时，保留容器/卷和现场，不能清空目录后盲目重试。标准恢复回执必须为 `status=verified`、`external_restore_verified=true`，且 schema、全表、序列和备份目录均对账通过；源端导出回执不代表离机恢复成功。最终核对源容器/公网前后态一致、恢复容器停止、无网络/端口，再将私密证据位置、摘要、范围和下一动作写入项目状态。
+
+恢复范围不包含 Redis、未声明数据、整机、运行秘密或生产原地回退。记录整个操作窗口与各阶段时间，不把成功批次时间替代含准备/失败的总耗时，也不重复累计并行阶段。

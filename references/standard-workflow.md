@@ -23,9 +23,11 @@
 | `scripts/prepare-project.py`、`scripts/setup-host.py` | 双环境生成、SSH 串联固定首装入口 | 项目配置、私密目标、APT/镜像摘要和 Caddy 基线 |
 | `ci/run-tat-release.mjs`、`host/tat-deploy-test.py` | 固定命令回读、发布事务及运行/公网核验 | 服务、迁移、探针、目标绑定与环境隔离 |
 | `ci/candidate_manifest.py`、`ci/publish-candidate-tag.sh` | 完整镜像清单、不可变候选及 annotations 回读 | 项目仓库、候选前缀及受控分支 |
+| `scripts/release-session.mjs` | 提前准备生产依赖，按候选续接材料获取、签名及授权发布 | 精确候选/提交、已审包摘要、私密输入与会话目录 |
 | `admin/sign-production-approval.mjs`、`admin/publish-production-approval.mjs` | 本机独立核验就绪、签名及发布授权 | 生产意图、私密签名密钥与限定仓库的本机 PAT |
 | `ci/run-production-deploy.mjs`、`host/production-release.py` | 生产回执核验、固定公钥验签并复用部署核心 | 已批准候选、prepared 与各环境固定工件摘要 |
 | `host/recover-project.py` | 导出及不同 Docker daemon 上的隔离恢复 | 数据目录分类、非空表要求、导出包与回执摘要 |
+| `scripts/rehearse-recovery.py` | 固定 SSH 采集、导出下载与隔离恢复编排，保留可验证断点 | 目标、已验收安装记录、精确发布身份与私密证据目录 |
 
 表中 `scripts/` 属于 Skill，`ci/admin/host` 随包生成。AI 在已有授权范围内操作代码、命令和回执，不要求人手写配置；不复制来源项目的凭据、目标 ID 或当前发布状态。
 
@@ -44,13 +46,15 @@
 
 生成器按测试分支接 push，候选 Tag 下使用 `web_trigger_production_readiness` 和 `tag_deploy.production`。候选创建是成功流水线的一步；本机 publisher 只发布已签的生产授权，不代替流水线创建候选。具体命令与私密输入见[接入步骤](bootstrap.md)。
 
-既有授权有效且输入已审时，按[恢复命令](bootstrap-inputs.md#recovery)的依赖顺序连续批量执行标准 export preview/apply、严格下载、restore-local preview/apply；任一步非零立即停止后续依赖动作并保留失败证据。导出成功后，独立的源后态采集可与本机恢复并行。固定包、安装回执和目标未变且刚验的完整性证据仍有效时复用该证据；重装、换包或发现漂移时重新核验受影响部分。标准程序负责全表、序列和声明备份文件的实际恢复与对账，AI 不重写同一验证。AI 核对标准回执及其绑定清单的 project/environment/commit/build/hash/scope 与成功断言。源容器及公网前后态、隔离容器状态各一次采齐，并记录整个操作窗口墙钟；保持既有验收范围，缺失、失败或 unchecked 状态不得宣称成功。
+既有授权有效且输入已审时，使用[恢复入口](bootstrap-inputs.md#recovery)连续执行标准导出、下载和隔离恢复。固定采集器和恢复程序负责源前后态、全表、序列与声明备份文件的核验；AI 核对回执与发布身份，不再临时编写采集脚本。失败保留现场和断点，已完成导出不重复执行。重装、换包或目标漂移时重新核验受影响部分；缺失、失败或 unchecked 状态不得宣称成功。
 
 门禁细节按需读[CNB 部署页面](cnb-deployment-ui.md)、[发布安全](release-safety.md)。现有 [production-gates 示例](cnb-deployment-ui/examples/candidate-production-gates.yml)是契约示例，内含阻断占位，不能拿它充当已适配的生产执行器。
 
 ## 下一次发布与故障续接
 
 - 日常发布复用已接通的事件、脚本、身份和固定命令；AI 主要处理项目变更、发起已授权动作、核对结果和定位异常。
+- 测试构建 ID 已知后，按同一提交和配置准备生产 session，提前执行 `prepare`，并准备两环境恢复参数、已接受安装记录与本机 Docker/镜像条件。这些本机准备不依赖生产就绪，无需等用户点击按钮后才开始；准备通过不代表候选或生产已通过。
+- 生产材料、签名和授权发布分别使用 session 的 `candidate`、`sign`、`publish`；下一会话先读 `status`，再核对当前阶段所需的真实证据。用现有 CNB 流水线执行实际部署，不让本机 session 代替原生审批。
 - 下一会话只先读两个项目文档与当前阶段所需的回执。成功步骤不重做；配置或证据确实失效时只重验受影响部分。恢复阻断按发布安全规则处理，不能跳过。
 - 失败停在实际边界，先修最小问题。例如 TCR 已推送而主机拉取失败，应检查主机网络和拉取权限，不重新构建应用。
 - 生产复用包内签名与主机验证，不另建控制仓库或服务。兼容性不足时只说明具体缺口，不把新框架混入普通接入。
