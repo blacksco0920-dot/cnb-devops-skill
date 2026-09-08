@@ -33,7 +33,10 @@ with `403`, `errcode: 10023`, missing `group-resource:rw`, despite an Owner
 organization role. This CLI has no login `--scope` option. Do not retry login
 as a permission fix. The executor reports `CNB_SCOPE_REQUIRED` with allowlisted
 `required_scopes`; use the [private token entry](api-onboarding.md#cnb-bootstrap-token) and retain
-successful resources. Build-setting PUT was not exercised in this validation.
+successful resources. Build-setting PUT was not exercised on that date;
+[PAT follow-up on 2026-09-08](../docs/history/2026-09-07-api-live-validation.md#pat-followup)
+passed private/Secret repository creation, setting writes/readbacks and an
+unchanged repeat with the same journal.
 
 If a required integration still needs a PAT, use **Personal settings → Access
 token → Add access token** with only its required scope. Never place a token in

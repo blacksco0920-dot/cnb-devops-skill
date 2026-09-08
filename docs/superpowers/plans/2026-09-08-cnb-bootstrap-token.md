@@ -74,3 +74,8 @@ An independent reviewer checked the implementation and four novice handoff
 paths. Clarified the fallback when no safe import channel exists, and the
 handling of unknown scope/expiry. No cloud resources or deployed runtime
 artifacts were changed. Live PAT repository creation remains pending.
+
+Subsequent live verification on 2026-09-08 passed repository creation,
+build-setting writes/readbacks and an unchanged repeat. This later cloud run,
+including its initial permission handoff failure, is recorded in the
+[API validation follow-up](../../history/2026-09-07-api-live-validation.md#pat-followup).
