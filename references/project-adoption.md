@@ -109,6 +109,12 @@ instead of accumulating competing resume files. Index private evidence by its
 approved location, custodian, and checksum. A new session or machine must verify
 access to those files; a path in the index does not make them available. Append
 later acceptance evidence without rewriting an earlier immutable receipt.
+After first setup, index the protected `setup-result.json` and its
+`installation_path`, custodian, and `installation_sha256`. Recovery uses that
+saved original installation receipt directly; a setup receipt path or health
+summary does not replace it. If the handoff failed after setup became ready,
+resume the same setup input to complete the evidence handoff rather than
+reinstalling the host.
 
 For standard production and recovery operations, index the private
 [execution session](bootstrap-inputs.md#production) or

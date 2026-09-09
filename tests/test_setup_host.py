@@ -111,6 +111,73 @@ class SetupHostTests(unittest.TestCase):
             self.assertEqual(self.m.main(self.args + ["--apply"]), 0)
         self.assertEqual(len(calls), 1)
 
+    def installation_capture(self, installation_raw=None, *, policy_raw=None, controller_raw=None, lock_raw=None):
+        installation_raw = installation_raw or (json.dumps({"schema": "cnb-test-installation/v1", "lock_sha256": self.lock}, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        values = {
+            "installation.json": installation_raw,
+            "artifact-lock.json": lock_raw or (self.bundle / "artifact-lock.json").read_bytes(),
+            "host-policy.json": policy_raw or (self.bundle / "host-policy.json").read_bytes(),
+            "tat-deploy-test.py": controller_raw or (self.bundle / "host/tat-deploy-test.py").read_bytes(),
+        }
+        return json.dumps({"schema": "cnb-installation-capture/v1", "files": {
+            name: base64.b64encode(raw).decode() for name, raw in values.items()
+        }}, sort_keys=True).encode()
+
+    def setup_ready(self):
+        return json.dumps({"schema": "cnb-host-setup/v1", "status": "ready", "project": "sample",
+            "environment": "test", "lock_sha256": self.lock, "installed_lock_sha256": self.lock}).encode()
+
+    def test_apply_saves_verified_installation_original_bytes_and_reports_it(self):
+        destination = self.root / "accepted-installation.json"
+        installation_raw = b'{"schema":"cnb-test-installation/v1","lock_sha256":"' + self.lock.encode() + b'"}\n'
+        responses = [self.setup_ready(), self.installation_capture(installation_raw)]
+        output = io.StringIO()
+        with mock.patch.object(self.m.subprocess, "run", side_effect=lambda argv, **_options: subprocess.CompletedProcess(argv, 0, responses.pop(0), b"")), contextlib.redirect_stdout(output):
+            self.assertEqual(self.m.main(self.args + ["--installation-output", str(destination), "--apply"]), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(destination.read_bytes(), installation_raw)
+        self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(result["installation_path"], str(destination))
+        self.assertEqual(result["installation_sha256"], hashlib.sha256(installation_raw).hexdigest())
+
+    def test_installation_output_reuses_identical_receipt_and_rejects_conflict(self):
+        destination = self.root / "accepted-installation.json"
+        raw = b'{"schema":"cnb-test-installation/v1","lock_sha256":"' + self.lock.encode() + b'"}\n'
+        destination.write_bytes(raw)
+        destination.chmod(0o600)
+        responses = [self.setup_ready(), self.installation_capture(raw)]
+        with mock.patch.object(self.m.subprocess, "run", side_effect=lambda argv, **_options: subprocess.CompletedProcess(argv, 0, responses.pop(0), b"")), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.m.main(self.args + ["--installation-output", str(destination), "--apply"]), 0)
+        destination.write_bytes(b"different\n")
+        responses = [self.setup_ready(), self.installation_capture(raw)]
+        with mock.patch.object(self.m.subprocess, "run", side_effect=lambda argv, **_options: subprocess.CompletedProcess(argv, 0, responses.pop(0), b"")), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(self.m.SetupError, "SETUP_READY_INSTALLATION_OUTPUT_CONFLICT"):
+                self.m.main(self.args + ["--installation-output", str(destination), "--apply"])
+
+    def test_installation_handoff_rejects_bad_capture_and_unsafe_output(self):
+        destination = self.root / "accepted-installation.json"
+        bad = b'{"schema":"cnb-test-installation/v1","lock_sha256":"' + (b"b" * 64) + b'"}\n'
+        responses = [self.setup_ready(), self.installation_capture(bad)]
+        with mock.patch.object(self.m.subprocess, "run", side_effect=lambda argv, **_options: subprocess.CompletedProcess(argv, 0, responses.pop(0), b"")), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(self.m.SetupError, "SETUP_READY_INSTALLATION_READBACK_INVALID"):
+                self.m.main(self.args + ["--installation-output", str(destination), "--apply"])
+        changed_controller = (self.bundle / "host/tat-deploy-test.py").read_bytes() + b"\n# drift\n"
+        responses = [self.setup_ready(), self.installation_capture(controller_raw=changed_controller)]
+        with mock.patch.object(self.m.subprocess, "run", side_effect=lambda argv, **_options: subprocess.CompletedProcess(argv, 0, responses.pop(0), b"")), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(self.m.SetupError, "SETUP_READY_INSTALLATION_READBACK_INVALID"):
+                self.m.main(self.args + ["--installation-output", str(destination), "--apply"])
+        destination.symlink_to(self.identity)
+        responses = [self.setup_ready(), self.installation_capture()]
+        with mock.patch.object(self.m.subprocess, "run", side_effect=lambda argv, **_options: subprocess.CompletedProcess(argv, 0, responses.pop(0), b"")), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(self.m.SetupError, "SETUP_INSTALLATION_OUTPUT_UNSAFE"):
+                self.m.main(self.args + ["--installation-output", str(destination), "--apply"])
+
+    def test_preview_with_installation_output_is_offline_and_does_not_write(self):
+        destination = self.root / "accepted-installation.json"
+        with mock.patch.object(self.m.subprocess, "run", side_effect=AssertionError("preview opened SSH")), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.m.main(self.args + ["--installation-output", str(destination)]), 0)
+        self.assertFalse(destination.exists())
+
     def test_resume_transports_prior_lock_and_rejects_a_different_installed_receipt(self):
         original_lock = "b" * 64
         actual = original_lock

@@ -170,13 +170,17 @@ PY
 python3 "$SKILL_DIR/scripts/setup-host.py" \
   --bundle-dir "$ENV_BUNDLE_DIR" --lock-sha256 "$REVIEWED_ARTIFACT_LOCK_SHA256" \
   --target "$TARGET" --bootstrap-spec "$PRIVATE_DIR/bootstrap-spec.json" \
-  --tcr-docker-config "$PRIVATE_DIR/docker-config.json"
+  --tcr-docker-config "$PRIVATE_DIR/docker-config.json" \
+  --installation-output "$PRIVATE_DIR/accepted-installation.json"
 python3 "$SKILL_DIR/scripts/setup-host.py" \
   --bundle-dir "$ENV_BUNDLE_DIR" --lock-sha256 "$REVIEWED_ARTIFACT_LOCK_SHA256" \
   --target "$TARGET" --bootstrap-spec "$PRIVATE_DIR/bootstrap-spec.json" \
-  --tcr-docker-config "$PRIVATE_DIR/docker-config.json" --apply \
+  --tcr-docker-config "$PRIVATE_DIR/docker-config.json" \
+  --installation-output "$PRIVATE_DIR/accepted-installation.json" --apply \
   > "$PRIVATE_DIR/setup-result.json"
 ```
+
+`--installation-output` 的父目录必须已存在且仅管理员可访问。预览只核验路径，不联网或写文件；apply 在主机 setup 已验证成功后，经同一严格 SSH 读回并核对已安装 policy、controller 和 artifact lock，再把原始 `installation.json` 原样保存为本机 `0600` 文件。已有相同有效原文只读复用，冲突或不完整文件停止且不覆盖。结果中的 `installation_path` 和 `installation_sha256` 是恢复入口所需原文的位置与摘要；失败码以 `SETUP_READY_INSTALLATION_` 开头表示主机 setup 已成功、仅证据交接未完成，应使用相同输入续接，不能重装。
 
 本地结果的 `receipt_path` 指向主机 `/var/lib/cnb-devops/<project>/<environment>/setup/<输入摘要>/setup-receipt.json`，同结果的 `caddy_baseline_sha256` 供成功首装的续接核对。runtime 位于该环境 `bootstrap/runtime.env`，保持 root-only；安装目录从 `host-policy.json.install_dir` 读取。重装清空主机后重新首装，不搬回旧 installation/setup 回执。
 
@@ -260,7 +264,7 @@ node "$SKILL_DIR/scripts/release-session.mjs" status --spec "$PRIVATE_DIR/releas
 - `ENV_BUNDLE_DIR`：本环境生成包；测试为根包、生产为 `production/` 子包。
 - `REVIEWED_ARTIFACT_LOCK_SHA256`：本环境当前已审生成锁摘要。
 - `TARGET`：沿用首装的 `0600` SSH 目标文件与严格主机密钥配置。
-- `ACCEPTED_INSTALLATION`：先前验收保存的原始主机 `installation.json`，保持 `0600`；不是让用户编写一个新验收证明。当前生成锁与实际安装锁可以不同，但固定运行文件必须匹配已审包；差异不能被解释成升级授权。
+- `ACCEPTED_INSTALLATION`：首装 `setup-result.json.installation_path` 指向的原始主机 `installation.json`，保持 `0600` 并核对 `installation_sha256`；不是让用户编写一个新验收证明。当前生成锁与实际安装锁可以不同，但固定运行文件必须匹配已审包；差异不能被解释成升级授权。
 - `GIT_SHA` / `BUILD_ID`：本环境当前实际发布的完整提交和业务构建 ID。生产仍使用测试构建 ID，不使用生产流水线 ID。
 - `EXPORT_ID` / `EVIDENCE_DIR`：本次唯一导出 ID 和 `0700` 私密证据目录；后续续接保持相同值。
 

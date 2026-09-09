@@ -5,6 +5,7 @@ No SDK, password prompt, listener, or persistent SSH configuration is created.
 The archive is streamed through SSH stdin; private values never enter argv/output.
 """
 import argparse
+import base64
 import hashlib
 import io
 import json
@@ -16,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 from types import ModuleType
 
 
@@ -143,6 +145,125 @@ def archive_bytes(files):
     return output.getvalue()
 
 
+INSTALLATION_GATE = r'''
+import base64, json, os, stat, sys
+try:
+    install = sys.argv[1]
+    if not install.startswith('/opt/cnb-devops/') or not install.endswith('/v1'): raise ValueError()
+    result = {}
+    for name in ('installation.json', 'artifact-lock.json', 'host-policy.json', 'tat-deploy-test.py'):
+        path = os.path.join(install, name)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) not in (0o444, 0o555) or info.st_size > 8 * 1024 * 1024: raise ValueError()
+            raw = stream.read(8 * 1024 * 1024 + 1)
+            after = os.fstat(stream.fileno())
+        fields = ('st_dev','st_ino','st_uid','st_gid','st_mode','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+        if len(raw) != info.st_size or any(getattr(info, key) != getattr(after, key) for key in fields): raise ValueError()
+        result[name] = base64.b64encode(raw).decode('ascii')
+    print(json.dumps({'schema':'cnb-installation-capture/v1','files':result}, sort_keys=True))
+except Exception:
+    print(json.dumps({'schema':'cnb-installation-capture/v1','status':'failed'}))
+    sys.exit(1)
+'''
+
+
+def ssh_command(target, remote):
+    command = ["/usr/bin/ssh", "-F", "/dev/null", "-p", str(target["port"]), "-i", target["identity_file"]]
+    for option in ("BatchMode=yes", "StrictHostKeyChecking=yes", "IdentitiesOnly=yes", "IdentityAgent=none",
+                   "PreferredAuthentications=publickey", "PasswordAuthentication=no", "KbdInteractiveAuthentication=no",
+                   "GlobalKnownHostsFile=/dev/null", "UserKnownHostsFile=" + target["known_hosts_file"],
+                   "ConnectTimeout=15", "ConnectionAttempts=1", "ServerAliveInterval=15", "ServerAliveCountMax=3"):
+        command += ["-o", option]
+    return command + [target["user"] + "@" + target["host"], shlex.join(remote)]
+
+
+def validate_output_path(path):
+    path = Path(os.path.abspath(path))
+    try:
+        for parent in path.parents:
+            info = parent.lstat()
+            sticky = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.getuid())
+                or (info.st_mode & 0o022 and not sticky)):
+                raise SetupError("SETUP_INSTALLATION_OUTPUT_UNSAFE")
+        info = path.parent.lstat()
+        if info.st_mode & 0o077:
+            raise SetupError("SETUP_INSTALLATION_OUTPUT_UNSAFE")
+        if path.exists() or path.is_symlink():
+            read_safe(path, {0o600}, 1024 * 1024)
+        return path
+    except (OSError, SetupError) as error:
+        if isinstance(error, SetupError) and str(error) == "SETUP_INSTALLATION_OUTPUT_UNSAFE":
+            raise
+        raise SetupError("SETUP_INSTALLATION_OUTPUT_UNSAFE") from error
+
+
+def decode_installation_capture(raw, plan, installed_lock_sha256):
+    try:
+        capture = strict_json(raw)
+        if type(capture) is not dict or set(capture) != {"schema", "files"} or capture["schema"] != "cnb-installation-capture/v1":
+            raise ValueError()
+        names = {"installation.json", "artifact-lock.json", "host-policy.json", "tat-deploy-test.py"}
+        if type(capture["files"]) is not dict or set(capture["files"]) != names:
+            raise ValueError()
+        files = {name: base64.b64decode(capture["files"][name], validate=True) for name in names}
+        receipt = strict_json(files["installation.json"])
+        if receipt != {"schema": "cnb-test-installation/v1", "lock_sha256": installed_lock_sha256}:
+            raise ValueError()
+        lock = strict_json(files["artifact-lock.json"])
+        if (sha(files["artifact-lock.json"]) != installed_lock_sha256 or type(lock) is not dict
+            or set(lock) != {"schema", "version", "files"} or lock["schema"] != "cnb-devops-artifacts/v1"
+            or type(lock["files"]) is not dict):
+            raise ValueError()
+        for installed_name, lock_name in (("host-policy.json", "host-policy.json"), ("tat-deploy-test.py", "host/tat-deploy-test.py")):
+            if lock["files"].get(lock_name) != sha(files[installed_name]):
+                raise ValueError()
+        if files["host-policy.json"] != plan["files"]["host-policy.json"] or files["tat-deploy-test.py"] != plan["files"]["host/tat-deploy-test.py"]:
+            raise ValueError()
+        policy = strict_json(files["host-policy.json"])
+        if policy.get("project") != plan["policy"]["project"] or policy.get("environment") != plan["policy"]["environment"] or policy.get("install_dir") != plan["policy"]["install_dir"]:
+            raise ValueError()
+        return files["installation.json"]
+    except Exception as error:
+        raise SetupError("SETUP_READY_INSTALLATION_READBACK_INVALID") from error
+
+
+def save_installation(path, raw):
+    temporary = None
+    try:
+        if path.exists() or path.is_symlink():
+            if read_safe(path, {0o600}, 1024 * 1024) != raw:
+                raise SetupError("SETUP_READY_INSTALLATION_OUTPUT_CONFLICT")
+            return
+        fd, name = tempfile.mkstemp(prefix=".installation-", dir=path.parent)
+        temporary = Path(name)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, path, follow_symlinks=False)
+        except FileExistsError:
+            if read_safe(path, {0o600}, 1024 * 1024) != raw:
+                raise SetupError("SETUP_READY_INSTALLATION_OUTPUT_CONFLICT")
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except SetupError as error:
+        if str(error) == "SETUP_READY_INSTALLATION_OUTPUT_CONFLICT":
+            raise
+        raise SetupError("SETUP_READY_INSTALLATION_OUTPUT_UNSAFE") from error
+    except OSError as error:
+        raise SetupError("SETUP_READY_INSTALLATION_OUTPUT_UNSAFE") from error
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("bundle-dir", "target", "bootstrap-spec", "tcr-docker-config"):
@@ -150,9 +271,11 @@ def main(argv=None):
     parser.add_argument("--lock-sha256", required=True)
     parser.add_argument("--caddy-baseline-sha256")
     parser.add_argument("--installed-lock-sha256", help="explicit reviewed prior lock; permits only administrator helper compatibility changes")
+    parser.add_argument("--installation-output", type=Path, help="protected local destination for the verified original installation receipt")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     plan, files, expected, target = prepare(args)
+    installation_output = validate_output_path(args.installation_output) if args.installation_output else None
     result = {"schema": "cnb-host-setup/v1", "status": "preview", "project": plan["policy"]["project"],
               "environment": plan["policy"]["environment"], **expected,
               "actions": ["strict SSH root gate", "protected reviewed inputs", "pinned infrastructure bootstrap",
@@ -162,13 +285,7 @@ def main(argv=None):
                   "/usr/bin/python3", "-I", "-c", ROOT_GATE, sha(files["bundle/host/setup-project.py"]), json.dumps(expected, separators=(",", ":"))]
         if target["user"] != "root":
             remote = ["/usr/bin/sudo", "-n", "--", *remote]
-        command = ["/usr/bin/ssh", "-F", "/dev/null", "-p", str(target["port"]), "-i", target["identity_file"]]
-        for option in ("BatchMode=yes", "StrictHostKeyChecking=yes", "IdentitiesOnly=yes", "IdentityAgent=none",
-                       "PreferredAuthentications=publickey", "PasswordAuthentication=no", "KbdInteractiveAuthentication=no",
-                       "GlobalKnownHostsFile=/dev/null", "UserKnownHostsFile=" + target["known_hosts_file"],
-                       "ConnectTimeout=15", "ConnectionAttempts=1", "ServerAliveInterval=15", "ServerAliveCountMax=3"):
-            command += ["-o", option]
-        command += [target["user"] + "@" + target["host"], shlex.join(remote)]
+        command = ssh_command(target, remote)
         try:
             completed = subprocess.run(command, input=archive_bytes(files), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3600, check=False)
             response = strict_json(completed.stdout) if len(completed.stdout) <= 65536 else {}
@@ -184,6 +301,20 @@ def main(argv=None):
             raise SetupError("SETUP_INSTALLED_LOCK_MISMATCH")
         result = {key: response[key] for key in ("schema", "status", "project", "environment", "lock_sha256")}
         result.update(installed_lock_sha256=actual_installed, release_executed=False, receipt_path=response.get("receipt_path"), caddy_baseline_sha256=response.get("caddy_baseline_sha256"))
+        if installation_output:
+            read_remote = ["/usr/bin/env", "-i", "PATH=/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/root", "LANG=C.UTF-8",
+                           "/usr/bin/python3", "-I", "-c", INSTALLATION_GATE, plan["policy"]["install_dir"]]
+            if target["user"] != "root":
+                read_remote = ["/usr/bin/sudo", "-n", "--", *read_remote]
+            try:
+                captured = subprocess.run(ssh_command(target, read_remote), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, check=False)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise SetupError("SETUP_READY_INSTALLATION_READBACK_INCOMPLETE") from error
+            if captured.returncode or len(captured.stdout) > 16 * 1024 * 1024:
+                raise SetupError("SETUP_READY_INSTALLATION_READBACK_INCOMPLETE")
+            installation_raw = decode_installation_capture(captured.stdout, plan, actual_installed)
+            save_installation(installation_output, installation_raw)
+            result.update(installation_path=str(installation_output), installation_sha256=sha(installation_raw))
     print(json.dumps(result, sort_keys=True))
     return 0
 
