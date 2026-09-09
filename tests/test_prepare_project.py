@@ -101,6 +101,15 @@ class PrepareProjectTests(unittest.TestCase):
         self.run_prepare(root, '--apply')
         self.assertEqual('owner-renamed-lint', yaml.safe_load((root / '.cnb.yml').read_text())['test']['push'][0]['name'])
 
+    def test_existing_project_state_is_used_without_a_duplicate_status_document(self):
+        root, _ = self.project()
+        state = root / 'PROJECT_STATE.md'
+        state.write_text('Owner-maintained current status\n')
+        self.run_prepare(root, '--apply')
+        self.assertEqual('Owner-maintained current status\n', state.read_text())
+        self.assertFalse((root / 'docs/PROJECT_STATUS.md').exists())
+        self.assertTrue((root / 'docs/DEPLOYMENT.md').is_file())
+
     def test_github_sync_is_explicit_and_uses_managed_branches(self):
         root, config = self.project()
         config['github_sync'] = True

@@ -92,7 +92,9 @@ def validate_spec(spec, policy, policy_sha256, *, apply=False):
             raise ValueError("invalid bootstrap input")
     try:
         scope = policy["project"] + "-" + policy["environment"]
-        require(set(spec) == {"schema", "policy_sha256", "images", "docker_packages", "generate_env"})
+        fields = {"schema", "policy_sha256", "images", "docker_packages", "generate_env"}
+        require(fields <= set(spec) <= fields | {"resource_limits", "postgres_extensions"})
+        require(spec.get("postgres_extensions", []) in ([], ["vector"]))
         require(spec["schema"] == "cnb-first-host/v1" and spec["policy_sha256"] == policy_sha256)
         require(policy["environment"] in ("test", "production") and policy["networks"] == [scope])
         db = policy["database"]
@@ -106,6 +108,12 @@ def validate_spec(spec, policy, policy_sha256, *, apply=False):
             require(redis["port"] == 6379 and redis["database"] == 0)
             roles.add("redis")
         require(set(spec["images"]) == roles)
+        if "resource_limits" in spec:
+            require(type(spec["resource_limits"]) is dict and set(spec["resource_limits"]) == roles)
+            for limits in spec["resource_limits"].values():
+                require(type(limits) is dict and set(limits) == {"memory_bytes", "cpu_millis"}
+                        and type(limits["memory_bytes"]) is int and 32 * 1024 ** 2 <= limits["memory_bytes"] <= 64 * 1024 ** 3
+                        and type(limits["cpu_millis"]) is int and 50 <= limits["cpu_millis"] <= 64000)
         for image in spec["images"].values():
             if image is None and not apply:
                 continue
@@ -173,6 +181,9 @@ def compose_model(policy, spec, spec_sha256):
                    "labels": owned, "networks": [scope],
                    "volumes": [{"type": "volume", "source": role + "-data",
                                 "target": "/var/lib/postgresql/data" if role == "postgres" else "/data"}]}
+        if "resource_limits" in spec:
+            limits = spec["resource_limits"][role]
+            service.update(mem_limit=limits["memory_bytes"], cpus=limits["cpu_millis"] / 1000)
         if role == "postgres":
             service["environment"] = {"POSTGRES_USER": "postgres", "POSTGRES_DB": "postgres",
                                       "POSTGRES_PASSWORD": "${BOOTSTRAP_PG_ADMIN_PASSWORD:?required}"}
@@ -219,6 +230,12 @@ def validate_resources(policy, spec, spec_sha256, inventory):
                 raise BootstrapError("existing_volume_incompatible")
             if kind == "container":
                 role = name[len(scope) + 1:]
+                if "resource_limits" in spec:
+                    expected = spec["resource_limits"].get(role, {})
+                    actual = resource.get("HostConfig", {})
+                    if (actual.get("Memory") != expected.get("memory_bytes")
+                            or actual.get("NanoCpus") != expected.get("cpu_millis", 0) * 1000000):
+                        raise BootstrapError("existing_container_incompatible")
                 if (resource.get("Config", {}).get("Image") != spec["images"].get(role)
                     or resource.get("HostConfig", {}).get("Privileged") is not False
                     or resource.get("HostConfig", {}).get("PortBindings") not in (None, {})
@@ -261,7 +278,9 @@ def runtime_environment(policy, spec, credentials, imported=b""):
     return "".join(key + "=" + values[key] + "\n" for key in sorted(values)).encode()
 
 
-def provision_database(policy, credentials, execute=run, *, create=True):
+def provision_database(policy, credentials, execute=run, *, create=True, extensions=()):
+    if list(extensions) not in ([], ["vector"]):
+        raise BootstrapError("unsupported_bootstrap_spec")
     db, password = policy["database"], credentials["BOOTSTRAP_PG_APP_PASSWORD"]
     if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", password):
         raise BootstrapError("credential_state_invalid")
@@ -280,6 +299,17 @@ def provision_database(policy, credentials, execute=run, *, create=True):
                        "AND NOT r.rolsuper AND NOT r.rolcreatedb AND NOT r.rolcreaterole AND NOT r.rolreplication")
     if execute(admin + ["-Atc", privilege_check], failure_code="database_role_check_failed").strip() != b"bootstrap_role_verified":
         raise BootstrapError("database_role_mismatch")
+    if extensions:
+        # Install the reviewed extension as the existing administrator, never by
+        # granting the application role additional privileges. Resume only reads.
+        database_admin = docker(policy) + ["exec", "-i", db["container"], "psql", "--no-psqlrc",
+                                          "-U", "postgres", "-d", db["name"], "--set", "ON_ERROR_STOP=1"]
+        if create:
+            execute(database_admin + ["-c", "CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public"],
+                    failure_code="database_provision_failed")
+        check = "SELECT extname FROM pg_extension WHERE extname='vector' AND extnamespace='public'::regnamespace"
+        if execute(database_admin + ["-Atc", check], failure_code="database_role_check_failed").strip() != b"vector":
+            raise BootstrapError("database_role_mismatch")
     # 官方 PostgreSQL 镜像的 loopback 规则可能是 trust；使用应用实际访问的项目网络。
     auth = 'IFS= read -r PGPASSWORD; export PGPASSWORD; exec psql --no-psqlrc -h "$1" -U "$2" -d "$3" -Atc "SELECT current_user"'
     result = execute(docker(policy) + ["exec", "-i", db["container"], "sh", "-ceu", auth, "sh", db["host"], db["user"], db["name"]], input=(password + "\n").encode(), failure_code="database_authentication_failed")
@@ -396,7 +426,7 @@ def apply_bootstrap(installer, bundle, spec, spec_sha256, runtime_import=None):
         previous, _sha = bundle["host"].read_root_owned_json(completed)
         if previous != {**identity, "status": "ready"}:
             raise BootstrapError("bootstrap_receipt_mismatch")
-    provision_database(policy, credentials, create=not completed.exists())
+    provision_database(policy, credentials, create=not completed.exists(), extensions=spec.get("postgres_extensions", []))
     validate_resources(policy, spec, spec_sha256, inventory_resources(policy, spec))
     installer.install_file(state / "receipt.json", canonical({**identity, "status": "ready"}), 0o444, 0, 0)
     return state / "runtime.env"

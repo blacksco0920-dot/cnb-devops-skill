@@ -48,7 +48,8 @@ POLICY_SHA256="$(sha256_file "$ENV_BUNDLE_DIR/host-policy.json")"
 | --- | --- |
 | `ssh-target.json`，`0600` | 恰好 `host`、整数 `port`、`user`、绝对路径 `identity_file`、绝对路径 `known_hosts_file`；`user` 为 root 或 policy 的 `release_user` |
 | SSH 私钥、known_hosts | 私钥 `0400/0600`；known_hosts `0400/0600/0644`。重装后通过可信控制台/既有管理员通道核验新 host key，再更新；`ssh-keyscan` 的未经核验输出不是证明 |
-| `bootstrap-spec.json`，`0600` | 下节完整五字段结构；不含数据库密码 |
+| `bootstrap-spec.json`，`0600` | 下节五个必需字段及按需选项；不含数据库密码 |
+| `runtime-import.env`，`0600`，可选 | 首装外部业务值，每行 `KEY=value`；不含自动生成键、镜像键或重复键；通过 `setup-host --runtime-import` 传输 |
 | `docker-config.json`，`0600` | 仅 `auths`，每个所需 registry 仅 `auth`；只读拉取身份 |
 | TAT spec / binding | 由本环境 `tat-spec.template.json` 填 `target.region`、`target.instance_id`；binding 保存为 `0600` |
 | TAT 管理员凭据 | `configure-tat --credentials` 接受 `0600` JSON：`secretId`、`secretKey`，可选 `token`；或环境变量 `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`、可选 `TENCENTCLOUD_TOKEN` |
@@ -114,6 +115,8 @@ REMOTE
 
 核对 Ubuntu `24.04`、CPU 平台、端口与服务归属；从每台主机现有 APT 源的 `Candidate` 选实际版本。索引缺失/过期时，在已授权安装范围内运行 `sudo -n apt-get update` 后重取；不改 APT 源，不从另一机器猜版本。已有 Caddy 必须审阅配置和运行归属后取 baseline；无 Caddy 也无遗留 Caddyfile 时固定 `docker_packages.caddy`，由 setup 首装。上面的盘点不替代共享入口分类。
 
+盘点容器只输出名称、镜像、状态、端口及必要资源指标；启动命令也可能含密码。不要把完整 `docker ps --no-trunc --format '{{json .}}'`、`docker inspect`、环境文件或未筛选的原始盘点文件输出到会话。私密目录仅保护文件访问，不会自动遮盖工具输出。
+
 <a id="bootstrap-spec"></a>
 ## bootstrap-spec
 
@@ -139,11 +142,15 @@ REMOTE
 
 `generate_env` 只放项目 `host.required_env` 中可随机生成的键；数据库/Redis URL 自动产生，不放入此数组。该首装 preset 要求唯一网络 `<project>-<environment>`，数据库 host/container 为同前缀加 `-postgres`、端口 5432、admin 为 postgres、应用用户不为 postgres；可选 Redis 同前缀加 `-redis`、端口 6379、DB 0。现有项目不符合时先核实拓扑差异，不把其当空项目接管。
 
-若 `required_env` 仅含 `DATABASE_URL`、`REDIS_URL`、`AUTH_TOKEN_SECRET`，此 preset 均可在主机生成。外部 API 密钥不可随机代造：当前 `setup-host` 没有 runtime-import 参数；需要此类必需值的项目按 `bootstrap-host.py --runtime-import <主机root所有0600文件>` 的已有管理员入口导入，再使用固定 installer/Caddy 入口。实际使用 mock 时在业务回执中如实写明。
+若 `required_env` 仅含 `DATABASE_URL`、`REDIS_URL`、`AUTH_TOKEN_SECRET`，此 preset 均可在主机生成。外部 API 密钥不可随机代造：AI 从本项目已有私密配置准备 `runtime-import.env`，在 setup 预览和应用时都加 `--runtime-import "$PRIVATE_DIR/runtime-import.env"`。两端先验证格式和必填键，再通过 SSH 标准输入传输；主机临时文件使用 root 所有的 0600 权限并在调用后删除。回执只记摘要。重复安装只接受已安装的相同业务值；该入口不用于更新活动环境变量。实际使用 mock 时如实记录。
+
+按实际容量，可为 `project.yml` 的每个 `services.<name>.resource_limits` 配置整数 `memory_bytes` 和 `cpu_millis`；bootstrap spec 的可选 `resource_limits` 同样按 `postgres`/`redis` 逐项填写。Compose 和运行回读会核验上限，但上限不证明主机容量充足，仍需业务负载验收。需要 pgvector 的新库可声明 `postgres_extensions: ["vector"]`，同时固定含该扩展的 PostgreSQL 16 镜像；管理员预装扩展，应用角色保持普通权限。
 
 ### 生成限定范围的 Docker config
 
 在已经安全加载**只读拉取**身份的环境执行；这里的 `TCR_USERNAME/TCR_PASSWORD` 不得取 CI 推送身份。脚本不登录、不卡控制台，只生成本地输入；真实拉取由 bootstrap 验证。多 registry 应分别加载对应身份生成各自 `auth`，保持键集合与 policy 服务及 bootstrap 镜像用到的 registry 完全相等。不能有 `credsStore`、`credHelpers` 或多余 registry。
+
+本机验证推送身份时，也使用其独立的私密文件配置。仅给 `docker login` 换 `--config` 目录不保证账号隔离：Docker Desktop 可能自动启用系统钥匙串，同一 registry 的后一次登录会覆盖前一次。核对实际配置里的账号与用途；用各自目录执行真实 push/pull，不以登录成功代替权限验证。
 
 ```sh
 umask 077

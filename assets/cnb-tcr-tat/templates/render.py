@@ -67,6 +67,10 @@ def model(config, controller_sha):
         services[role] = service
         composed = {'image': '${' + image_env + '}', 'container_name': service['container'],
                     'restart': 'unless-stopped', 'networks': networks}
+        if 'resource_limits' in spec:
+            limits = copy.deepcopy(spec['resource_limits'])
+            service['resource_limits'] = limits
+            composed.update(mem_limit=limits['memory_bytes'], cpus=limits['cpu_millis'] / 1000)
         if 'loopback_port' in spec:
             service['loopback_port'] = {'host_ip': '127.0.0.1', 'protocol': 'tcp',
                                         'published': spec['loopback_port'], 'target': spec['expose'][0]}
@@ -102,6 +106,8 @@ def model(config, controller_sha):
         policy['redis'] = host['redis']
     if 'startup_timeout_seconds' in host:
         policy['startup_timeout_seconds'] = host['startup_timeout_seconds']
+    if 'native_caddy_gateway' in host:
+        policy['native_caddy_gateway'] = host['native_caddy_gateway']
     config_ci = {'schema': 'cnb-devops-ci/v1', 'project': project, 'environment': environment,
                  'controller_id': policy['controller_id'], 'candidate_prefix': project + '-candidate-',
                  'cnb_repository': config['cnb_repository'],

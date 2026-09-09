@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -79,6 +80,121 @@ class NativeCaddyTests(unittest.TestCase):
     def run_config(self, apply=False):
         return self.m.configure('demo', self.policy_sha, self.baseline_sha, apply=apply)
 
+    def shared(self, inventory):
+        value = {'schema': 'cnb-native-caddy-shared-input/v1',
+                 'inventory_sha256': self.m.sha(self.m.canonical(inventory)),
+                 'maintenance_authorization_sha256': 'a' * 64,
+                 'gateway_recovery_receipt_sha256': 'b' * 64,
+                 'credential_review_receipt_sha256': 'c' * 64}
+        return self.m.canonical(value)
+
+    def add_installed_site(self, project, domain, port):
+        policy = copy.deepcopy(self.policy)
+        policy['project'] = project
+        policy['services'] = {'web': {'loopback_port': {'host_ip': '127.0.0.1', 'protocol': 'tcp',
+                                                       'published': port, 'target': 3000}}}
+        policy['identity_probes'] = [{'service': 'web', 'url': 'https://' + domain + '/release.json'}]
+        policy_path = self.root / f'opt/cnb-devops/{project}/test/v1/host-policy.json'
+        policy_path.parent.mkdir(parents=True)
+        policy_path.write_text(json.dumps(policy))
+        raw = policy_path.read_bytes()
+        site_path = self.root / f'etc/caddy/cnb-devops/{project}-test.caddy'
+        site_path.parent.mkdir(parents=True, exist_ok=True)
+        site_path.write_bytes(self.m.render_sites(policy, project, self.m.sha(raw))[0])
+        site_path.chmod(0o644)
+        self.config.write_bytes(self.config.read_bytes() + ('\nimport ' + str(site_path) + '\n').encode())
+        return policy, site_path
+
+    def test_inventory_accepts_two_exact_installed_sites_and_rejects_conflicts(self):
+        self.add_installed_site('first', 'first.example.com', 14001)
+        self.add_installed_site('second', 'second.example.com', 14002)
+        with patch.object(self.m, 'running_config', side_effect=lambda: self.m.adapt(self.config.read_bytes())):
+            inventory = self.m.inventory()
+        self.assertEqual([(s['project'], s['loopback_ports']) for s in inventory['sites']],
+                         [('first', [14001]), ('second', [14002])])
+        self.assertEqual(inventory['base_sha256'], self.m.sha(self.original))
+        second_policy = self.root / 'opt/cnb-devops/second/test/v1/host-policy.json'
+        value = json.loads(second_policy.read_text())
+        value['services']['web']['loopback_port']['published'] = 14001
+        second_policy.write_text(json.dumps(value))
+        with patch.object(self.m, 'running_config', side_effect=lambda: self.m.adapt(self.config.read_bytes())):
+            with self.assertRaisesRegex(self.m.CaddyError, 'LOOPBACK_CONFLICT|PROJECT_FILE_UNKNOWN'):
+                self.m.inventory()
+
+    def test_shared_input_allows_third_project_but_unreviewed_import_still_refuses(self):
+        self.add_installed_site('first', 'first.example.com', 14001)
+        self.add_installed_site('second', 'second.example.com', 14002)
+        self.current = self.m.adapt(self.config.read_bytes())
+        inventory = self.m.inventory()
+        with patch.object(self.m, 'running_config', return_value=self.current):
+            result = self.m.configure('demo', self.policy_sha, self.m.sha(self.original), shared_input_raw=self.shared(inventory))
+        self.assertEqual(result['status'], 'planned')
+        self.config.write_bytes(self.config.read_bytes() + b'\nimport /etc/caddy/unknown.caddy\n')
+        with patch.object(self.m, 'running_config', return_value=self.current):
+            with self.assertRaisesRegex(self.m.CaddyError, 'IMPORT_SCOPE'):
+                self.m.inventory()
+
+    def test_gateway_routes_every_identity_domain_to_one_service(self):
+        self.policy['native_caddy_gateway'] = 'api'
+        site, domains = self.m.render_sites(self.policy, 'demo', self.policy_sha)
+        self.assertEqual(domains, ['api.example.com', 'ocr.example.com', 'test.example.com'])
+        self.assertEqual(site.count(b'reverse_proxy 127.0.0.1:13000'), 3)
+
+    def test_shared_apply_receipt_allows_same_input_retry_after_addition(self):
+        self.add_installed_site('first', 'first.example.com', 14001)
+        self.current = self.m.adapt(self.config.read_bytes())
+        before = self.m.inventory()
+        shared = self.shared(before)
+        result = self.m.configure('demo', self.policy_sha, self.m.sha(self.original), apply=True,
+                                  shared_input_raw=shared)
+        self.assertEqual(result['status'], 'installed')
+        self.assertTrue(Path(result['receipt_path']).is_file())
+        repeated = self.m.configure('demo', self.policy_sha, self.m.sha(self.original), apply=True,
+                                    shared_input_raw=shared)
+        self.assertEqual(repeated['status'], 'unchanged')
+        self.assertEqual(self.reload_count, 1)
+
+    def test_crash_leaves_active_transaction_blocks_writes_and_fixed_recovery_rolls_back(self):
+        actual_write = self.m.atomic_write
+        def crash_after_site(path, raw, mode, uid, gid):
+            actual_write(path, raw, mode, uid, gid)
+            if path == self.site:
+                raise KeyboardInterrupt()
+        with patch.object(self.m, 'atomic_write', side_effect=crash_after_site):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_config(True)
+        active = self.m.strict_json((self.root / 'var/lib/cnb-devops/native-caddy/active-transaction.json').read_bytes())
+        with self.assertRaisesRegex(self.m.CaddyError, 'RECOVERY_REQUIRED'):
+            self.run_config(True)
+        receipt = self.m.recover(active['transaction_id'])
+        self.assertEqual(receipt['status'], 'rolled-back')
+        self.assertEqual(self.config.read_bytes(), self.original)
+        self.assertFalse(self.site.exists())
+        self.assertFalse((self.root / 'var/lib/cnb-devops/native-caddy/active-transaction.json').exists())
+
+    def test_recovery_completes_only_the_recorded_after_state(self):
+        actual_write = self.m.write_state
+        def crash_before_receipt(path, value):
+            if path.parent.name == 'receipts':
+                raise KeyboardInterrupt()
+            return actual_write(path, value)
+        with patch.object(self.m, 'write_state', side_effect=crash_before_receipt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_config(True)
+        active_path = self.root / 'var/lib/cnb-devops/native-caddy/active-transaction.json'
+        transaction_id = self.m.strict_json(active_path.read_bytes())['transaction_id']
+        receipt = self.m.recover(transaction_id)
+        self.assertEqual(receipt['status'], 'installed')
+        self.assertTrue(self.site.is_file())
+        self.assertFalse(active_path.exists())
+
+    def test_native_and_persistent_locks_exclude_concurrent_writer(self):
+        (self.root / 'run/lock').mkdir(parents=True)
+        with self.m.locked():
+            with self.assertRaises(BlockingIOError):
+                with self.m.locked():
+                    pass
+
     def test_production_routes_use_only_production_policy_and_site(self):
         production = copy.deepcopy(self.policy)
         production['environment'] = 'production'
@@ -133,6 +249,7 @@ class NativeCaddyTests(unittest.TestCase):
         self.assertEqual(self.current, self.base_json)
         self.assertFalse(self.site.exists())
         self.assertEqual(self.reload_count, 2)
+        self.assertEqual(self.run_config(True)['status'], 'installed')
 
     def test_failed_validation_leaves_original_files(self):
         self.fail_validate = True
@@ -152,7 +269,7 @@ class NativeCaddyTests(unittest.TestCase):
             return original_command(args, data)
         with patch.object(self.m, 'command', side_effect=command):
             self.assertEqual(self.run_config(True)['status'], 'installed')
-        self.assertEqual(observed, ['adapt', 'adapt', 'validate'])
+        self.assertEqual(observed, ['adapt', 'adapt', 'adapt', 'adapt', 'validate', 'adapt'])
 
     def test_baseline_or_live_config_drift_refuses_before_writes(self):
         for drift in ['file', 'live', 'policy']:
@@ -191,7 +308,7 @@ class NativeCaddyTests(unittest.TestCase):
         for extra in [b'\nimport /etc/caddy/other\n', b'\n# config uses {$SECRET}\n']:
             self.config.write_bytes(self.original + extra)
             self.baseline_sha = self.m.sha(self.config.read_bytes())
-            with self.assertRaisesRegex(self.m.CaddyError, 'BASELINE_SCOPE'):
+            with self.assertRaisesRegex(self.m.CaddyError, 'SCOPE'):
                 self.run_config(True)
             self.assertFalse(self.site.exists())
 
@@ -252,6 +369,28 @@ class RealCaddyAdaptTests(unittest.TestCase):
                                             '--adapter', 'caddyfile']))
                 with patch.object(helper, 'command', side_effect=command):
                     self.assertEqual(helper.adapt(raw), named)
+
+    def test_expanded_second_project_candidate_validates_with_real_caddy(self):
+        spec = importlib.util.spec_from_file_location('native_caddy_expand_real', SCRIPT)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        docker = shutil.which('docker') or '/usr/local/bin/docker'
+        image = os.environ['CNB_CADDY_TEST_IMAGE']
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            existing = root / 'etc/caddy/cnb-devops/first-test.caddy'
+            existing.parent.mkdir(parents=True)
+            existing.write_bytes(b'https://first.example.com {\n reverse_proxy 127.0.0.1:14001\n}\n')
+            main = b':80 {\n respond "ok"\n}\n\nimport ' + str(existing).encode() + b'\n'
+            new_path = root / 'etc/caddy/cnb-devops/second-test.caddy'
+            new_site = b'https://second.example.com {\n reverse_proxy 127.0.0.1:14002\n}\n'
+            with patch.object(helper, 'ROOT', root), patch.object(helper, 'OWNER', os.getuid()):
+                expanded = helper.expand_imports(main + b'\nimport ' + str(new_path).encode() + b'\n',
+                                                 {str(new_path): new_site})
+            result = subprocess.run([docker, 'run', '--rm', '--pull=never', '--network', 'none', '-i', image,
+                                     'caddy', 'validate', '--config', '/dev/stdin', '--adapter', 'caddyfile'],
+                                    input=expanded, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
 
 
 if __name__ == '__main__':

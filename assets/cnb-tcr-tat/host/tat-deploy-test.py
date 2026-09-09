@@ -140,13 +140,19 @@ __CNB_RELEASE_REQUEST_V1__
 """
 
 
+def valid_resource_limits(value):
+    return (type(value) is dict and set(value) == {"memory_bytes", "cpu_millis"}
+            and type(value["memory_bytes"]) is int and 32 * 1024 ** 2 <= value["memory_bytes"] <= 64 * 1024 ** 3
+            and type(value["cpu_millis"]) is int and 50 <= value["cpu_millis"] <= 64000)
+
+
 def validate_host_policy(model):
     """Validate trusted installation inputs; no policy comes from a release request."""
     required = {"schema", "project", "environment", "controller_id", "install_dir", "release_user",
                 "release_home", "app_dir", "docker_config", "recovery_root", "compose_sha256",
                 "services", "networks", "required_env", "database", "migration",
                 "availability_probes", "identity_probes"}
-    optional = {"redis", "proxy_container", "startup_timeout_seconds"}
+    optional = {"redis", "proxy_container", "startup_timeout_seconds", "native_caddy_gateway"}
 
     def require(condition):
         if not condition:
@@ -196,7 +202,9 @@ def validate_host_policy(model):
             fields = {
                 "image_repository", "image_env", "container", "networks", "environment",
                 "environment_refs", "runtime_env", "healthcheck", "mounts"}
-            require(type(service) is dict and fields <= set(service) <= fields | {"loopback_port"})
+            require(type(service) is dict and fields <= set(service) <= fields | {"loopback_port", "resource_limits"})
+            if "resource_limits" in service:
+                require(valid_resource_limits(service["resource_limits"]))
             if "loopback_port" in service:
                 port = service["loopback_port"]
                 require(type(port) is dict and set(port) == {"host_ip", "protocol", "published", "target"}
@@ -233,6 +241,9 @@ def validate_host_policy(model):
                         and mount["type"] == "bind" and path(mount["source"], model["app_dir"])
                         and path(mount["target"]) and mount["target"] not in targets)
                 targets.add(mount["target"])
+        if "native_caddy_gateway" in model:
+            gateway = model["native_caddy_gateway"]
+            require(type(gateway) is str and gateway in services and "loopback_port" in services[gateway])
         database = model["database"]
         require(type(database) is dict and set(database) == {
             "url_env", "host", "port", "name", "user", "container", "admin_user"})
@@ -2844,6 +2855,13 @@ def validate_runtime_loopback(service, ports):
         raise DeploymentError("runtime_loopback_mismatch")
 
 
+def validate_runtime_limits(service, actual):
+    expected = POLICY["services"][service]["resource_limits"]
+    if (type(actual) is not dict or actual.get("Memory") != expected["memory_bytes"]
+            or actual.get("NanoCpus") != expected["cpu_millis"] * 1000000):
+        raise DeploymentError("runtime_resource_limits_mismatch")
+
+
 def _wait_for_runtime(images):
     deadline = time.monotonic() + POLICY.get("startup_timeout_seconds", 300)
     while time.monotonic() < deadline:
@@ -2865,6 +2883,9 @@ def _wait_for_runtime(images):
                 if "loopback_port" in POLICY["services"][service]:
                     ports = _run(_docker_prefix() + ["inspect", "--format", "{{json .NetworkSettings.Ports}}", container], timeout=5)
                     validate_runtime_loopback(service, json.loads(ports.decode("utf-8", "strict")))
+                if "resource_limits" in POLICY["services"][service]:
+                    limits = _run(_docker_prefix() + ["inspect", "--format", '{{json .HostConfig}}', container], timeout=5)
+                    validate_runtime_limits(service, json.loads(limits.decode("utf-8", "strict")))
                 if POLICY["services"][service]["healthcheck"]:
                     health = _run(
                         _docker_prefix()

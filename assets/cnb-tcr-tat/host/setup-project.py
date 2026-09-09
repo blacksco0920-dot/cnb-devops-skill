@@ -63,14 +63,20 @@ def module(files, name):
 
 def validate_inputs(files, expected):
     keys = {"lock_sha256", "spec_sha256", "docker_config_sha256", "caddy_baseline_sha256"}
-    require(type(expected) is dict and set(expected) in (keys, keys | {"installed_lock_sha256"}), "SETUP_EXPECTATION_INVALID")
+    optional = {"installed_lock_sha256", "native_caddy_shared_sha256", "runtime_import_sha256"}
+    require(type(expected) is dict and keys <= set(expected) <= keys | optional, "SETUP_EXPECTATION_INVALID")
     require(all(type(value) is str and re.fullmatch(r"[0-9a-f]{64}", value)
-                for key, value in expected.items() if key not in ("caddy_baseline_sha256", "installed_lock_sha256") or value is not None), "SETUP_EXPECTATION_INVALID")
+                for key, value in expected.items() if key not in ("caddy_baseline_sha256", *optional) or value is not None), "SETUP_EXPECTATION_INVALID")
     require(sha(files["bundle/artifact-lock.json"]) == expected["lock_sha256"], "SETUP_LOCK_MISMATCH")
     lock = strict_json(files["bundle/artifact-lock.json"])
     require(type(lock) is dict and set(lock) == {"schema", "version", "files"} and lock["schema"] == "cnb-devops-artifacts/v1"
             and type(lock["files"]) is dict and 1 <= len(lock["files"]) <= 512, "SETUP_LOCK_INVALID")
-    require(set(files) == {"bundle/" + name for name in lock["files"]} | {"bundle/artifact-lock.json", "bootstrap-spec.json", "docker-config.json"}, "SETUP_ARCHIVE_FILES_INVALID")
+    private = {"bundle/artifact-lock.json", "bootstrap-spec.json", "docker-config.json"}
+    if expected.get("native_caddy_shared_sha256") is not None:
+        private.add("native-caddy-shared-input.json")
+    if expected.get("runtime_import_sha256") is not None:
+        private.add("runtime-import.env")
+    require(set(files) == {"bundle/" + name for name in lock["files"]} | private, "SETUP_ARCHIVE_FILES_INVALID")
     for name, digest in lock["files"].items():
         path = PurePosixPath(name)
         require(not path.is_absolute() and str(path) == name and ".." not in path.parts
@@ -82,7 +88,18 @@ def validate_inputs(files, expected):
     policy = core.validate_host_policy(strict_json(files["bundle/host-policy.json"]))
     bootstrap, caddy = module(files, "bootstrap-host.py"), module(files, "configure-native-caddy.py")
     caddy.render_sites(policy, policy["project"], sha(files["bundle/host-policy.json"]), policy["environment"])
+    shared_raw = files.get("native-caddy-shared-input.json")
+    require((shared_raw is None) == (expected.get("native_caddy_shared_sha256") is None), "SETUP_SHARED_INPUT_INVALID")
+    if shared_raw is not None:
+        require(sha(shared_raw) == expected["native_caddy_shared_sha256"], "SETUP_SHARED_INPUT_DRIFT")
+        caddy.validate_shared_input(shared_raw)
     spec = bootstrap_call(bootstrap, bootstrap.validate_spec, strict_json(files["bootstrap-spec.json"]), policy, sha(files["bundle/host-policy.json"]), apply=True)
+    runtime_raw = files.get("runtime-import.env")
+    require((runtime_raw is None) == (expected.get("runtime_import_sha256") is None), "SETUP_RUNTIME_IMPORT_INVALID")
+    if runtime_raw is not None:
+        require(sha(runtime_raw) == expected["runtime_import_sha256"], "SETUP_RUNTIME_IMPORT_DRIFT")
+        credentials = {key: "A" * 48 for key in bootstrap.credential_keys(spec)}
+        bootstrap_call(bootstrap, bootstrap.runtime_environment, policy, spec, credentials, runtime_raw)
     config = strict_json(files["docker-config.json"])
     registries = {s["image_repository"].split("/", 1)[0] for s in policy["services"].values()}
     registries |= {image.split("/", 1)[0] for image in spec["images"].values()}
@@ -93,7 +110,7 @@ def validate_inputs(files, expected):
         decoded = base64.b64decode(entry["auth"], validate=True)
         require(base64.b64encode(decoded).decode() == entry["auth"] and b":" in decoded
                 and all(part for part in decoded.split(b":", 1)) and all(32 < c < 127 for c in decoded), "SETUP_DOCKER_AUTH_INVALID")
-    return policy, spec, installer, bootstrap, caddy
+    return policy, spec, installer, bootstrap, caddy, shared_raw, runtime_raw
 
 
 def archive_members(raw):
@@ -114,8 +131,28 @@ def existing_private(path, installer):
     return installer.read_file(path)
 
 
-def materialize(task, files, installer):
-    allowed = set(files) | {"caddy-baseline.json", "setup-receipt.json"}
+def validate_installed_runtime_import(imported, actual):
+    """Retry an interrupted install without changing any installed runtime value."""
+    def values(raw):
+        result = {}
+        for line in raw.decode('utf-8', 'strict').splitlines():
+            if not line.strip() or line.startswith('#'):
+                continue
+            key, value = line.split('=', 1)
+            require(key not in result, 'SETUP_RUNTIME_IMPORT_ALREADY_INSTALLED')
+            result[key] = value
+        return result
+    try:
+        existing = values(actual)
+        require(all(existing.get(key) == value for key, value in values(imported).items()),
+                'SETUP_RUNTIME_IMPORT_ALREADY_INSTALLED')
+    except (UnicodeError, ValueError):
+        raise SetupError('SETUP_RUNTIME_IMPORT_ALREADY_INSTALLED') from None
+
+
+def materialize(task, files, installer, transient_files=None):
+    transient_files = transient_files or {}
+    allowed = set(files) | set(transient_files) | {"caddy-baseline.json", "setup-receipt.json"}
     directories = {str(parent) for name in files for parent in PurePosixPath(name).parents if str(parent) != "."}
     installer.ensure_directory(task, 0o700, 0, 0)
     if task.exists():
@@ -129,6 +166,9 @@ def materialize(task, files, installer):
                 require(relative in allowed, "SETUP_UNKNOWN_STATE")
                 prior = existing_private(path, installer)
                 require(relative not in files or prior == files[relative], "SETUP_STAGED_INPUT_DRIFT")
+                if relative in transient_files:
+                    require(prior == transient_files[relative], "SETUP_STAGED_INPUT_DRIFT")
+                    path.unlink()
     for relative, raw in sorted(files.items()):
         path = task / relative
         for parent in reversed(path.parents):
@@ -170,9 +210,14 @@ def ensure_caddy(spec, baseline_sha, task, installer, bootstrap, caddy):
 def setup_archive(raw, expected):
     require(os.geteuid() == 0, "SETUP_ROOT_REQUIRED")
     files = archive_members(raw)
-    policy, spec, installer, bootstrap, caddy = validate_inputs(files, expected)
+    policy, spec, installer, bootstrap, caddy, shared_raw, runtime_raw = validate_inputs(files, expected)
     release = Path("/etc/os-release").read_text()
     require(re.search(r"^ID=ubuntu$", release, re.M) and re.search(r'^VERSION_ID="24\.04"$', release, re.M), "SETUP_UBUNTU_REQUIRED")
+    if shared_raw is not None:
+        try:
+            caddy.preflight(policy, sha(files["bundle/host-policy.json"]), expected["caddy_baseline_sha256"], shared_raw)
+        except caddy.CaddyError as error:
+            raise SetupError("SETUP_" + str(error)) from None
     scope = policy["project"] + "-" + policy["environment"]
     lock_dir = Path("/run/lock")
     info = lock_dir.lstat()
@@ -189,23 +234,28 @@ def setup_archive(raw, expected):
                 installer.ensure_directory(parent, 0o755, 0, 0)
         installer.ensure_directory(state / "setup", 0o700, 0, 0)
         task = state / "setup" / sha(canonical(expected))[:24]
-        materialize(task, files, installer)
+        staged_files = {name: value for name, value in files.items() if name != "runtime-import.env"}
+        transient = {"runtime-import.env": runtime_raw} if runtime_raw is not None else None
+        materialize(task, staged_files, installer, transient)
         plan = installer.verify_bundle(task / "bundle", expected["lock_sha256"], require_trusted=True)
         installed = Path(policy["install_dir"]) / "installation.json"
         app = Path(policy["app_dir"])
         require(installed.exists() or not app.exists() or not any(app.iterdir()), "SETUP_EXISTING_APPLICATION")
         runtime = state / "bootstrap/runtime.env"
+        if installed.exists() and runtime_raw is not None:
+            validate_installed_runtime_import(runtime_raw, existing_private(runtime, installer))
         if installed.exists() or expected.get("installed_lock_sha256") is not None:
             require(installed.exists(), "SETUP_REVIEWED_INSTALLATION_MISSING")
             # Verify an existing authority before Caddy/account/infrastructure mutations.
             installer.apply_install(plan, runtime, installed_lock_sha256=expected.get("installed_lock_sha256"))
         baseline_sha = bootstrap_call(bootstrap, ensure_caddy, spec, expected["caddy_baseline_sha256"], task, installer, bootstrap, caddy)
         # Preflight the reviewed existing proxy before infrastructure or account changes.
-        config, site, _policy_path = caddy.paths(policy["project"], policy["environment"])
-        original = caddy.read_safe(config)[0]
-        suffix = ("\nimport " + str(site) + "\n").encode()
-        baseline = original[:-len(suffix)] if original.endswith(suffix) else original
-        require(sha(baseline) == baseline_sha and not re.search(rb"\bimport\b|\{\$", baseline), "SETUP_CADDY_BASELINE_DRIFT")
+        if shared_raw is None:
+            config, site, _policy_path = caddy.paths(policy["project"], policy["environment"])
+            original = caddy.read_safe(config)[0]
+            suffix = ("\nimport " + str(site) + "\n").encode()
+            baseline = original[:-len(suffix)] if original.endswith(suffix) else original
+            require(sha(baseline) == baseline_sha and not re.search(rb"\bimport\b|\{\$", baseline), "SETUP_CADDY_BASELINE_DRIFT")
         try:
             account = pwd.getpwnam(policy["release_user"])
         except KeyError:
@@ -217,13 +267,23 @@ def setup_archive(raw, expected):
         installer.install_file(docker_config, files["docker-config.json"], 0o600, account.pw_uid, account.pw_gid)
         if not installed.exists():
             with bootstrap.bootstrap_lock(policy["project"], policy["environment"]):
-                runtime = bootstrap_call(bootstrap, bootstrap.apply_bootstrap, installer, plan, spec, expected["spec_sha256"])
+                runtime_import = task / "runtime-import.env" if runtime_raw is not None else None
+                try:
+                    if runtime_import is not None:
+                        installer.install_file(runtime_import, runtime_raw, 0o600, 0, 0)
+                    runtime = bootstrap_call(bootstrap, bootstrap.apply_bootstrap, installer, plan, spec,
+                                             expected["spec_sha256"], runtime_import=runtime_import)
+                finally:
+                    if runtime_import is not None and runtime_import.exists():
+                        runtime_import.unlink()
         installer.apply_install(plan, runtime, installed_lock_sha256=expected.get("installed_lock_sha256"))
         with caddy.locked():
-            result = caddy.configure(policy["project"], sha(files["bundle/host-policy.json"]), baseline_sha, apply=True, environment=policy["environment"])
+            result = caddy.configure(policy["project"], sha(files["bundle/host-policy.json"]), baseline_sha, apply=True,
+                                     environment=policy["environment"], shared_input_raw=shared_raw)
         receipt_path = task / "setup-receipt.json"
         receipt = {"schema": "cnb-host-setup/v1", "status": "ready", "project": policy["project"], "environment": policy["environment"],
                    "lock_sha256": expected["lock_sha256"], "spec_sha256": expected["spec_sha256"], "docker_config_sha256": expected["docker_config_sha256"],
+                   "runtime_import_sha256": expected.get("runtime_import_sha256"),
                    "installed_lock_sha256": plan["installed_lock_sha256"],
                    "caddy_baseline_sha256": baseline_sha, "site_sha256": result["site_sha256"], "receipt_path": str(receipt_path),
                    "release_executed": False, "https_verified": False}

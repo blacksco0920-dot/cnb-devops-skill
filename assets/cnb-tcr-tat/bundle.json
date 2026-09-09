@@ -27,19 +27,19 @@
     "dependencies/package-lock.json": "2e480e70f7652ac7e0753af6e11445a7f93fa4ed911dcf485d28c562a295ffda",
     "dependencies/package.json": "b52f23c648264c0afae3163f6bf0c3f5ccf573331103adf3c0bbf300c9d38b3f",
     "host/README.md": "85a4f925bacdce8c6781715bff4b9d4b146a014f178e9257881b1b448d2021bd",
-    "host/bootstrap-host.py": "0d711914820a83e365c45e01a6a74adce72a6c15b8d414d35fb6e88dd45272e0",
-    "host/configure-native-caddy.py": "6c52eec662a79ac1b9a5f6c81876aac700a8f978c4f6cc3dd570eaeec91074e2",
+    "host/bootstrap-host.py": "4fb7d67996fdff5dcabfa79224266a52fccc4b89fd404a0eb9b62999e94a3195",
+    "host/configure-native-caddy.py": "c300681c296d642e584564d80ec456205a6e60786a381018c6e56fbf857fb210",
     "host/install-project.py": "69ee32e4c9b712fd7127f5fc84382ed8c36d24e9253ffba724bc8013951d142e",
     "host/production-release.py": "34a004f5415ccac852875e7c4ef9813c9b854b49fea457a8365bceb6c6a1ae49",
     "host/recover-project.py": "8f414576a2480dab6da18fc9aba4129852a35c98c4e2c0fe5e250d972a93a208",
-    "host/setup-project.py": "fe3b1daeceaee4b7544b1694d146e3bd385d39034ade1fa2e6ef59337ace8e94",
+    "host/setup-project.py": "4b77627cfa457e7ab73af7fc835b75d5b5e95d69088bbdf867320ad388fb0e85",
     "host/tat-command.sh.tmpl": "c6b310a7af1abd85bc834393595b82dab16481a5fbcae0f1a9a04a8f8ce06e9d",
-    "host/tat-deploy-test.py": "734a20fe7144d344610eecee39b43e2c15798cce2aeb24554c6ea6d2874ea0db",
+    "host/tat-deploy-test.py": "0a4077e3a1ab04832630ad4672bdd5c2903867f4a99cb4ef2673cb6b06dda378",
     "project.example.yml": "4e69116be539f7ccacb26b32b4205b56c736fb397b446d0dac5375efdbc02763",
     "project.full.example.yml": "426c9cfa73674f2fac325e2672c0c7b0b2374e133c7c72ee27acf44909208cad",
-    "project.schema.json": "0ec72e4dc24715dac33600ad9fc8d0674eb5a9d3070e09968fd73bbfe00b4082",
+    "project.schema.json": "d26c808a317e273becc4763365e7989acc29650681b767858666887c18569e01",
     "templates/github-sync.yml.tmpl": "7e3b7700d9e8c8e26588348f6cf623b22c96d9b40931d2157657abf19cd09b86",
-    "templates/render.py": "15dd7dce5032c4e9d887a11a3dbf580e7163b5f20110ebb4ad29c1447a44d2a6"
+    "templates/render.py": "7a3151ec3c0ef7d34915b2b05079db1f4f18f5e43238a5c28eb432425b2e7994"
   },
   "provenance": [
     {
@@ -132,5 +132,5 @@
     "production": "passed: immutable tested candidate, governed branch, fixed-TAT readiness, independently verified local Ed25519 approval, native owner approval, same-digest deployment, final annotation readback and synthetic business acceptance",
     "project_installation": "round 3 passed isolated empty test and production installation with generated and accepted locks equal; administrator-helper resume tested in round 1; active-version upgrade and a second project on shared hosts not tested"
   },
-  "version": "0.2.0-preview.3"
+  "version": "0.2.0-preview.4"
 }

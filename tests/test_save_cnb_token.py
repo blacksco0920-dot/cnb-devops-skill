@@ -95,6 +95,7 @@ class SaveCnbTokenTests(unittest.TestCase):
     def test_nonprivate_missing_or_symlink_parent_is_rejected_before_prompt(self):
         public = self.root / 'public'
         public.mkdir(mode=0o755)
+        public.chmod(0o755)  # Other in-process CLI tests may set a private umask.
         alias = self.root / 'alias'
         alias.symlink_to(self.root, target_is_directory=True)
         for parent in [public, alias, self.root / 'missing']:
@@ -168,6 +169,10 @@ class SaveCnbTokenTests(unittest.TestCase):
                         break
                     received.extend(chunk)
             child, status = os.waitpid(pid, os.WNOHANG)
+            exit_deadline = time.monotonic() + 1
+            while child == 0 and time.monotonic() < exit_deadline:
+                time.sleep(0.01)
+                child, status = os.waitpid(pid, os.WNOHANG)
             self.assertEqual(child, pid, 'TTY importer did not finish')
             finished = True
             self.assertEqual(os.waitstatus_to_exitcode(status), 0, received.decode())

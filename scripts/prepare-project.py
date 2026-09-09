@@ -223,6 +223,9 @@ def prepare(root, config_path):
     if missing:
         outputs['.gitignore'] = ignore + (b'\n' if ignore and not ignore.endswith(b'\n') else b'') + ('\n'.join(missing) + '\n').encode()
     for relative in ('docs/DEPLOYMENT.md', 'docs/PROJECT_STATUS.md'):
+        if relative == 'docs/PROJECT_STATUS.md' and any(
+                current_bytes(root, name) is not None for name in ('PROJECT_STATE.md', 'PROJECT_STATUS.md')):
+            continue
         if current_bytes(root, relative) is None:
             text = ('# 部署记录\n\n当前配置：`deploy/project.yml`；固定工件：`deploy/vendor/cnb-devops/`。\n'
                     '\n本地文件已生成；账号、主机首装、测试发布、生产晋级与恢复均需各自验收。\n'

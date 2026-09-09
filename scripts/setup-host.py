@@ -68,6 +68,62 @@ def strict_json(raw):
         raise SetupError("SETUP_JSON_INVALID") from error
 
 
+def native_shared_input(directory, plan, target_path):
+    """Bind reviewed local maintenance evidence; only value-free input travels."""
+    directory = Path(directory)
+    validate_output_path(directory / "native-caddy-shared-input.json")
+    names = ("native-caddy-shared-input.json", "inventory.json", "maintenance-authorization.json",
+             "gateway-recovery-receipt.json", "credential-review-receipt.json")
+    try:
+        raw = {name: read_safe(directory / name, {0o600}, 1024 * 1024) for name in names}
+        model = {name: strict_json(value) for name, value in raw.items()}
+        shared = model[names[0]]
+        fields = {"schema", "inventory_sha256", "maintenance_authorization_sha256",
+                  "gateway_recovery_receipt_sha256", "credential_review_receipt_sha256"}
+        if (type(shared) is not dict or set(shared) != fields
+                or shared["schema"] != "cnb-native-caddy-shared-input/v1"
+                or any(type(shared[key]) is not str or not re.fullmatch('[a-f0-9]{64}', shared[key]) for key in fields - {"schema"})):
+            raise ValueError()
+        inventory = model["inventory.json"]
+        inventory_sha = sha(json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+        if inventory.get("schema") != "cnb-native-caddy-inventory/v1" or inventory.get("status") != "verified" or shared["inventory_sha256"] != inventory_sha:
+            raise ValueError()
+        for field, name in (("maintenance_authorization_sha256", "maintenance-authorization.json"),
+                            ("gateway_recovery_receipt_sha256", "gateway-recovery-receipt.json"),
+                            ("credential_review_receipt_sha256", "credential-review-receipt.json")):
+            if shared[field] != sha(raw[name]):
+                raise ValueError()
+        target_sha = sha(read_safe(target_path, {0o600}))
+        authorization = model["maintenance-authorization.json"]
+        if (authorization.get("schema") != "cnb-native-caddy-maintenance-authorization/v1"
+                or authorization.get("status") != "authorized"
+                or authorization.get("project") != plan["policy"]["project"]
+                or authorization.get("environment") != plan["policy"]["environment"]
+                or authorization.get("source_target_sha256") != target_sha
+                or authorization.get("inventory_sha256") != inventory_sha
+                or authorization.get("scope") != ["preserve-existing", "add-project-static-routes"]
+                or type(authorization.get("authorization_source")) is not str
+                or not 1 <= len(authorization["authorization_source"]) <= 4096):
+            raise ValueError()
+        recovery = model["gateway-recovery-receipt.json"]
+        if (recovery.get("schema") != "cnb-native-caddy-recovery/v1" or recovery.get("status") != "verified"
+                or recovery.get("source_inventory_sha256") != inventory_sha
+                or recovery.get("source_target_sha256") != target_sha
+                or any(recovery.get(key) is not True for key in ("source_unchanged", "config_restored", "tls_restored", "isolated"))):
+            raise ValueError()
+        credentials = model["credential-review-receipt.json"]
+        if (credentials.get("schema") != "cnb-native-caddy-credential-review/v1"
+                or credentials.get("status") != "reviewed"
+                or credentials.get("source_target_sha256") != target_sha
+                or credentials.get("inventory_sha256") != inventory_sha
+                or type(credentials.get("unresolved")) is not list or credentials["unresolved"]
+                or type(credentials.get("evidence")) is not list or not credentials["evidence"]):
+            raise ValueError()
+        return raw[names[0]]
+    except (KeyError, TypeError, ValueError, SetupError) as error:
+        raise SetupError("SETUP_NATIVE_SHARED_EVIDENCE_INVALID") from error
+
+
 def prepare(args):
     try:
         if not re.fullmatch(r"[0-9a-f]{64}", args.lock_sha256):
@@ -94,7 +150,6 @@ def prepare(args):
         driver.__file__ = str(args.bundle_dir / "host/setup-project.py")
         driver_raw = files["bundle/host/setup-project.py"]
         exec(compile(driver_raw, driver.__file__, "exec"), driver.__dict__)
-        driver.validate_inputs(files, expected)
         target = strict_json(read_safe(args.target, {0o600}))
         if (type(target) is not dict or set(target) != {"host", "port", "user", "identity_file", "known_hosts_file"}
             or type(target["host"]) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}", target["host"])
@@ -105,6 +160,15 @@ def prepare(args):
             if type(target[key]) is not str or not Path(target[key]).is_absolute():
                 raise SetupError("SETUP_TARGET_INVALID")
             read_safe(target[key], modes, 1024 * 1024)
+        if getattr(args, "native_caddy_shared_dir", None):
+            shared = native_shared_input(args.native_caddy_shared_dir, plan, args.target)
+            files["native-caddy-shared-input.json"] = shared
+            expected["native_caddy_shared_sha256"] = sha(shared)
+        if getattr(args, "runtime_import", None):
+            runtime_import = read_safe(args.runtime_import, {0o600}, 1024 * 1024)
+            files["runtime-import.env"] = runtime_import
+            expected["runtime_import_sha256"] = sha(runtime_import)
+        driver.validate_inputs(files, expected)
         return plan, files, expected, target
     except SetupError:
         raise
@@ -272,6 +336,8 @@ def main(argv=None):
     parser.add_argument("--caddy-baseline-sha256")
     parser.add_argument("--installed-lock-sha256", help="explicit reviewed prior lock; permits only administrator helper compatibility changes")
     parser.add_argument("--installation-output", type=Path, help="protected local destination for the verified original installation receipt")
+    parser.add_argument("--native-caddy-shared-dir", type=Path, help="protected directory of reviewed native shared-host inventory and maintenance evidence")
+    parser.add_argument("--runtime-import", type=Path, help="protected first-install runtime values validated against the reviewed policy")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     plan, files, expected, target = prepare(args)

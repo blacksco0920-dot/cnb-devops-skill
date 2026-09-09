@@ -178,6 +178,52 @@ class SetupHostTests(unittest.TestCase):
             self.assertEqual(self.m.main(self.args + ["--installation-output", str(destination)]), 0)
         self.assertFalse(destination.exists())
 
+    def native_shared_directory(self):
+        directory = self.root / "native-shared"
+        directory.mkdir(mode=0o700)
+        inventory = {"schema": "cnb-native-caddy-inventory/v1", "status": "verified", "sites": []}
+        inventory_raw = (json.dumps(inventory, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        inventory_sha = hashlib.sha256(inventory_raw).hexdigest()
+        target_sha = hashlib.sha256(self.target.read_bytes()).hexdigest()
+        values = {
+            "inventory.json": inventory_raw,
+            "maintenance-authorization.json": json.dumps({"schema": "cnb-native-caddy-maintenance-authorization/v1",
+                "status": "authorized", "project": "sample", "environment": "test", "source_target_sha256": target_sha,
+                "inventory_sha256": inventory_sha, "scope": ["preserve-existing", "add-project-static-routes"],
+                "authorization_source": "synthetic-decision"}, sort_keys=True).encode(),
+            "gateway-recovery-receipt.json": json.dumps({"schema": "cnb-native-caddy-recovery/v1", "status": "verified",
+                "source_inventory_sha256": inventory_sha, "source_target_sha256": target_sha, "source_unchanged": True,
+                "config_restored": True, "tls_restored": True, "isolated": True}, sort_keys=True).encode(),
+            "credential-review-receipt.json": json.dumps({"schema": "cnb-native-caddy-credential-review/v1", "status": "reviewed",
+                "source_target_sha256": target_sha, "inventory_sha256": inventory_sha, "unresolved": [],
+                "evidence": ["synthetic-review"]}, sort_keys=True).encode(),
+        }
+        shared = {"schema": "cnb-native-caddy-shared-input/v1", "inventory_sha256": inventory_sha,
+                  "maintenance_authorization_sha256": hashlib.sha256(values["maintenance-authorization.json"]).hexdigest(),
+                  "gateway_recovery_receipt_sha256": hashlib.sha256(values["gateway-recovery-receipt.json"]).hexdigest(),
+                  "credential_review_receipt_sha256": hashlib.sha256(values["credential-review-receipt.json"]).hexdigest()}
+        values["native-caddy-shared-input.json"] = (json.dumps(shared, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        for name, raw in values.items():
+            path = directory / name
+            path.write_bytes(raw)
+            path.chmod(0o600)
+        return directory, values["native-caddy-shared-input.json"]
+
+    def test_shared_preview_binds_only_reviewed_value_free_input_without_ssh(self):
+        directory, shared_raw = self.native_shared_directory()
+        output = io.StringIO()
+        with mock.patch.object(self.m.subprocess, "run", side_effect=AssertionError("preview opened SSH")), contextlib.redirect_stdout(output):
+            self.assertEqual(self.m.main(self.args + ["--native-caddy-shared-dir", str(directory)]), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["native_caddy_shared_sha256"], hashlib.sha256(shared_raw).hexdigest())
+
+    def test_bad_shared_evidence_stops_before_ssh(self):
+        directory, _ = self.native_shared_directory()
+        (directory / "gateway-recovery-receipt.json").write_bytes(b'{"status":"forged"}\n')
+        with mock.patch.object(self.m.subprocess, "run", side_effect=AssertionError("invalid evidence opened SSH")):
+            with self.assertRaisesRegex(self.m.SetupError, "SETUP_NATIVE_SHARED_EVIDENCE_INVALID"):
+                self.m.main(self.args + ["--native-caddy-shared-dir", str(directory), "--apply"])
+
     def test_resume_transports_prior_lock_and_rejects_a_different_installed_receipt(self):
         original_lock = "b" * 64
         actual = original_lock

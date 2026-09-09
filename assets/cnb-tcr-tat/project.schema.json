@@ -163,6 +163,9 @@
             "type": "integer",
             "minimum": 1024,
             "maximum": 65535
+          },
+          "resource_limits": {
+            "$ref": "#/$defs/resource_limits"
           }
         },
         "required": [
@@ -239,6 +242,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "native_caddy_gateway": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+        },
         "release_user": {
           "type": "string",
           "minLength": 1,
@@ -580,6 +587,17 @@
         "mounts",
         "required_nonempty_tables"
       ]
+    }
+  },
+  "$defs": {
+    "resource_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "memory_bytes": {"type": "integer", "minimum": 33554432, "maximum": 6.8719476736e10, "description": "Memory limit in bytes, from 32 MiB through 64 GiB."},
+        "cpu_millis": {"type": "integer", "minimum": 50, "maximum": 64000}
+      },
+      "required": ["memory_bytes", "cpu_millis"]
     }
   },
   "required": [
