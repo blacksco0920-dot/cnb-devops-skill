@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import contextlib
+import os
 from pathlib import Path
 import tempfile
 import subprocess
@@ -162,6 +163,56 @@ class BootstrapTests(unittest.TestCase):
             self.assertNotIn("ports", service)
             self.assertNotIn("privileged", service)
         self.assertEqual(compose["services"]["postgres"]["environment"]["POSTGRES_USER"], "postgres")
+
+    def test_redis_startup_and_health_never_put_password_in_process_arguments(self):
+        redis = self.b.compose_model(self.policy, self.spec, "b" * 64)["services"]["redis"]
+        password = "synthetic_redis_password_12345678901234567890"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result, health_result = root / "startup.json", root / "health.json"
+            (root / "id").write_text("#!/bin/sh\nprintf '501\\n'\n")
+            (root / "docker-entrypoint.sh").write_text(
+                "#!" + sys.executable + "\nimport json, os, pathlib, stat, sys\n"
+                "config = pathlib.Path(sys.argv[2])\n"
+                "raw = config.read_text()\n"
+                "value = os.environ['BOOTSTRAP_REDIS_PASSWORD']\n"
+                "result = {'argv_secret_free': value not in '\\0'.join(sys.argv), "
+                "'config_private': stat.S_IMODE(config.stat().st_mode) == 0o600, "
+                "'config_valid': raw == 'appendonly yes\\nrequirepass ' + value + '\\n', "
+                "'redis_server_selected': sys.argv[1] == 'redis-server'}\n"
+                "pathlib.Path(os.environ['RESULT']).write_text(json.dumps(result))\n"
+                "config.unlink()\n")
+            (root / "redis-cli").write_text(
+                "#!" + sys.executable + "\nimport json, os, pathlib, sys\n"
+                "value = os.environ['BOOTSTRAP_REDIS_PASSWORD']\n"
+                "pathlib.Path(os.environ['HEALTH_RESULT']).write_text(json.dumps({"
+                "'auth_from_env': os.environ.get('REDISCLI_AUTH') == value, "
+                "'argv_secret_free': value not in '\\0'.join(sys.argv), "
+                "'safe_arguments': sys.argv[1:] == ['--no-auth-warning', 'ping']}))\n"
+                "print(os.environ.get('REDIS_STUB_RESPONSE', 'PONG'))\n")
+            for executable in (root / "id", root / "docker-entrypoint.sh", root / "redis-cli"):
+                executable.chmod(0o700)
+            environment = {**os.environ, "PATH": str(root) + os.pathsep + os.defpath,
+                           "BOOTSTRAP_REDIS_PASSWORD": password, "RESULT": str(result),
+                           "HEALTH_RESULT": str(health_result)}
+
+            command = redis["command"]
+            self.assertEqual(command[:3], ["/bin/sh", "-eu", "-c"])
+            completed = subprocess.run(command[:3] + [command[3].replace("$$", "$")],
+                                       env=environment, capture_output=True, timeout=10)
+            self.assertEqual(completed.returncode, 0, completed.stderr.decode())
+            self.assertTrue(all(json.loads(result.read_text()).values()))
+
+            health = redis["healthcheck"]["test"]
+            self.assertEqual(health[0], "CMD-SHELL")
+            completed = subprocess.run(["/bin/sh", "-c", health[1].replace("$$", "$")],
+                                       env=environment, capture_output=True, timeout=10)
+            self.assertEqual(completed.returncode, 0)
+            self.assertTrue(all(json.loads(health_result.read_text()).values()))
+            failed = subprocess.run(["/bin/sh", "-c", health[1].replace("$$", "$")],
+                                    env={**environment, "REDIS_STUB_RESPONSE": "not-pong"},
+                                    capture_output=True, timeout=10)
+            self.assertNotEqual(failed.returncode, 0)
 
     def test_existing_unowned_resource_is_rejected_without_writes(self):
         existing = {"network": {"sample-test": {"Labels": {}}}, "volume": {}, "container": {}}

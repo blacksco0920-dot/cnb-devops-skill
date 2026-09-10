@@ -27,7 +27,7 @@
     "dependencies/package-lock.json": "2e480e70f7652ac7e0753af6e11445a7f93fa4ed911dcf485d28c562a295ffda",
     "dependencies/package.json": "b52f23c648264c0afae3163f6bf0c3f5ccf573331103adf3c0bbf300c9d38b3f",
     "host/README.md": "85a4f925bacdce8c6781715bff4b9d4b146a014f178e9257881b1b448d2021bd",
-    "host/bootstrap-host.py": "4fb7d67996fdff5dcabfa79224266a52fccc4b89fd404a0eb9b62999e94a3195",
+    "host/bootstrap-host.py": "f33d0e811d622e8db7238416d26f1a16a0b92099db37c9a62c3f5ab2911eb7b8",
     "host/configure-native-caddy.py": "c300681c296d642e584564d80ec456205a6e60786a381018c6e56fbf857fb210",
     "host/install-project.py": "69ee32e4c9b712fd7127f5fc84382ed8c36d24e9253ffba724bc8013951d142e",
     "host/production-release.py": "34a004f5415ccac852875e7c4ef9813c9b854b49fea457a8365bceb6c6a1ae49",

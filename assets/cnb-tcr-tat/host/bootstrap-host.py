@@ -190,8 +190,15 @@ def compose_model(policy, spec, spec_sha256):
             test = ["CMD", "pg_isready", "-U", "postgres", "-d", "postgres"]
         else:
             service["environment"] = {"BOOTSTRAP_REDIS_PASSWORD": "${BOOTSTRAP_REDIS_PASSWORD:?required}"}
-            service["command"] = ["redis-server", "--appendonly", "yes", "--requirepass", "${BOOTSTRAP_REDIS_PASSWORD:?required}"]
-            test = ["CMD-SHELL", 'test "$(redis-cli --no-auth-warning -a "$$BOOTSTRAP_REDIS_PASSWORD" ping)" = PONG']
+            service["command"] = [
+                "/bin/sh", "-eu", "-c",
+                "umask 077; cfg=\"$$(mktemp /tmp/cnb-redis.conf.XXXXXX)\"; "
+                "printf 'appendonly yes\\nrequirepass %s\\n' \"$$BOOTSTRAP_REDIS_PASSWORD\" >\"$$cfg\"; "
+                "if [ \"$$(id -u)\" = 0 ]; then chown redis:redis \"$$cfg\"; fi; "
+                "exec docker-entrypoint.sh redis-server \"$$cfg\"",
+            ]
+            test = ["CMD-SHELL", 'REDISCLI_AUTH="$$BOOTSTRAP_REDIS_PASSWORD" '
+                    'redis-cli --no-auth-warning ping | grep -qx PONG']
         service["healthcheck"] = {"test": test, "interval": "5s", "timeout": "5s", "retries": 30}
         services[role] = service
     return {"name": scope + "-data", "services": services,

@@ -68,7 +68,7 @@ python3 "$SKILL_DIR/scripts/setup-host.py" \
 
 ### 首次安装运行依赖
 
-`setup-host` 使用 `host/bootstrap-host.py`：按[输入示例](bootstrap-inputs.md#bootstrap-spec)填写与该环境 policy 摘要绑定的 `bootstrap-spec.json`，固定 PostgreSQL 16 / Redis 7 的 TCR 摘要及盘点得到的 APT 版本，`generate_env` 声明在主机生成的随机值。它安装缺失的 Docker/Compose，建立独立网络、数据库/用户和可选 Redis；秘密留在主机，已有资源必须属于同一安装记录。也可通过已授权管理员通道单独预览此固定入口：
+`setup-host` 使用 `host/bootstrap-host.py`：按[输入示例](bootstrap-inputs.md#bootstrap-spec)填写与该环境 policy 摘要绑定的 `bootstrap-spec.json`，固定 PostgreSQL 16 / Redis 7 的 TCR 摘要及盘点得到的 APT 版本，`generate_env` 声明在主机生成的随机值。它安装缺失的 Docker/Compose，建立独立网络、数据库/用户和可选 Redis；秘密留在主机，已有资源必须属于同一安装记录。Redis 密码通过容器内 0600 配置及健康检查环境变量传入，不进入进程参数；容器环境仍含秘密，盘点只能输出筛选后的字段。此入口不用于活动部署升级或凭据轮换。也可通过已授权管理员通道单独预览此固定入口：
 
 ```sh
 python3 "$HOST_BUNDLE_DIR/host/bootstrap-host.py" \
