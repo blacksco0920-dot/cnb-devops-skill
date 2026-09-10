@@ -52,6 +52,13 @@ Index generated files, actual checks and remaining blockers in the project
 documents. Keep unavailable integrations disabled while completing independent
 work; local generation or passing checks do not establish live acceptance.
 
+When project verification starts disposable databases through CNB's Docker
+service, run the test worker and its dependencies in one named Docker network
+and connect by container name. The job's loopback and `DOCKER_HOST` do not
+establish access to published container ports. Transfer source through a Docker
+build context or explicit copy; job filesystem paths are not daemon bind-mount
+paths. Keep these application test adapters in the business repository.
+
 For the current dependency, follow the [human handoff process](human-handoffs.md):
 the AI prepares technical materials and records actual authorized acceptance;
 the human performs or confirms only necessary real-world actions. Keep sensitive
