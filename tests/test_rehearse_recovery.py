@@ -203,6 +203,29 @@ class RecoverySessionTests(unittest.TestCase):
         self.assertNotEqual(result['bundle_lock_sha256'], result['installed_lock_sha256'])
         self.assertFalse((self.root / 'session').exists())
 
+    def test_preview_accepts_administrator_independent_of_release_user(self):
+        target = json.loads((self.root / 'target.json').read_bytes())
+        target['user'] = 'ops-admin'
+        (self.root / 'target.json').write_bytes(canonical(target))
+        output = io.StringIO()
+        with mock.patch.object(self.m.subprocess, 'run', side_effect=AssertionError('preview ran a process')), contextlib.redirect_stdout(output):
+            self.m.main(self.argv)
+        self.assertEqual(json.loads(output.getvalue())['status'], 'preview')
+        self.assertFalse((self.root / 'session').exists())
+
+    def test_invalid_administrator_username_blocks_preview(self):
+        target = json.loads((self.root / 'target.json').read_bytes())
+        invalid = ('', '-oProxyCommand=id', 'ubuntu;id', 'ubuntu@example.invalid', 'ubuntu\n',
+                   'user name', 'a' * 33, 'Root', 'usér', 7, True, None, [], {})
+        for user in invalid:
+            with self.subTest(user=user):
+                target['user'] = user
+                (self.root / 'target.json').write_bytes(canonical(target))
+                with mock.patch.object(self.m.subprocess, 'run', side_effect=AssertionError('invalid user ran a process')):
+                    with self.assertRaisesRegex(self.m.SessionError, 'TARGET_INVALID'):
+                        self.m.main(self.argv)
+                self.assertFalse((self.root / 'session').exists())
+
     def test_full_restore_uses_real_bundle_verifier_and_preserves_stopped_volume(self):
         plan = self.prepare()
         source = SourceTransport(plan)
@@ -364,6 +387,9 @@ class RecoverySessionTests(unittest.TestCase):
         self.assertEqual(source.exports, 0)
 
     def test_ssh_transport_uses_fixed_code_strict_host_key_and_stdin_request(self):
+        target = json.loads((self.root / 'target.json').read_bytes())
+        target['user'] = 'ops-admin'
+        (self.root / 'target.json').write_bytes(canonical(target))
         plan = self.prepare()
         source = SourceTransport(plan)
         def ssh(argv, **options):
@@ -371,6 +397,8 @@ class RecoverySessionTests(unittest.TestCase):
             for required in ('StrictHostKeyChecking=yes', 'BatchMode=yes', 'IdentityAgent=none', 'PasswordAuthentication=no'):
                 self.assertIn(required, argv)
             remote = shlex.split(argv[-1])
+            self.assertEqual(remote[:3], ['/usr/bin/sudo', '-n', '--'])
+            self.assertIn('ops-admin@sample.invalid', argv)
             self.assertIn('-I', remote)
             compile(remote[-1], '<fixed-remote-gate>', 'exec')
             request = json.loads(options['input'])

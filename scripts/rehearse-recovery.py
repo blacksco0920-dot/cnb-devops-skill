@@ -96,7 +96,7 @@ def prepare(args):
     require(type(target) is dict and set(target) == {'host', 'port', 'user', 'identity_file', 'known_hosts_file'}
             and type(target['host']) is str and re.fullmatch('[A-Za-z0-9][A-Za-z0-9.-]{0,252}', target['host'])
             and type(target['port']) is int and 1 <= target['port'] <= 65535
-            and target['user'] in ('root', policy['release_user']), 'TARGET_INVALID')
+            and type(target['user']) is str and re.fullmatch('[a-z_][a-z0-9_-]{0,31}', target['user']), 'TARGET_INVALID')
     target_pins = {}
     for name, modes in [('identity_file', {0o400, 0o600}), ('known_hosts_file', {0o400, 0o600, 0o644})]:
         require(type(target[name]) is str and Path(target[name]).is_absolute(), 'TARGET_INVALID')
