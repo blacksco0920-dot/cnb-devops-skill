@@ -43,6 +43,8 @@ class SetupHostTests(unittest.TestCase):
         helper.setUp()
         helper.bundle(self.bundle)
         policy = policy_fixture()
+        policy.update(release_user="sample-release", release_home="/home/sample-release",
+                      docker_config="/home/sample-release/.docker/config.json")
         for index, service in enumerate(policy["services"].values()):
             service["networks"] = ["sample-test"]
             service["loopback_port"] = {"host_ip": "127.0.0.1", "protocol": "tcp", "published": 13000 + index, "target": 8000 + index}
@@ -92,6 +94,29 @@ class SetupHostTests(unittest.TestCase):
                 self.m.main(self.args + ["--installed-lock-sha256", "invalid"])
         self.assertEqual(json.loads(output.getvalue())["installed_lock_sha256"], "b" * 64)
 
+    def test_preview_accepts_administrator_independent_of_project_release_user(self):
+        target = json.loads(self.target.read_bytes())
+        for user in ("ubuntu", "root", "ops-admin", "sample-release"):
+            with self.subTest(user=user):
+                target["user"] = user
+                self.target.write_text(json.dumps(target))
+                output = io.StringIO()
+                with mock.patch.object(self.m.subprocess, "run", side_effect=AssertionError("preview opened SSH")), contextlib.redirect_stdout(output):
+                    self.assertEqual(self.m.main(self.args), 0)
+                self.assertEqual(json.loads(output.getvalue())["status"], "preview")
+
+    def test_invalid_administrator_username_blocks_ssh(self):
+        target = json.loads(self.target.read_bytes())
+        invalid = ("", "-oProxyCommand=id", "ubuntu;id", "ubuntu@example.invalid", "ubuntu\n",
+                   "user name", "a" * 33, "Root", "usér", 7, True, None, [], {})
+        for user in invalid:
+            with self.subTest(user=user):
+                target["user"] = user
+                self.target.write_text(json.dumps(target))
+                with mock.patch.object(self.m.subprocess, "run", side_effect=AssertionError("invalid user opened SSH")):
+                    with self.assertRaisesRegex(self.m.SetupError, "SETUP_TARGET_INVALID"):
+                        self.m.main(self.args + ["--apply"])
+
     def test_apply_uses_one_strict_ssh_and_streams_private_input_not_argv(self):
         calls = []
         def execute(argv, **options):
@@ -102,6 +127,7 @@ class SetupHostTests(unittest.TestCase):
             self.assertIn("-F", argv)
             self.assertIn("UserKnownHostsFile=" + str(self.known), argv)
             self.assertIn("ubuntu@demo.example.invalid", argv)
+            self.assertEqual(shlex.split(argv[-1])[:3], ["/usr/bin/sudo", "-n", "--"])
             self.assertNotIn(self.secret, " ".join(argv))
             with tarfile.open(fileobj=io.BytesIO(options["input"]), mode="r:") as archive:
                 self.assertEqual(archive.extractfile("docker-config.json").read(), self.config.read_bytes())

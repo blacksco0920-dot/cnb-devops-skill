@@ -154,7 +154,7 @@ def prepare(args):
         if (type(target) is not dict or set(target) != {"host", "port", "user", "identity_file", "known_hosts_file"}
             or type(target["host"]) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}", target["host"])
             or type(target["port"]) is not int or not 1 <= target["port"] <= 65535
-            or target["user"] not in ("root", plan["policy"]["release_user"])):
+            or type(target["user"]) is not str or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", target["user"])):
             raise SetupError("SETUP_TARGET_INVALID")
         for key, modes in [("identity_file", {0o400, 0o600}), ("known_hosts_file", {0o400, 0o600, 0o644})]:
             if type(target[key]) is not str or not Path(target[key]).is_absolute():

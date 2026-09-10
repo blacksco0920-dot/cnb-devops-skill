@@ -1088,12 +1088,31 @@ def _valid_previous_images(model):
 
 def _assert_database_empty():
     # Fixed SQL, independently scoped by the policy database name passed as an argv item.
-    # Exclude PostgreSQL internals, but count application schemas, relations, functions and types.
-    sql = """SELECT
+    # The fixed bootstrap may install public.vector. Ignore only its direct function/type
+    # members and their automatic arrays, never application objects that depend on vector.
+    sql = """WITH vector_members AS (
+      SELECT d.classid, d.objid FROM pg_depend d JOIN pg_extension e
+        ON d.refclassid='pg_extension'::regclass AND d.refobjid=e.oid
+      WHERE e.extname='vector' AND e.extnamespace='public'::regnamespace
+        AND d.deptype='e' AND d.objsubid=0 AND d.refobjsubid=0
+    ), vector_types AS (
+      SELECT t.oid, t.typarray FROM pg_type t JOIN vector_members v
+        ON v.classid='pg_type'::regclass AND v.objid=t.oid
+      WHERE t.typnamespace='public'::regnamespace
+    ) SELECT
       (SELECT count(*) FROM pg_namespace WHERE nspname <> 'public' AND nspname <> 'information_schema' AND nspname !~ '^pg_') +
       (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_') +
-      (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_') +
-      (SELECT count(*) FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_')"""
+      (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+        WHERE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+          AND NOT (n.nspname='public' AND EXISTS (SELECT 1 FROM vector_members v
+            WHERE v.classid='pg_proc'::regclass AND v.objid=p.oid))) +
+      (SELECT count(*) FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+        WHERE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+          AND NOT (n.nspname='public' AND EXISTS (SELECT 1 FROM vector_types v
+            WHERE t.oid=v.oid OR (v.typarray=t.oid AND t.typelem=v.oid AND EXISTS (
+              SELECT 1 FROM pg_depend d WHERE d.classid='pg_type'::regclass AND d.objid=t.oid
+                AND d.refclassid='pg_type'::regclass AND d.refobjid=v.oid
+                AND d.deptype='i' AND d.objsubid=0 AND d.refobjsubid=0)))))"""
     database = POLICY["database"]
     output = _run(_docker_prefix() + ["exec", database["container"], "psql", "--no-psqlrc",
                   "-U", database["admin_user"], "-d", database["name"], "-At", "--set", "ON_ERROR_STOP=1", "-c", sql],

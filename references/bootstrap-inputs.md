@@ -46,7 +46,7 @@ POLICY_SHA256="$(sha256_file "$ENV_BUNDLE_DIR/host-policy.json")"
 
 | 私密输入 | 精确格式或键名 |
 | --- | --- |
-| `ssh-target.json`，`0600` | 恰好 `host`、整数 `port`、`user`、绝对路径 `identity_file`、绝对路径 `known_hosts_file`；`user` 为 root 或 policy 的 `release_user` |
+| `ssh-target.json`，`0600` | 恰好 `host`、整数 `port`、`user`、绝对路径 `identity_file`、绝对路径 `known_hosts_file`；`user` 为已授权的 SSH 管理员账号（如 `root`、`ubuntu`），格式为 `[a-z_][a-z0-9_-]{0,31}`，与 policy 的应用 `release_user` 独立；非 root 账号须能通过 `sudo -n` 执行现有 root 门禁，离线预览不证明该权限 |
 | SSH 私钥、known_hosts | 私钥 `0400/0600`；known_hosts `0400/0600/0644`。重装后通过可信控制台/既有管理员通道核验新 host key，再更新；`ssh-keyscan` 的未经核验输出不是证明 |
 | `bootstrap-spec.json`，`0600` | 下节五个必需字段及按需选项；不含数据库密码 |
 | `runtime-import.env`，`0600`，可选 | 首装外部业务值，每行 `KEY=value`；不含自动生成键、镜像键或重复键；通过 `setup-host --runtime-import` 传输 |

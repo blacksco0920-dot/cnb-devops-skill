@@ -106,8 +106,8 @@ def render_sites(policy, project, policy_sha, environment='test'):
                         r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}', host), 'CADDY_DOMAIN_INVALID')
             require(port['host_ip'] == '127.0.0.1' and port['protocol'] == 'tcp'
                     and type(port['published']) is int and 1024 <= port['published'] <= 65535, 'CADDY_LOOPBACK_INVALID')
-            require(host not in routes or routes[host] == (role, port['published']), 'CADDY_DOMAIN_CONFLICT')
-            routes[host] = (role, port['published'])
+            require(host not in routes or routes[host] == (gateway or role, port['published']), 'CADDY_DOMAIN_CONFLICT')
+            routes[host] = (gateway or role, port['published'])
             seen.add(role)
         require(1 <= len(routes) <= 16 and seen == set(policy['services']), 'CADDY_SERVICE_MAPPING_INCOMPLETE')
     except (KeyError, TypeError, ValueError) as error:

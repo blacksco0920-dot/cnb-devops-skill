@@ -140,6 +140,28 @@ class NativeCaddyTests(unittest.TestCase):
         self.assertEqual(domains, ['api.example.com', 'ocr.example.com', 'test.example.com'])
         self.assertEqual(site.count(b'reverse_proxy 127.0.0.1:13000'), 3)
 
+    def test_gateway_combines_three_service_identity_paths_on_one_domain(self):
+        self.policy['native_caddy_gateway'] = 'web'
+        self.policy['services'] = {'api': {}, 'web': self.policy['services']['h5'], 'mobile': {}}
+        self.policy['identity_probes'] = [
+            {'service': role, 'url': 'https://test.example.com' + path}
+            for role, path in [('api', '/api/release.json'), ('web', '/release.json'),
+                               ('mobile', '/mobile/release.json')]]
+        site, domains = self.m.render_sites(self.policy, 'demo', self.policy_sha)
+        self.assertEqual(domains, ['test.example.com'])
+        self.assertEqual(site, (
+            f'# cnb-devops demo/test policy_sha256={self.policy_sha}\n'
+            '\nhttps://test.example.com {\n\treverse_proxy 127.0.0.1:13080\n}\n').encode())
+        self.policy['identity_probes'].pop()
+        with self.assertRaisesRegex(self.m.CaddyError, 'CADDY_SERVICE_MAPPING_INCOMPLETE'):
+            self.m.render_sites(self.policy, 'demo', self.policy_sha)
+
+    def test_without_gateway_same_domain_for_different_services_conflicts(self):
+        for probe in self.policy['identity_probes']:
+            probe['url'] = 'https://test.example.com/' + probe['service'] + '/release.json'
+        with self.assertRaisesRegex(self.m.CaddyError, 'CADDY_DOMAIN_CONFLICT'):
+            self.m.render_sites(self.policy, 'demo', self.policy_sha)
+
     def test_shared_apply_receipt_allows_same_input_retry_after_addition(self):
         self.add_installed_site('first', 'first.example.com', 14001)
         self.current = self.m.adapt(self.config.read_bytes())
