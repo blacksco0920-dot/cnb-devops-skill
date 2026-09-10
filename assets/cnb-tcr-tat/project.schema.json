@@ -382,7 +382,8 @@
                 "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
               },
               "api_envelope": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "false expects the raw cnb-release-identity/v1 object. true expects exactly code=0, message=ok and data.release containing that identity; it does not accept arbitrary API response wrappers."
               }
             },
             "required": [
