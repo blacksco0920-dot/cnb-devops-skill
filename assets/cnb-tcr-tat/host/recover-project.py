@@ -459,15 +459,95 @@ def source_release(host, account):
     return raw, release
 
 
+def source_record(host, account, failed_transaction_sha256=None):
+    """Read an accepted release, or the explicitly pinned failed test transaction."""
+    if failed_transaction_sha256 is None:
+        return source_release(host, account)
+    require(host.POLICY['environment'] == 'test' and type(failed_transaction_sha256) is str
+            and HASH.fullmatch(failed_transaction_sha256), 'failed_test_source_required')
+    raw, record = host._load_private_record(host.TRANSACTION_PATH, kind='transaction',
+                        uid=account.pw_uid, gid=account.pw_gid, required=True)
+    require(sha(raw) == failed_transaction_sha256 and raw == canonical(record), 'failed_transaction_pin_mismatch')
+    require(record['schema'] == 'cnb-test-release-transaction/v2' and record['status'] == 'failed'
+            and record['phase'] == 'probe', 'failed_probe_transaction_required')
+    baseline_raw, baseline = host._load_private_record(host.RELEASE_PATH, kind='release',
+                        uid=account.pw_uid, gid=account.pw_gid, required=True)
+    require(sha(baseline_raw) == record['previous_release_sha256'] and baseline['images'] == record['previous_images'],
+            'failed_source_baseline_mismatch')
+    release_root = host.APP_DIR / 'backups' / 'releases'
+    host._require_bound_snapshot(release_root, record, account.pw_uid, account.pw_gid)
+    snapshot = release_root / record['snapshot']
+    manifest = host.load_snapshot_manifest(snapshot, release_root=release_root, uid=account.pw_uid, gid=account.pw_gid)
+    previous_env = read_file(snapshot / 'env.before')
+    require(sha(previous_env) == manifest['files']['env.before']['sha256'], 'failed_source_snapshot_changed')
+    expected_env = host.update_env_text(previous_env.decode('utf-8', 'strict'), record['images']).encode('utf-8')
+    with regular(host.ENV_PATH, 1024 * 1024) as stream:
+        info = os.fstat(stream.fileno())
+        require((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == (account.pw_uid, account.pw_gid, 0o600)
+                and stream.read() == expected_env, 'failed_source_environment_changed')
+    require(sha(read_file(host.COMPOSE_PATH)) == host.CONTROLLER_COMPOSE_SHA256,
+            'failed_source_compose_changed')
+    if baseline['status'] == 'empty':
+        require(baseline['runtime_env_sha256'] == sha(previous_env), 'failed_source_baseline_environment_mismatch')
+    require(host._load_private_record(host.TRANSACTION_PATH, kind='transaction', uid=account.pw_uid,
+                gid=account.pw_gid, required=True)[0] == raw
+            and host._load_private_record(host.RELEASE_PATH, kind='release', uid=account.pw_uid,
+                gid=account.pw_gid, required=True)[0] == baseline_raw, 'failed_source_records_changed')
+    return raw, record
+
+
+def source_metadata(record):
+    if record.get('schema') != 'cnb-test-release-transaction/v2':
+        return {}
+    return {'source_kind': 'failed-test-release', 'source_baseline_sha256': record['previous_release_sha256'],
+            'public_identity_verified': False, 'business_acceptance_verified': False}
+
+
+def evidence_schema(name, failed):
+    return 'cnb-recovery-' + name + ('/v2' if failed else '/v1')
+
+
+def validate_failed_runtime(host, docker, record, containers, *, require_running=True):
+    require(len(containers) == len(host.SERVICES), 'source_container_mismatch')
+    _, values, _ = host._parse_env(read_file(host.ENV_PATH).decode('utf-8', 'strict'))
+    def environment(raw):
+        entries = strict_json(raw)
+        if entries is None:
+            entries = []
+        require(type(entries) is list and all(type(value) is str and '=' in value for value in entries),
+                'source_runtime_environment_mismatch')
+        pairs = [value.split('=', 1) for value in entries]
+        result = dict(pairs)
+        require(len(result) == len(pairs), 'source_runtime_environment_mismatch')
+        return result
+    for role, item in zip(host.SERVICES, containers):
+        require(item['name'] == '/' + host.CONTAINERS[role] and item['image'] == record['images'][role]
+                and HASH.fullmatch(item['id']) and item['auto_remove'] is False, 'source_container_mismatch')
+        require(item['paused'] is False and item['restarting'] is False
+                and (not require_running or item['running'] is True and item['health'] in (None, 'healthy')),
+                'source_unhealthy')
+        approved = host.POLICY['services'][role]
+        require(not require_running or not approved['healthcheck'] or item['health'] == 'healthy', 'source_unhealthy')
+        expected = environment(docker.run(['image', 'inspect', '--format', '{{json .Config.Env}}', item['image']]))
+        if approved['runtime_env']:
+            expected.update(values)
+        expected.update({key: values[ref] for key, ref in approved['environment_refs'].items()})
+        expected.update(approved['environment'])
+        observed = environment(docker.run(['inspect', '--type', 'container', '--format', '{{json .Config.Env}}', item['id']]))
+        require(observed == expected,
+                'source_runtime_environment_mismatch')
+
+
 def export_directory(args):
     return Path('/var/lib/cnb-devops') / args.project / args.environment / 'exports' / args.export_id
 
 
-def journal_identity(args, release_sha, containers):
-    return {'schema': 'cnb-recovery-export-journal/v1', 'project': args.project, 'environment': args.environment,
+def journal_identity(args, release_sha, containers, record=None):
+    metadata = source_metadata(record) if record else {}
+    return {'schema': evidence_schema('export-journal', bool(metadata)), 'project': args.project, 'environment': args.environment,
             'export_id': args.export_id, 'host_policy_sha256': args.policy_sha256,
             'controller_sha256': args.controller_sha256, 'recovery_policy_sha256': args.recovery_policy_sha256,
-            'source_release_sha256': release_sha, 'containers': containers}
+            'source_release_sha256': release_sha, 'containers': containers, **metadata}
 
 
 def resume_source(args, host, docker, account, *, apply=True):
@@ -475,10 +555,11 @@ def resume_source(args, host, docker, account, *, apply=True):
     journal = strict_json(marker)
     require(type(journal) is dict and type(journal.get('containers')) is list
             and len(journal['containers']) == len(host.SERVICES), 'export_journal_invalid')
-    release_raw, release = source_release(host, account)
-    expected = journal_identity(args, sha(release_raw), journal['containers'])
+    failed = getattr(args, 'failed_transaction_sha256', None)
+    release_raw, release = source_record(host, account, failed)
+    expected = journal_identity(args, sha(release_raw), journal['containers'], release)
     require(marker == canonical(expected), 'export_journal_identity_mismatch')
-    require(not os.path.lexists(host.TRANSACTION_PATH), 'release_transaction_present')
+    require(failed is not None or not os.path.lexists(host.TRANSACTION_PATH), 'release_transaction_present')
     by_name = {item.get('name'): item for item in journal['containers']}
     require(set(by_name) == {'/' + n for n in host.CONTAINERS.values()}, 'journal_container_set_mismatch')
     for role, name in host.CONTAINERS.items():
@@ -489,13 +570,19 @@ def resume_source(args, host, docker, account, *, apply=True):
                 and item['health'] in (None, 'healthy', 'unhealthy', 'starting'), 'journal_container_invalid')
     output = export_directory(args)
     require(root_read(output / 'journal.json', 0o600) == marker, 'export_audit_journal_mismatch')
+    if failed is not None:
+        require(all(item['running'] and item['health'] in (None, 'healthy') for item in journal['containers']), 'export_journal_invalid')
+        validate_failed_runtime(host, docker, release, observe_original_containers(docker, journal['containers']), require_running=False)
     if not apply:
         observe_original_containers(docker, journal['containers'])
         return {'status': 'preview', 'action': 'resume_exact_original_containers', 'journal_sha256': sha(marker)}
     resume_containers(docker, journal['containers'], timeout=host.POLICY.get('startup_timeout_seconds', 900))
-    require(source_release(host, account)[0] == release_raw and root_read(host.RECOVERY_TRANSACTION_PATH, 0o600) == marker,
+    if failed is not None:
+        validate_failed_runtime(host, docker, release, observe_original_containers(docker, journal['containers']))
+    require(source_record(host, account, failed)[0] == release_raw and root_read(host.RECOVERY_TRANSACTION_PATH, 0o600) == marker,
             'source_changed_during_resume')
-    receipt = {'schema': 'cnb-recovery-source-resume/v1', 'status': 'resumed', 'journal_sha256': sha(marker)}
+    receipt = {'schema': evidence_schema('source-resume', failed is not None), 'status': 'resumed',
+               'journal_sha256': sha(marker), **source_metadata(release)}
     receipt_path = output / 'source-resumed.json'
     if receipt_path.exists():
         require(root_read(receipt_path, 0o600) == canonical(receipt), 'resume_receipt_mismatch')
@@ -507,9 +594,15 @@ def resume_source(args, host, docker, account, *, apply=True):
 
 
 def export_source(args, host, recovery, docker, account):
-    host._assert_release_unblocked()
-    release_raw, release = source_release(host, account)
+    failed = getattr(args, 'failed_transaction_sha256', None)
+    if failed is None:
+        host._assert_release_unblocked()
+    else:
+        require(not os.path.lexists(host.RECOVERY_TRANSACTION_PATH), 'recovery_transaction_present')
+    release_raw, release = source_record(host, account, failed)
     containers = [docker.inspect(host.CONTAINERS[role]) for role in host.SERVICES]
+    if failed is not None:
+        validate_failed_runtime(host, docker, release, containers)
     for role, item in zip(host.SERVICES, containers):
         require(item['name'] == '/' + host.CONTAINERS[role] and item['image'] == release['images'][role]
                 and item['auto_remove'] is False, 'source_container_mismatch')
@@ -524,14 +617,14 @@ def export_source(args, host, recovery, docker, account):
     version, docker_sha = pg.version(), docker.identity()
     if not args.apply:
         return {'status': 'preview', 'action': 'pause_export_resume', 'project': args.project, 'environment': args.environment,
-                'export_id': args.export_id, 'source_release_sha256': sha(release_raw), 'scope': recovery['mounts']}
+                'export_id': args.export_id, 'source_release_sha256': sha(release_raw), 'scope': recovery['mounts'], **source_metadata(release)}
     output = export_directory(args)
     root_directory(output.parent, 0o700)
     output.mkdir(mode=0o700)
     sync_dir(output.parent)
     root_directory(host.RECOVERY_ROOT)
     root_directory(host.RECOVERY_STATE_DIR)
-    marker = canonical(journal_identity(args, sha(release_raw), containers))
+    marker = canonical(journal_identity(args, sha(release_raw), containers, release))
     write_new(output / 'journal.json', marker)
     write_new(host.RECOVERY_TRANSACTION_PATH, marker)
     try:
@@ -541,7 +634,8 @@ def export_source(args, host, recovery, docker, account):
         require(all(not docker.inspect(item['id'])['running'] for item in containers), 'source_writers_not_stopped')
         require(pg.sql(b"SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid();").strip() == b'0', 'other_database_clients_present')
         before = pg.fingerprint()
-        require_business_rows(before, recovery['required_nonempty_tables'])
+        if failed is None:
+            require_business_rows(before, recovery['required_nonempty_tables'])
         payload = output / 'payload'
         payload.mkdir(mode=0o700)
         (payload / 'mounts').mkdir(mode=0o700)
@@ -553,12 +647,14 @@ def export_source(args, host, recovery, docker, account):
                 name = 'mounts/' + source + '.tar'
                 mounts[source].update(archive=name, **pack_tree(host.APP_DIR / source, payload / name))
                 files[name] = file_record(payload / name)
-        require(pg.fingerprint() == before and source_release(host, account)[0] == release_raw, 'source_changed_during_export')
+        require(pg.fingerprint() == before and source_record(host, account, failed)[0] == release_raw, 'source_changed_during_export')
+        if failed is not None:
+            validate_failed_runtime(host, docker, release, observe_original_containers(docker, containers), require_running=False)
         require(all(not docker.inspect(item['id'])['running'] for item in containers), 'source_writers_restarted')
         for source, item in mounts.items():
             if item['classification'] == 'backup':
                 require(tree_fingerprint(host.APP_DIR / source) == {k: item[k] for k in ('tree_sha256', 'files', 'bytes')}, 'business_tree_changed')
-        manifest = {'schema': 'cnb-recovery-export/v1', 'project': args.project, 'environment': args.environment,
+        manifest = {'schema': evidence_schema('export', failed is not None), 'project': args.project, 'environment': args.environment,
                     'export_id': args.export_id, 'created_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
                     'source_release_sha256': sha(release_raw), 'source_release': release,
                     'host_policy_sha256': args.policy_sha256, 'controller_sha256': args.controller_sha256,
@@ -567,7 +663,7 @@ def export_source(args, host, recovery, docker, account):
                     'files': files, 'database': before, 'mounts': mounts,
                     'scope': {'postgres': True, 'business_mounts': sorted(k for k,v in recovery['mounts'].items() if v == 'backup'),
                               'rebuildable_mounts': sorted(k for k,v in recovery['mounts'].items() if v == 'rebuild'),
-                              'redis': False, 'full_host': False}}
+                              'redis': False, 'full_host': False}, **source_metadata(release)}
         write_new(payload / 'manifest.json', canonical(manifest))
         archive = output / 'export.tar'
         descriptor = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -580,8 +676,8 @@ def export_source(args, host, recovery, docker, account):
                         tar.addfile(member, source)
             stream.flush()
             os.fsync(stream.fileno())
-        result = {'schema': 'cnb-recovery-export-receipt/v1', 'status': 'exported', 'archive_sha256': file_record(archive)['sha256'],
-                  'manifest_sha256': sha(canonical(manifest)), 'external_restore_verified': False}
+        result = {'schema': evidence_schema('export-receipt', failed is not None), 'status': 'exported', 'archive_sha256': file_record(archive)['sha256'],
+                  'manifest_sha256': sha(canonical(manifest)), 'external_restore_verified': False, **source_metadata(release)}
         write_new(output / 'export-receipt.json', canonical(result))
     finally:
         resume_source(args, host, docker, account)
@@ -592,13 +688,21 @@ def validate_manifest(model):
     expected = {'schema', 'project', 'environment', 'export_id', 'created_at', 'source_release_sha256', 'source_release',
                 'host_policy_sha256', 'controller_sha256', 'recovery_policy_sha256', 'source_docker_id_sha256',
                 'postgres', 'files', 'database', 'mounts', 'scope'}
-    require(type(model) is dict and set(model) == expected and model['schema'] == 'cnb-recovery-export/v1', 'export_manifest_invalid')
+    failed = type(model) is dict and model.get('schema') == 'cnb-recovery-export/v2'
+    if failed:
+        expected |= {'source_kind', 'source_baseline_sha256', 'public_identity_verified', 'business_acceptance_verified'}
+    require(type(model) is dict and set(model) == expected
+            and model['schema'] == evidence_schema('export', failed), 'export_manifest_invalid')
     require(NAME.fullmatch(model['project']) and NAME.fullmatch(model['export_id'])
             and model['environment'] in ('test', 'production'), 'export_scope_invalid')
     for key in ('source_release_sha256', 'host_policy_sha256', 'controller_sha256', 'recovery_policy_sha256', 'source_docker_id_sha256'):
         require(type(model[key]) is str and HASH.fullmatch(model[key]), 'export_digest_invalid')
-    require(sha(canonical(model['source_release'])) == model['source_release_sha256']
-            and model['source_release'].get('status') == 'passed', 'export_release_mismatch')
+    require(type(model['source_release']) is dict and sha(canonical(model['source_release'])) == model['source_release_sha256'],
+            'export_release_mismatch')
+    if failed:
+        validate_failed_evidence(model)
+    else:
+        require(model['source_release'].get('status') == 'passed', 'export_release_mismatch')
     pg = model['postgres']
     require(type(pg) is dict and set(pg) == {'image', 'version_num', 'database'} and IMAGE.fullmatch(pg['image'])
             and type(pg['version_num']) is int and 160000 <= pg['version_num'] < 170000
@@ -631,7 +735,7 @@ def validate_manifest(model):
     fingerprint = model['database']
     require(type(fingerprint) is dict and set(fingerprint) == {'schema_sha256', 'tables', 'sequences_sha256'}
             and HASH.fullmatch(fingerprint['schema_sha256']) and HASH.fullmatch(fingerprint['sequences_sha256'])
-            and type(fingerprint['tables']) is list and 1 <= len(fingerprint['tables']) <= 10000, 'database_fingerprint_invalid')
+            and type(fingerprint['tables']) is list and (0 if failed else 1) <= len(fingerprint['tables']) <= 10000, 'database_fingerprint_invalid')
     seen = set()
     for table in fingerprint['tables']:
         require(type(table) is dict and set(table) == {'schema', 'name', 'rows', 'sha256'}
@@ -640,8 +744,39 @@ def validate_manifest(model):
         key = (table['schema'], table['name'])
         require(key not in seen, 'duplicate_table_fingerprint')
         seen.add(key)
-    require(sum(t['rows'] for t in fingerprint['tables']) > 0, 'empty_backup_is_not_business_recovery')
+    if not failed:
+        require(sum(t['rows'] for t in fingerprint['tables']) > 0, 'empty_backup_is_not_business_recovery')
     return model
+
+
+def validate_failed_evidence(model):
+    """Portable transaction binding; installed source validation supplies its authority."""
+    record = model.get('source_release')
+    expected = {'schema', 'status', 'phase', 'reason', 'controller', 'controller_program_sha256',
+                'controller_compose_sha256', 'git_sha', 'build_id', 'images', 'previous_images',
+                'previous_release_sha256', 'snapshot', 'snapshot_manifest_sha256', 'updated_at'}
+    require(type(record) is dict and set(record) == expected
+            and record['schema'] == 'cnb-test-release-transaction/v2' and record['status'] == 'failed'
+            and record['phase'] == 'probe' and model.get('environment') == 'test'
+            and model.get('source_kind') == 'failed-test-release'
+            and model.get('public_identity_verified') is False and model.get('business_acceptance_verified') is False,
+            'failed_export_source_invalid')
+    for key in ('previous_release_sha256', 'snapshot_manifest_sha256', 'controller_program_sha256', 'controller_compose_sha256'):
+        require(type(record[key]) is str and HASH.fullmatch(record[key]), 'failed_export_source_invalid')
+    require(model.get('source_release_sha256') == sha(canonical(record))
+            and model.get('source_baseline_sha256') == record['previous_release_sha256'], 'failed_export_binding_mismatch')
+    for key, pattern in [('git_sha', '[0-9a-f]{40}'), ('build_id', 'cnb-[a-z0-9][a-z0-9-]{2,127}'),
+                         ('reason', '[a-z0-9_]{1,64}'), ('controller', '[a-z][a-z0-9-]{0,127}'),
+                         ('snapshot', '[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}'),
+                         ('updated_at', '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z')]:
+        require(type(record[key]) is str and re.fullmatch(pattern, record[key]), 'failed_export_source_invalid')
+    for key in ('images', 'previous_images'):
+        images = record[key]
+        require(type(images) is dict and (bool(images) or key == 'previous_images')
+                and len(images) <= 256 and all(type(role) is str and NAME.fullmatch(role)
+                    and type(value) is str and IMAGE.fullmatch(value) for role, value in images.items()), 'failed_export_source_invalid')
+    require(not record['previous_images'] or set(record['previous_images']) == set(record['images']), 'failed_export_source_invalid')
+    return record
 
 
 @contextlib.contextmanager
@@ -747,13 +882,15 @@ def restore_local(args):
                 require(tree_fingerprint(business / source) == {k: item[k] for k in ('tree_sha256', 'files', 'bytes')}, 'restored_business_files_mismatch')
         docker.run(['stop', '--time', '30', created], timeout=60)
         require(not docker.inspect(created)['running'], 'isolated_target_not_stopped')
-        result = {'schema': 'cnb-recovery-restore-receipt/v1', 'status': 'verified', 'external_restore_verified': True,
+        result = {'schema': evidence_schema('restore-receipt', model['schema'] == 'cnb-recovery-export/v2'),
+                  'status': 'verified', 'external_restore_verified': True,
                   'archive_sha256': args.archive_sha256, 'manifest_sha256': args.manifest_sha256,
                   'source_release_sha256': model['source_release_sha256'], 'source_docker_id_sha256': model['source_docker_id_sha256'],
                   'target_docker_id_sha256': target_id, 'postgres_image': image, 'postgres_version_num': model['postgres']['version_num'],
                   'schema_equal': True, 'all_table_data_equal': True, 'sequences_equal': True, 'business_files_equal': True,
                   'file_ownership_remapped_to_local_user': True, 'scope': model['scope'], 'target_volume': volume,
-                  'target_container_id': created, 'created_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
+                  'target_container_id': created, 'created_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+                  **source_metadata(model['source_release'])}
         write_new(destination / 'restore-receipt.json', canonical(result))
         os.unlink(destination / 'restore.pending.json')
         sync_dir(destination)
@@ -771,6 +908,7 @@ def main():
         for name in ('project', 'environment', 'policy-sha256', 'controller-sha256', 'recovery-policy-sha256', 'export-id'):
             sub.add_argument('--' + name, required=True)
         sub.add_argument('--apply', action='store_true')
+        sub.add_argument('--failed-transaction-sha256', help='explicitly preserve this failed test probe transaction')
     local = commands.add_parser('restore-local')
     for name in ('archive', 'archive-sha256', 'manifest-sha256', 'destination'):
         local.add_argument('--' + name, required=True)

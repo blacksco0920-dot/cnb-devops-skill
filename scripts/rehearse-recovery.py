@@ -58,6 +58,7 @@ def parse_args(argv=None):
     for name in ('lock-sha256', 'git-sha', 'build-id', 'export-id'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--pull-docker-config', type=Path, help='optional protected Docker config for a missing pinned image')
+    parser.add_argument('--failed-transaction-sha256', help='explicit opt-in to preserve one failed test probe transaction')
     parser.add_argument('--apply', action='store_true')
     return parser.parse_args(argv)
 
@@ -85,6 +86,11 @@ def prepare(args):
     policy, host = bundle['policy'], bundle['host']
     require(host.GIT_SHA.fullmatch(args.git_sha) and host.BUILD_ID.fullmatch(args.build_id), 'RELEASE_IDENTITY_INVALID')
     recovery = module_from_bytes(bundle['files']['host/recover-project.py'], args.bundle_dir / 'host/recover-project.py')
+    failed = getattr(args, 'failed_transaction_sha256', None)
+    require(failed is None or policy['environment'] == 'test' and type(failed) is str and recovery.HASH.fullmatch(failed),
+            'FAILED_TEST_TRANSACTION_PIN_REQUIRED')
+    if failed is not None:
+        require(hasattr(recovery, 'source_record') and hasattr(recovery, 'validate_failed_evidence'), 'FAILED_SOURCE_RECOVERY_UNSUPPORTED')
     require(recovery.NAME.fullmatch(args.export_id), 'EXPORT_ID_INVALID')
     accepted_raw = read_safe(args.accepted_installation, {0o600})
     accepted = strict_json(accepted_raw)
@@ -118,6 +124,8 @@ def prepare(args):
              'recovery-policy.json': ('recovery-policy.json', 0o444)}
     if policy['environment'] == 'production':
         fixed.update(installer.PRODUCTION_FILES)
+    if policy['environment'] == 'test' and 'host/repair-test-release.py' in bundle['files']:
+        fixed['repair-test-release.py'] = ('host/repair-test-release.py', 0o555)
     runtime = {name: {'source': source, 'sha256': sha(bundle['files'][source]), 'mode': mode}
                for name, (source, mode) in fixed.items()}
     scope = {'project': policy['project'], 'environment': policy['environment'], 'export_id': args.export_id,
@@ -130,8 +138,88 @@ def prepare(args):
                'pull_config_sha256': sha(pull_raw) if pull_raw else None}
     request = {'scope': scope, 'git_sha': args.git_sha, 'build_id': args.build_id,
                'installed_lock_sha256': accepted['lock_sha256'], 'runtime': runtime, 'install_dir': policy['install_dir']}
+    if failed is not None:
+        binding['failed_transaction_sha256'] = failed
+        request['failed_transaction_sha256'] = failed
     return SimpleNamespace(args=args, bundle=bundle, recovery=recovery, target=target, request=request,
                            scope=scope, binding=sha(canonical(binding)), pull_raw=pull_raw)
+
+
+def remote_grant(recovery, host, captured, args, request):
+    """Fixed root paths and installed helper only; the helper acquires the release lock."""
+    import base64, hashlib, os
+    from pathlib import Path
+    from types import ModuleType, SimpleNamespace
+    def check(value):
+        if not value:
+            raise ValueError('RECOVERY_REMOTE_GRANT_INVALID')
+    check(args.environment == 'test' and request.get('failed_transaction_sha256') == args.failed_transaction_sha256)
+    grant = request['grant']
+    mode = request['grant_mode']
+    check(mode in ('inspect', 'preview', 'apply') and type(grant) is dict
+          and set(grant) == {'request_sha256', 'files', 'archive_sha256', 'manifest_sha256', 'restore_receipt_sha256', 'expires_at'})
+    for name in ('request_sha256', 'archive_sha256', 'manifest_sha256', 'restore_receipt_sha256'):
+        check(type(grant[name]) is str and recovery.HASH.fullmatch(grant[name]))
+    check(set(grant['files']) == {'request.json', 'migration-spec.json', 'restore-receipt.json'})
+    files = {}
+    for name, record in grant['files'].items():
+        check(type(record) is dict and set(record) == {'sha256', 'base64'} and type(record['base64']) is str)
+        raw = base64.b64decode(record['base64'], validate=True)
+        check(0 < len(raw) <= 256 * 1024 and base64.b64encode(raw).decode('ascii') == record['base64']
+              and hashlib.sha256(raw).hexdigest() == record['sha256'])
+        check(recovery.canonical(recovery.strict_json(raw)) == raw)
+        files[name] = raw
+    check(recovery.sha(files['request.json']) == grant['request_sha256']
+          and recovery.sha(files['restore-receipt.json']) == grant['restore_receipt_sha256'])
+    release_request = recovery.strict_json(files['request.json'])
+    host.validate_release_request_model(release_request)
+    check(release_request['environment'] == 'test' and release_request['project'] == args.project)
+    code = captured['repair-test-release.py']
+    check(recovery.sha(code) == request['runtime']['repair-test-release.py']['sha256'])
+    helper = ModuleType('verified_installed_test_repair')
+    helper.__file__ = str(Path(host.POLICY['install_dir']) / 'repair-test-release.py')
+    exec(compile(code, helper.__file__, 'exec'), helper.__dict__)
+    permit_path = Path(host.POLICY['install_dir']) / 'test-repair/permit.json'
+    def read_permit():
+        if not os.path.lexists(permit_path):
+            return None, None
+        raw = recovery.root_read(permit_path, 0o444)
+        permit = helper.validate_permit(host, recovery.strict_json(raw), release_request)
+        check(raw == recovery.canonical(permit)
+              and recovery.root_read(permit_path.parent / 'permits' / (permit['permit_id'] + '.json'), 0o444) == raw)
+        expected = {'request_sha256': grant['request_sha256'], 'failed_transaction_sha256': args.failed_transaction_sha256,
+                    'controller_sha256': args.controller_sha256, 'policy_sha256': args.policy_sha256,
+                    'compose_sha256': host.CONTROLLER_COMPOSE_SHA256, 'recovery_policy_sha256': args.recovery_policy_sha256,
+                    'archive_sha256': grant['archive_sha256'], 'manifest_sha256': grant['manifest_sha256'],
+                    'restore_receipt_sha256': grant['restore_receipt_sha256'], 'expires_at': grant['expires_at'],
+                    'migration_spec': recovery.strict_json(files['migration-spec.json'])}
+        check(all(permit.get(key) == value for key, value in expected.items()))
+        helper.require_unused(host, args.failed_transaction_sha256)
+        return raw, permit
+    if mode == 'inspect':
+        raw, permit = read_permit()
+        return {'schema': 'cnb-test-repair-grant-remote/v1', 'status': 'granted' if permit else 'absent',
+                'receipt': helper.grant_receipt('granted', permit, raw) if permit else None, 'permit': permit}
+    directory = Path('/var/lib/cnb-devops') / args.project / 'test/repairs' / grant['request_sha256']
+    recovery.root_directory(directory.parent, 0o700)
+    recovery.root_directory(directory, 0o700)
+    for name, raw in files.items():
+        path = directory / name
+        if os.path.lexists(path):
+            check(recovery.root_read(path, 0o600) == raw)
+        else:
+            recovery.write_new(path, raw)
+        check(recovery.root_read(path, 0o600) == raw)
+    helper_args = SimpleNamespace(project=args.project, environment='test', controller_sha256=args.controller_sha256,
+        policy_sha256=args.policy_sha256, recovery_policy_sha256=args.recovery_policy_sha256,
+        failed_transaction_sha256=args.failed_transaction_sha256, request=str(directory / 'request.json'),
+        migration_spec=str(directory / 'migration-spec.json'), restore_receipt=str(directory / 'restore-receipt.json'),
+        archive=str(recovery.export_directory(args) / 'export.tar'), archive_sha256=grant['archive_sha256'],
+        manifest_sha256=grant['manifest_sha256'], restore_receipt_sha256=grant['restore_receipt_sha256'],
+        expires_at=grant['expires_at'], apply=mode == 'apply')
+    receipt = helper.grant(helper_args)
+    raw, permit = read_permit() if receipt['status'] in ('granted', 'unchanged') else (None, None)
+    return {'schema': 'cnb-test-repair-grant-remote/v1', 'status': receipt['status'], 'receipt': receipt, 'permit': permit}
 
 
 def remote_main():
@@ -196,10 +284,17 @@ def remote_main():
         exec(compile(captured['recover-project.py'], recovery.__file__, 'exec'), recovery.__dict__)
         args = SimpleNamespace(project=scope['project'], environment=scope['environment'], export_id=scope['export_id'],
                                policy_sha256=scope['host_policy_sha256'], controller_sha256=scope['controller_sha256'],
-                               recovery_policy_sha256=scope['recovery_policy_sha256'], apply=False)
+                               recovery_policy_sha256=scope['recovery_policy_sha256'], apply=False,
+                               failed_transaction_sha256=request.get('failed_transaction_sha256'))
         host, policy, docker = recovery.load_source(args)
+        if request['action'] == 'grant-repair':
+            print(json.dumps(remote_grant(recovery, host, captured, args, request), sort_keys=True))
+            return
         with recovery.release_lock(host) as account:
-            release_raw, release = recovery.source_release(host, account)
+            failed = args.failed_transaction_sha256
+            release_raw, release = (recovery.source_record(host, account, failed) if failed is not None
+                                    else recovery.source_release(host, account))
+            metadata = recovery.source_metadata(release) if failed is not None else {}
             check(release['git_sha'] == request['git_sha'] and release['build_id'] == request['build_id'])
             output = recovery.export_directory(args)
             pending = os.path.lexists(host.RECOVERY_TRANSACTION_PATH)
@@ -210,11 +305,13 @@ def remote_main():
             if os.path.lexists(output):
                 journal = optional('journal.json')
                 check(type(journal) is dict)
-                check(journal == recovery.journal_identity(args, recovery.sha(release_raw), journal['containers']))
+                expected_journal = (recovery.journal_identity(args, recovery.sha(release_raw), journal['containers'], release)
+                                    if failed is not None else recovery.journal_identity(args, recovery.sha(release_raw), journal['containers']))
+                check(journal == expected_journal)
                 if pending:
                     check(recovery.root_read(host.RECOVERY_TRANSACTION_PATH, 0o600) == recovery.canonical(journal))
                 exported = {'journal': journal, 'receipt': optional('export-receipt.json'), 'resumed': optional('source-resumed.json')}
-            if not pending:
+            if not pending and failed is None:
                 host._assert_release_unblocked()
             if request['action'] == 'download':
                 check(not pending and exported and exported['receipt'] and exported['resumed'])
@@ -229,13 +326,19 @@ def remote_main():
                 for role, item in zip(host.SERVICES, containers):
                     check(item['name'] == '/' + host.CONTAINERS[role] and item['image'] == release['images'][role]
                           and item['running'] and item['health'] in (None, 'healthy') and not item['auto_remove'])
-                host._probe_public_urls(request['git_sha'], request['build_id'])
-            state = {'schema': 'cnb-recovery-source-state/v1', 'project': args.project, 'environment': args.environment,
+                if failed is None:
+                    host._probe_public_urls(request['git_sha'], request['build_id'])
+                else:
+                    recovery.validate_failed_runtime(host, docker, release, containers)
+            state = {'schema': 'cnb-recovery-source-state/v2' if failed is not None else 'cnb-recovery-source-state/v1',
+                     'project': args.project, 'environment': args.environment,
                      'git_sha': release['git_sha'], 'build_id': release['build_id'],
                      'installed_lock_sha256': accepted['lock_sha256'], 'source_release_sha256': recovery.sha(release_raw),
                      'containers': containers, 'postgres': {'image': db['image'], 'version_num': pg.version(), 'database': pg.database},
                      'source_docker_id_sha256': docker.identity(), 'public_identity_verified': not pending,
-                     'pending': pending, 'export': exported}
+                     'pending': pending, 'export': exported, **metadata}
+            if failed is not None:
+                state['source_release'] = release
             if request['action'] == 'export':
                 check(not pending and exported is None and request['before'] == state)
                 recovery.export_source(args, host, policy, docker, account)  # standard preview before mutation
@@ -254,7 +357,7 @@ class SSHTransport:
     def __init__(self, plan):
         self.plan = plan
 
-    def call(self, action, *, destination=None, **extra):
+    def call(self, action, *, destination=None, raw_response=False, **extra):
         target = self.plan.target
         command = ['/usr/bin/ssh', '-F', '/dev/null', '-p', str(target['port']), '-i', target['identity_file']]
         for option in ('BatchMode=yes', 'StrictHostKeyChecking=yes', 'IdentitiesOnly=yes', 'IdentityAgent=none',
@@ -263,20 +366,30 @@ class SSHTransport:
                        'ConnectTimeout=15', 'ConnectionAttempts=1', 'ServerAliveInterval=15', 'ServerAliveCountMax=3'):
             command += ['-o', option]
         remote = ['/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'HOME=/root', 'LANG=C.UTF-8',
-                  '/usr/bin/python3', '-I', '-c', inspect.getsource(remote_main) + '\nremote_main()\n']
+                  '/usr/bin/python3', '-I', '-c', inspect.getsource(remote_grant) + '\n' + inspect.getsource(remote_main) + '\nremote_main()\n']
         if target['user'] != 'root':
             remote = ['/usr/bin/sudo', '-n', '--', *remote]
         command += [target['user'] + '@' + target['host'], shlex.join(remote)]
         with tempfile.TemporaryFile() as captured:
             result = subprocess.run(command, input=canonical({**self.plan.request, 'action': action, **extra}),
                                     stdout=destination or captured, stderr=subprocess.DEVNULL, timeout=1800, check=False)
+            if result.returncode != 0 and raw_response:
+                error = SessionError('SSH_INCOMPLETE')
+                if 0 < captured.tell() <= 1024 * 1024:
+                    captured.seek(0)
+                    error.remote_response = captured.read()
+                raise error
             require(result.returncode == 0, 'SSH_INCOMPLETE')
             if destination is not None:
                 require(destination.tell() <= self.plan.recovery.MAX_BYTES, 'TRANSFER_TOO_LARGE')
                 return
             require(captured.tell() <= 1024 * 1024, 'SSH_OUTPUT_TOO_LARGE')
             captured.seek(0)
-            return strict_json(captured.read())
+            raw = captured.read()
+            return raw if raw_response else strict_json(raw)
+
+    def grant_repair(self, grant, mode):
+        return self.call('grant-repair', raw_response=True, grant=grant, grant_mode=mode)
 
     def inspect(self):
         return self.call('inspect')
@@ -336,14 +449,14 @@ class Session:
             path = self.root / 'state.json'
             if os.path.lexists(path):
                 self.state = strict_json(read_safe(path, {0o600}))
-                require(self.state.get('schema') == 'cnb-recovery-session/v1' and self.state.get('binding') == self.plan.binding, 'SESSION_INPUT_CHANGED')
+                require(self.state.get('schema') == schema(self.plan, 'session') and self.state.get('binding') == self.plan.binding, 'SESSION_INPUT_CHANGED')
                 for name, expected in self.state['evidence'].items():
                     require(re.fullmatch('[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?', name)
                             and '..' not in Path(name).parts, 'EVIDENCE_PATH_INVALID')
                     require(self.record(self.root / name) == expected, 'EVIDENCE_CHANGED')
             else:
                 require(set(p.name for p in self.root.iterdir()) == {'.lock'}, 'NEW_SESSION_DIRECTORY_REQUIRED')
-                self.state = {'schema': 'cnb-recovery-session/v1', 'binding': self.plan.binding, 'created_at': now(),
+                self.state = {'schema': schema(self.plan, 'session'), 'binding': self.plan.binding, 'created_at': now(),
                               'events': [], 'evidence': {}, 'export_started': False, 'restore_started': False,
                               'status': 'prepared', 'resume_stage': 'inspect-source'}
                 self.save()
@@ -402,20 +515,45 @@ class Session:
             self.save()
 
 
+def schema(plan, name):
+    return 'cnb-recovery-' + name + ('/v2' if getattr(plan.args, 'failed_transaction_sha256', None) is not None else '/v1')
+
+
+def failed_metadata(plan, source):
+    if getattr(plan.args, 'failed_transaction_sha256', None) is None:
+        return {}
+    return {'source_kind': 'failed-test-release', 'source_baseline_sha256': source['source_baseline_sha256'],
+            'public_identity_verified': False, 'business_acceptance_verified': False}
+
+
 def validate_source(plan, source):
-    require(type(source) is dict and source.get('schema') == 'cnb-recovery-source-state/v1', 'SOURCE_STATE_INVALID')
+    require(type(source) is dict and source.get('schema') == schema(plan, 'source-state'), 'SOURCE_STATE_INVALID')
     require(all(source.get(key) == value for key, value in
                 {'project': plan.scope['project'], 'environment': plan.scope['environment'], 'git_sha': plan.args.git_sha,
                  'build_id': plan.args.build_id, 'installed_lock_sha256': plan.request['installed_lock_sha256']}.items()), 'SOURCE_IDENTITY_MISMATCH')
     require(source.get('pending') is False, 'SOURCE_RESUME_REQUIRED')
-    require(source.get('public_identity_verified') is True and type(source.get('containers')) is list and source['containers'], 'SOURCE_STATE_INVALID')
+    failed = getattr(plan.args, 'failed_transaction_sha256', None)
+    require(type(source.get('containers')) is list and source['containers'], 'SOURCE_STATE_INVALID')
+    if failed is None:
+        require(source.get('public_identity_verified') is True, 'SOURCE_STATE_INVALID')
+    else:
+        try:
+            record = plan.recovery.validate_failed_evidence(source)
+        except Exception as error:
+            raise SessionError('FAILED_SOURCE_EVIDENCE_INVALID') from error
+        require(source['source_release_sha256'] == failed and record['git_sha'] == plan.args.git_sha
+                and record['build_id'] == plan.args.build_id and set(record['images']) == set(plan.bundle['host'].SERVICES),
+                'FAILED_SOURCE_BINDING_MISMATCH')
     names = ['/' + plan.bundle['host'].CONTAINERS[role] for role in plan.bundle['host'].SERVICES]
     require([item.get('name') for item in source['containers']] == names, 'SOURCE_SERVICE_SET_MISMATCH')
-    for item in source['containers']:
+    for role, item in zip(plan.bundle['host'].SERVICES, source['containers']):
         require(type(item.get('id')) is str and plan.recovery.HASH.fullmatch(item['id'])
                 and type(item.get('image')) is str and plan.recovery.IMAGE.fullmatch(item['image']), 'SOURCE_CONTAINER_INVALID')
         require(item['running'] is True and item['health'] in (None, 'healthy') and not item['paused']
                 and not item['restarting'] and not item['auto_remove'], 'SOURCE_UNHEALTHY')
+        if failed is not None:
+            require(item['image'] == record['images'][role], 'FAILED_SOURCE_IMAGE_MISMATCH')
+            require(not plan.bundle['policy']['services'][role]['healthcheck'] or item['health'] == 'healthy', 'SOURCE_UNHEALTHY')
     return source
 
 
@@ -427,14 +565,16 @@ def verify_export(plan, before, after):
     require(stable_source(before) == stable_source(after), 'SOURCE_CHANGED')
     exported = after.get('export')
     require(type(exported) is dict and exported.get('resumed') is not None, 'SOURCE_RESUME_REQUIRED')
-    journal = {'schema': 'cnb-recovery-export-journal/v1', **plan.scope,
-               'source_release_sha256': before['source_release_sha256'], 'containers': before['containers']}
+    metadata = failed_metadata(plan, before)
+    journal = {'schema': schema(plan, 'export-journal'), **plan.scope,
+               'source_release_sha256': before['source_release_sha256'], 'containers': before['containers'], **metadata}
     require(exported['journal'] == journal, 'EXPORT_JOURNAL_MISMATCH')
-    require(exported['resumed'] == {'schema': 'cnb-recovery-source-resume/v1', 'status': 'resumed',
-                                   'journal_sha256': sha(plan.recovery.canonical(journal))}, 'SOURCE_RESUME_REQUIRED')
+    require(exported['resumed'] == {'schema': schema(plan, 'source-resume'), 'status': 'resumed',
+                                   'journal_sha256': sha(plan.recovery.canonical(journal)), **metadata}, 'SOURCE_RESUME_REQUIRED')
     receipt = exported['receipt']
-    require(type(receipt) is dict and set(receipt) == {'schema', 'status', 'archive_sha256', 'manifest_sha256', 'external_restore_verified'}
-            and receipt['schema'] == 'cnb-recovery-export-receipt/v1' and receipt['status'] == 'exported'
+    require(type(receipt) is dict and set(receipt) == {'schema', 'status', 'archive_sha256', 'manifest_sha256', 'external_restore_verified'} | set(metadata)
+            and all(receipt.get(key) == value for key, value in metadata.items())
+            and receipt['schema'] == schema(plan, 'export-receipt') and receipt['status'] == 'exported'
             and receipt['external_restore_verified'] is False
             and all(type(receipt[k]) is str and plan.recovery.HASH.fullmatch(receipt[k]) for k in ('archive_sha256', 'manifest_sha256')), 'EXPORT_RECEIPT_INVALID')
     return exported
@@ -466,14 +606,14 @@ def prepare_local(plan, source, directory):
 
 
 def verify_restore(plan, receipt, manifest, transfer, target_id):
-    require(type(receipt) is dict and receipt.get('schema') == 'cnb-recovery-restore-receipt/v1'
+    require(type(receipt) is dict and receipt.get('schema') == schema(plan, 'restore-receipt')
             and receipt.get('status') == 'verified', 'RESTORE_RECEIPT_INVALID')
     expected = {'external_restore_verified': True, 'schema_equal': True, 'all_table_data_equal': True,
                 'sequences_equal': True, 'business_files_equal': True, 'file_ownership_remapped_to_local_user': True,
                 'archive_sha256': transfer['archive_sha256'], 'manifest_sha256': transfer['manifest_sha256'],
                 'source_release_sha256': manifest['source_release_sha256'], 'source_docker_id_sha256': manifest['source_docker_id_sha256'],
                 'target_docker_id_sha256': target_id, 'postgres_image': manifest['postgres']['image'],
-                'postgres_version_num': manifest['postgres']['version_num'], 'scope': manifest['scope']}
+                'postgres_version_num': manifest['postgres']['version_num'], 'scope': manifest['scope'], **failed_metadata(plan, manifest)}
     require(all(receipt.get(key) == value and type(receipt.get(key)) is type(value) for key, value in expected.items()), 'RESTORE_RECEIPT_MISMATCH')
     require(type(receipt.get('target_container_id')) is str and plan.recovery.HASH.fullmatch(receipt['target_container_id'])
             and type(receipt.get('target_volume')) is str and re.fullmatch('cnb-recovery-[0-9a-f]{24}', receipt['target_volume']), 'RESTORE_TARGET_INVALID')
@@ -536,6 +676,9 @@ def execute(plan, transport=None):
                         and model['source_release']['git_sha'] == plan.args.git_sha and model['source_release']['build_id'] == plan.args.build_id
                         and model['source_docker_id_sha256'] == before['source_docker_id_sha256']
                         and model['postgres'] == before['postgres'], 'ARCHIVE_SOURCE_MISMATCH')
+                if getattr(plan.args, 'failed_transaction_sha256', None) is not None:
+                    require(model['source_release'] == before['source_release']
+                            and model['source_baseline_sha256'] == before['source_baseline_sha256'], 'ARCHIVE_SOURCE_MISMATCH')
                 return model
         manifest = session.stage('verify-archive', validate_archive)
         destination = session.root / 'restore'
@@ -564,12 +707,14 @@ def execute(plan, transport=None):
         final_source = session.stage('inspect-source-final', lambda: validate_source(plan, transport.inspect()))
         verify_export(plan, before, final_source)
         session.evidence('source-final.json', final_source)
-        result = {'schema': 'cnb-recovery-session-result/v1', 'status': 'verified', 'project': plan.scope['project'],
+        result = {'schema': schema(plan, 'session-result'), 'status': 'verified', 'project': plan.scope['project'],
                   'environment': plan.scope['environment'], 'git_sha': plan.args.git_sha, 'build_id': plan.args.build_id,
                   'export_id': plan.args.export_id, 'bundle_lock_sha256': plan.args.lock_sha256,
                   'installed_lock_sha256': plan.request['installed_lock_sha256'], 'external_restore_verified': True,
                   'restore_receipt_sha256': session.state['evidence']['restore/restore-receipt.json']['sha256'],
-                  'source_unchanged': True, 'scope': receipt['scope']}
+                  'source_unchanged': True, 'scope': receipt['scope'], **failed_metadata(plan, before)}
+        if getattr(plan.args, 'failed_transaction_sha256', None) is not None:
+            result['source_release_sha256'] = before['source_release_sha256']
         session.evidence('result.json', result)
         session.state.update(status='verified', resume_stage='complete', verified_at=now())
         session.save()
@@ -580,11 +725,14 @@ def main(argv=None):
     os.umask(0o077)
     plan = prepare(parse_args(argv))
     result = execute(plan) if plan.args.apply else {
-        'schema': 'cnb-recovery-session-result/v1', 'status': 'preview', 'project': plan.scope['project'],
+        'schema': schema(plan, 'session-result'), 'status': 'preview', 'project': plan.scope['project'],
         'environment': plan.scope['environment'], 'git_sha': plan.args.git_sha, 'build_id': plan.args.build_id,
         'export_id': plan.args.export_id, 'bundle_lock_sha256': plan.args.lock_sha256,
         'installed_lock_sha256': plan.request['installed_lock_sha256'], 'external_restore_verified': False,
         'actions': ['inspect-source', 'prepare-local', 'export-once', 'verify-source-resumed', 'download', 'restore-local', 'compare-source']}
+    if not plan.args.apply and getattr(plan.args, 'failed_transaction_sha256', None) is not None:
+        result.update(source_kind='failed-test-release', source_release_sha256=plan.args.failed_transaction_sha256,
+                      public_identity_verified=False, business_acceptance_verified=False)
     print(json.dumps(result, sort_keys=True))
     return 0
 

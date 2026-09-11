@@ -5,7 +5,7 @@
     "environment": "test plus explicitly configured production using a tested candidate and local administrator signature",
     "generator": "Python 3.12+, PyYAML 6.0.2, jsonschema 4.25.1",
     "host": "Ubuntu 24.04, Linux amd64, Docker Engine and Compose v2, non-root ubuntu Docker user",
-    "installation": "SSH setup for Ubuntu 24.04, isolated PostgreSQL 16 and Redis 7, existing native Caddy or explicitly pinned initial Caddy installation; active-version upgrade not included",
+    "installation": "SSH setup for Ubuntu 24.04, isolated PostgreSQL 16 and Redis 7, existing native Caddy or explicitly pinned initial Caddy installation; separate reviewed test failed/probe controller upgrade with unchanged policy and Compose",
     "runtime": "Python 3.12+ standard library; Node.js 22; Bash; Git"
   },
   "files": {
@@ -22,24 +22,27 @@
     "ci/run-production-deploy.mjs": "cdd5cd2c1d05170bce2a14d6af71e52d9f8addf4cdb010b4be7f3b0185324c1d",
     "ci/run-tat-release.mjs": "597b30d31fb55a02784474b338ad99f9fd375295916a423134e1438ca64afc0d",
     "ci/strict-json.mjs": "edc1f147ba4f9fb07a8d2f848e7360a1751563394e5d2c60af31125cf1fe7afe",
+    "ci/test-repair.mjs": "abbc2ee74e51dbc59313dba5587d52f56856d86635615e3f110442b409bcac19",
     "dependencies/SOURCES.md": "ec739a815c640a666d6d0faeb623bf989a5642a53f5e6851bdd5f3743eb1cd65",
     "dependencies/THIRD_PARTY.md": "1a64e8bd121e3241d119e6412d92c6e8f0e7e06b63f26dba107c68d660ddad62",
     "dependencies/package-lock.json": "2e480e70f7652ac7e0753af6e11445a7f93fa4ed911dcf485d28c562a295ffda",
     "dependencies/package.json": "b52f23c648264c0afae3163f6bf0c3f5ccf573331103adf3c0bbf300c9d38b3f",
-    "host/README.md": "85a4f925bacdce8c6781715bff4b9d4b146a014f178e9257881b1b448d2021bd",
+    "host/README.md": "87883350d3a4fdb5ef3e50a5b38ed01fa7d9f337ec0daace3882cf0ddca85650",
     "host/bootstrap-host.py": "f33d0e811d622e8db7238416d26f1a16a0b92099db37c9a62c3f5ab2911eb7b8",
     "host/configure-native-caddy.py": "07a56c80cd3ab1e0a86b0442d4823ca9e6df52b3085ba8bf8abac9c8e6695ba3",
-    "host/install-project.py": "69ee32e4c9b712fd7127f5fc84382ed8c36d24e9253ffba724bc8013951d142e",
+    "host/install-project.py": "d1d022a5604832e237a78796e0237fc88dc4934c7e76a711aa11e5c582f60aeb",
     "host/production-release.py": "34a004f5415ccac852875e7c4ef9813c9b854b49fea457a8365bceb6c6a1ae49",
-    "host/recover-project.py": "8f414576a2480dab6da18fc9aba4129852a35c98c4e2c0fe5e250d972a93a208",
+    "host/recover-project.py": "c2c8270308e6355d302e74a28b70761b0a29751b9bf39bdc5abf46211851c5bd",
+    "host/repair-test-release.py": "4941da0e4583b86e67c1e4cd0bb5bb4adfd8ccfa7ef5624d4a8fe8b0b662a29c",
     "host/setup-project.py": "4b77627cfa457e7ab73af7fc835b75d5b5e95d69088bbdf867320ad388fb0e85",
     "host/tat-command.sh.tmpl": "c6b310a7af1abd85bc834393595b82dab16481a5fbcae0f1a9a04a8f8ce06e9d",
-    "host/tat-deploy-test.py": "f7962c3498a5560cddb33dc57c2cd92d5f6a477cf3ba17f4d7188041e50e8acc",
+    "host/tat-deploy-test.py": "de62a4d0ac4f9493419c54b5746ee1a195afd79deb066d574140efb9261eedf3",
+    "host/upgrade-controller.py": "b6ef05323c0b0f0c074358da85d2b5aede4848c78a72aa30da6dc3643faa706f",
     "project.example.yml": "4e69116be539f7ccacb26b32b4205b56c736fb397b446d0dac5375efdbc02763",
     "project.full.example.yml": "426c9cfa73674f2fac325e2672c0c7b0b2374e133c7c72ee27acf44909208cad",
-    "project.schema.json": "d26c808a317e273becc4763365e7989acc29650681b767858666887c18569e01",
+    "project.schema.json": "a1654506c461497fec1b4ab4fd9d332636c736d3714a8ece299e94596884d58e",
     "templates/github-sync.yml.tmpl": "7e3b7700d9e8c8e26588348f6cf623b22c96d9b40931d2157657abf19cd09b86",
-    "templates/render.py": "7a3151ec3c0ef7d34915b2b05079db1f4f18f5e43238a5c28eb432425b2e7994"
+    "templates/render.py": "e742c07a31e5d69781bc72179a56d684d40c8de38615edce9ab4647125c59dcc"
   },
   "provenance": [
     {
@@ -114,6 +117,7 @@
       "wall_clock_seconds": 1724.275
     },
     "external_restore": "passed for both cloud environments using standard export and restore-local on a different Docker daemon: PostgreSQL 16 schema/all 12 tables/sequences and declared uploads reconciled, original source containers resumed, isolated target stopped without network or ports",
+    "failed_test_repair": "Local validation only: explicit test repair request, exact failed-source export/isolated restore, unchanged Prisma migration review, single-use root permit, atomic retained parent transaction, controller-only upgrade and TAT update. Real cloud repair validation pending; historical deployment evidence does not attest this bundle.",
     "first_host_bootstrap": "passed on two pure Ubuntu 24.04 hosts: pinned APT dependencies, isolated PostgreSQL 16 and Redis 7, protected host-generated runtime values",
     "local_contract_tests": "passed locally: generated stages, Docker Compose config, canonical host request, candidate and TAT binding with mocked cloud boundary",
     "local_two_project_generation": "passed: one and three services, identical copied core hashes",
@@ -132,5 +136,5 @@
     "production": "passed: immutable tested candidate, governed branch, fixed-TAT readiness, independently verified local Ed25519 approval, native owner approval, same-digest deployment, final annotation readback and synthetic business acceptance",
     "project_installation": "round 3 passed isolated empty test and production installation with generated and accepted locks equal; administrator-helper resume tested in round 1; active-version upgrade and a second project on shared hosts not tested"
   },
-  "version": "0.2.0-preview.4"
+  "version": "0.2.0-preview.5"
 }

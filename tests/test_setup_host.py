@@ -43,8 +43,8 @@ class SetupHostTests(unittest.TestCase):
         helper.setUp()
         helper.bundle(self.bundle)
         policy = policy_fixture()
-        policy.update(release_user="sample-release", release_home="/home/sample-release",
-                      docker_config="/home/sample-release/.docker/config.json")
+        policy.update(release_user="release", release_home="/home/release",
+                      docker_config="/home/release/.docker/config.json")
         for index, service in enumerate(policy["services"].values()):
             service["networks"] = ["sample-test"]
             service["loopback_port"] = {"host_ip": "127.0.0.1", "protocol": "tcp", "published": 13000 + index, "target": 8000 + index}
@@ -96,7 +96,7 @@ class SetupHostTests(unittest.TestCase):
 
     def test_preview_accepts_administrator_independent_of_project_release_user(self):
         target = json.loads(self.target.read_bytes())
-        for user in ("ubuntu", "root", "ops-admin", "sample-release"):
+        for user in ("ubuntu", "root", "ops-admin", "release"):
             with self.subTest(user=user):
                 target["user"] = user
                 self.target.write_text(json.dumps(target))

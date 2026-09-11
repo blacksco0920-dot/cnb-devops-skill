@@ -27,6 +27,17 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def failed_release(roles):
+    return {'schema': 'cnb-test-release-transaction/v2', 'status': 'failed', 'phase': 'probe',
+            'reason': 'public_probe_failed', 'controller': 'sample-test-controller-v1',
+            'controller_program_sha256': '3' * 64, 'controller_compose_sha256': '7' * 64,
+            'git_sha': '1' * 40, 'build_id': 'cnb-build-one',
+            'images': {role: 'registry.invalid/' + role + '@sha256:' + '2' * 64 for role in roles},
+            'previous_images': {}, 'previous_release_sha256': '6' * 64,
+            'snapshot': '20260909T000000Z-1234567890abcdef', 'snapshot_manifest_sha256': '7' * 64,
+            'updated_at': '2026-09-09T00:00:00Z'}
+
+
 class LocalDocker:
     """An isolated process boundary; the bundled Postgres/restore code runs normally."""
     def __init__(self):
@@ -96,12 +107,19 @@ class SourceTransport:
         self.changed = False
         release = {'status': 'passed', 'git_sha': '1' * 40, 'build_id': 'cnb-build-one',
                    'images': {role: 'registry.invalid/' + role + '@sha256:' + '2' * 64 for role in plan.bundle['host'].SERVICES}}
+        failed = bool(getattr(plan.args, 'failed_transaction_sha256', None))
+        if failed:
+            release = failed_release(plan.bundle['host'].SERVICES)
+        metadata = ({'source_kind': 'failed-test-release', 'source_baseline_sha256': '6' * 64,
+                     'public_identity_verified': False, 'business_acceptance_verified': False} if failed else {})
+        def schema(name):
+            return 'cnb-recovery-' + name + ('/v2' if failed else '/v1')
         self.containers = [{'id': str(index + 3) * 64, 'name': '/' + plan.bundle['host'].CONTAINERS[role], 'image': release['images'][role],
                             'running': True, 'paused': False, 'restarting': False, 'health': 'healthy', 'auto_remove': False}
                            for index, role in enumerate(plan.bundle['host'].SERVICES)]
-        self.journal = {'schema': 'cnb-recovery-export-journal/v1', **plan.scope,
+        self.journal = {'schema': schema('export-journal'), **plan.scope, **metadata,
                         'source_release_sha256': sha(canonical(release)), 'containers': self.containers}
-        model = {'schema': 'cnb-recovery-export/v1', **plan.scope, 'created_at': '2026-09-09T00:00:00Z',
+        model = {'schema': schema('export'), **plan.scope, **metadata, 'created_at': '2026-09-09T00:00:00Z',
                  'source_release_sha256': sha(canonical(release)), 'source_release': release,
                  'source_docker_id_sha256': '4' * 64,
                  'postgres': {'image': 'registry.invalid/postgres@sha256:' + '5' * 64, 'version_num': 160004, 'database': 'sample'},
@@ -110,6 +128,7 @@ class SourceTransport:
                      {'schema': 'public', 'name': 'Orders', 'rows': 1, 'sha256': sha(('a' * 64 + '\n').encode())}],
                      'sequences_sha256': sha(b'[]\n')}, 'mounts': {},
                  'scope': {'postgres': True, 'business_mounts': [], 'rebuildable_mounts': [], 'redis': False, 'full_host': False}}
+        self.model = model
         output = io.BytesIO()
         with tarfile.open(fileobj=output, mode='w') as archive:
             for name, raw in [('manifest.json', canonical(model)), ('database.dump', b'PGDMP-demo')]:
@@ -117,14 +136,16 @@ class SourceTransport:
                 item.size = len(raw)
                 archive.addfile(item, io.BytesIO(raw))
         self.archive = output.getvalue()
-        self.receipt = {'schema': 'cnb-recovery-export-receipt/v1', 'status': 'exported',
+        self.receipt = {'schema': schema('export-receipt'), **metadata, 'status': 'exported',
                         'archive_sha256': sha(self.archive), 'manifest_sha256': sha(canonical(model)), 'external_restore_verified': False}
-        self.resume = {'schema': 'cnb-recovery-source-resume/v1', 'status': 'resumed', 'journal_sha256': sha(canonical(self.journal))}
-        self.snapshot = {'schema': 'cnb-recovery-source-state/v1', 'project': 'sample', 'environment': 'test',
+        self.resume = {'schema': schema('source-resume'), **metadata, 'status': 'resumed', 'journal_sha256': sha(canonical(self.journal))}
+        self.snapshot = {'schema': schema('source-state'), 'project': 'sample', 'environment': 'test',
                          'git_sha': '1' * 40, 'build_id': 'cnb-build-one', 'installed_lock_sha256': '8' * 64,
                          'source_release_sha256': model['source_release_sha256'], 'containers': self.containers,
                          'postgres': model['postgres'], 'source_docker_id_sha256': '4' * 64,
-                         'public_identity_verified': True, 'pending': False, 'export': None}
+                         'public_identity_verified': True, 'pending': False, 'export': None, **metadata}
+        if failed:
+            self.snapshot['source_release'] = release
 
     def inspect(self):
         result = copy.deepcopy(self.snapshot)
@@ -240,6 +261,72 @@ class RecoverySessionTests(unittest.TestCase):
         self.assertEqual((plan.args.evidence_dir / 'state.json').stat().st_mode & 0o777, 0o600)
         self.assertEqual(self.m.execute(plan, source)['status'], 'verified')
         self.assertEqual(source.exports, 1)
+
+    def failed_plan(self):
+        # Discover the generated service set from the ordinary offline plan.
+        ordinary = self.m.prepare(self.m.parse_args(self.argv))
+        digest = sha(canonical(failed_release(ordinary.bundle['host'].SERVICES)))
+        self.argv += ['--failed-transaction-sha256', digest]
+        return self.prepare()
+
+    def test_failed_source_restores_on_different_daemon_without_claiming_business_acceptance(self):
+        plan = self.failed_plan()
+        source = SourceTransport(plan)
+        result = self.m.execute(plan, source)
+        self.assertEqual(result['schema'], 'cnb-recovery-session-result/v2')
+        self.assertEqual(result['source_kind'], 'failed-test-release')
+        self.assertTrue(result['external_restore_verified'])
+        self.assertFalse(result['public_identity_verified'])
+        self.assertFalse(result['business_acceptance_verified'])
+        self.assertEqual(source.model['source_release']['status'], 'failed')
+        self.assertEqual(source.model['source_release_sha256'], plan.args.failed_transaction_sha256)
+        receipt = json.loads((plan.args.evidence_dir / 'restore/restore-receipt.json').read_bytes())
+        self.assertEqual(receipt['source_baseline_sha256'], '6' * 64)
+        self.assertFalse(receipt['business_acceptance_verified'])
+        self.assertFalse(self.docker.started)
+
+    def test_failed_source_empty_business_rows_are_reconciled_and_v1_stays_strict(self):
+        plan = self.failed_plan()
+        model = SourceTransport(plan).model
+        for tables in ([], [{**model['database']['tables'][0], 'rows': 0, 'sha256': sha(b'')} ]):
+            candidate = copy.deepcopy(model)
+            candidate['database']['tables'] = tables
+            plan.recovery.validate_manifest(candidate)
+        ordinary = self.m.prepare(self.m.parse_args(self.argv[:-2]))
+        passed = SourceTransport(ordinary).model
+        passed['database']['tables'][0]['rows'] = 0
+        with self.assertRaises(plan.recovery.RecoveryError):
+            plan.recovery.validate_manifest(passed)
+
+    def test_failed_source_changed_binding_and_relabelled_success_are_refused(self):
+        plan = self.failed_plan()
+        source = SourceTransport(plan)
+        for field, value in [('source_release_sha256', 'f' * 64), ('source_baseline_sha256', 'e' * 64),
+                             ('public_identity_verified', True), ('business_acceptance_verified', True)]:
+            with self.subTest(field=field):
+                candidate = copy.deepcopy(source.snapshot)
+                candidate[field] = value
+                with self.assertRaises(self.m.SessionError):
+                    self.m.validate_source(plan, candidate)
+        candidate = copy.deepcopy(source.model)
+        candidate['environment'] = 'production'
+        with self.assertRaises(plan.recovery.RecoveryError):
+            plan.recovery.validate_manifest(candidate)
+        source.pending = True
+        with self.assertRaisesRegex(self.m.SessionError, 'SOURCE_RESUME_REQUIRED'):
+            self.m.execute(plan, source)
+        self.assertEqual(source.exports, 0)
+
+    def test_failed_source_transfer_resume_keeps_failed_binding_and_never_reexports(self):
+        plan = self.failed_plan()
+        source = SourceTransport(plan)
+        source.fail_download = True
+        with self.assertRaises(OSError):
+            self.m.execute(plan, source)
+        result = self.m.execute(plan, source)
+        self.assertEqual(result['source_kind'], 'failed-test-release')
+        self.assertEqual(source.exports, 1)
+        self.assertEqual(json.loads((plan.args.evidence_dir / 'state.json').read_bytes())['schema'], 'cnb-recovery-session/v2')
 
     def test_download_interruption_resumes_without_exporting_again(self):
         plan = self.prepare()

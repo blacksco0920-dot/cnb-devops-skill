@@ -127,10 +127,12 @@ def pipeline(config):
     manifest = '.cnb-release/candidate.json'
     config_arg = '--config ' + cfg
     gate = f'python3 {VENDOR}/ci/candidate_gate.py publication {config_arg} --manifest {manifest} --expected-tag "$RELEASE_CANDIDATE_TAG" --expected-commit "$CNB_COMMIT"'
+    initialize = 'set -eu\ntest "$CNB_BRANCH" = ' + q(config['test_branch']) + '\ncase "$CNB_COMMIT" in *[!0-9a-f]*|\'\') exit 1;; esac\ntest "${#CNB_COMMIT}" -eq 40\ncase "$CNB_BUILD_ID" in cnb-[a-z0-9]*) ;; *) exit 1;; esac\numask 077\nmkdir -p .cnb-release'
     stages = [
-        {'name': 'validate release identity', 'script': ['set -eu\ntest "$CNB_BRANCH" = ' + q(config['test_branch']) + '\ncase "$CNB_COMMIT" in *[!0-9a-f]*|\'\') exit 1;; esac\ntest "${#CNB_COMMIT}" -eq 40\ncase "$CNB_BUILD_ID" in cnb-[a-z0-9]*) ;; *) exit 1;; esac\numask 077\nmkdir -p .cnb-release']},
+        {'name': 'validate release identity', 'script': [initialize + '\nprintf \'##[set-output source_build_id=%s]\\n\' "$CNB_BUILD_ID"'],
+         'exports': {'source_build_id': 'RELEASE_SOURCE_BUILD_ID'}},
         {'name': 'install pinned deployment dependencies', 'script': ['set -eu\nif ! command -v python3 >/dev/null || ! command -v git >/dev/null; then\n  apt-get update\n  apt-get install --yes --no-install-recommends ca-certificates git python3\nfi\nnpm ci --prefix ' + VENDOR + '/dependencies --ignore-scripts --prefer-offline --registry ' + q(config['ci']['npm_registry'])]},
-        {'name': 'verify project', 'script': ['set -eu\n' + '\n'.join(config['ci']['verify'])]},
+        {'name': 'verify project', 'script': ['set -eu\n' + '\n'.join(config['ci']['verify']) + '\nprintf \'CNB_PROJECT_VERIFIED=%s\\n\' "$CNB_COMMIT"']},
         {'name': 'configure TCR push credentials', 'imports': config['secrets']['tcr_import'],
          'script': ['set -eu\n: "${TCR_USERNAME:?required}" "${TCR_PASSWORD:?required}"\numask 077\nmkdir -p "$HOME/.cnb-devops-docker"\nprintf \'%s\' "$TCR_PASSWORD" | DOCKER_CONFIG="$HOME/.cnb-devops-docker" docker login ccr.ccs.tencentyun.com --username "$TCR_USERNAME" --password-stdin']},
     ]
@@ -142,11 +144,12 @@ def pipeline(config):
         stages.append({'name': 'build and push ' + role, 'script': [script], 'exports': {'image': var}})
     image_env = {role: 'RELEASE_IMAGE_' + role.upper().replace('-', '_') for role in sorted(config['services'])}
     script = "set -eu\npython3 - <<'PY'\nimport json, os\nfrom pathlib import Path\nkeys = " + repr(image_env) + "\nPath('.cnb-release/images.json').write_text(json.dumps({key: os.environ[value] for key, value in keys.items()}) + '\\n')\nPY\nrm -f -- \"$HOME/.cnb-devops-docker/config.json\""
-    stages.append({'name': 'record digests and remove push credentials', 'script': [script]})
+    stages.append({'name': 'record digests and remove push credentials', 'script': [script + '\nnode ' + VENDOR + '/ci/test-repair.mjs --action=record --config=' + cfg + ' --images=.cnb-release/images.json']})
+    build_stage_count = len(stages)
     stages.append({'name': 'deploy and verify test through TAT', 'imports': config['secrets']['tat_import'],
                    'script': ['set -eu\n: "${CNB_TAT_BINDING_JSON:?required}"\numask 077\nprintf \'%s\\n\' "$CNB_TAT_BINDING_JSON" > .cnb-release/tat-binding.json\nnode ' + VENDOR + '/ci/run-tat-release.mjs --config=' + cfg + ' --binding=.cnb-release/tat-binding.json --images=.cnb-release/images.json --receipt=.cnb-release/receipt.json'],
                    'exports': {'invocation_id': 'RELEASE_TEST_INVOCATION_ID', 'completed_at': 'RELEASE_TEST_COMPLETED_AT', 'receipt_sha256': 'RELEASE_TEST_RECEIPT_SHA256'}})
-    stages.append({'name': 'assemble verified candidate', 'script': [f'python3 {VENDOR}/ci/candidate_manifest.py assemble --config {cfg} --receipt .cnb-release/receipt.json --receipt-sha256 "$RELEASE_TEST_RECEIPT_SHA256" --invocation-id "$RELEASE_TEST_INVOCATION_ID" --completed-at "$RELEASE_TEST_COMPLETED_AT" --build-id "$CNB_BUILD_ID" --commit "$CNB_COMMIT" --output {manifest}'],
+    stages.append({'name': 'assemble verified candidate', 'script': [f'python3 {VENDOR}/ci/candidate_manifest.py assemble --config {cfg} --receipt .cnb-release/receipt.json --receipt-sha256 "$RELEASE_TEST_RECEIPT_SHA256" --invocation-id "$RELEASE_TEST_INVOCATION_ID" --completed-at "$RELEASE_TEST_COMPLETED_AT" --build-id "$RELEASE_SOURCE_BUILD_ID" --commit "$CNB_COMMIT" --output {manifest}'],
                    'exports': {'candidate_tag': 'RELEASE_CANDIDATE_TAG', 'manifest_sha256': 'RELEASE_CANDIDATE_MANIFEST_SHA256', 'application_commit': 'RELEASE_CANDIDATE_COMMIT'}})
     stages.append({'name': 'publish immutable candidate Tag', 'script': [f'bash {VENDOR}/ci/publish-candidate-tag.sh --config={cfg} --manifest={manifest} --tag="$RELEASE_CANDIDATE_TAG" --commit="$CNB_COMMIT" --remote=https://cnb.cool/{config["cnb_repository"]}.git']})
     stages.append({'name': 'initialize annotation readback', 'script': ["umask 077\nprintf '{}\\n' > .cnb-release/before.json"]})
@@ -165,6 +168,19 @@ def pipeline(config):
            'lock': {'key': f'{project}-test-release', 'expires': 14400, 'timeout': 14400, 'wait': True},
            'runner': {'tags': 'cnb:arch:amd64', 'cpus': 4}, 'docker': {'image': config['ci']['image']},
            'services': ['docker'], 'stages': stages}
+    prepare_repair = copy.deepcopy(job)
+    prepare_repair['name'] = f'cnb-devops-{project}-prepare-repair'
+    prepare_repair['stages'] = copy.deepcopy(stages[:build_stage_count])
+    repair = copy.deepcopy(job)
+    repair['name'] = f'cnb-devops-{project}-repair-test'
+    repair['stages'] = [
+        {'name': 'validate repair source identity',
+         'script': [initialize + f'\nnode {VENDOR}/ci/test-repair.mjs --action=prepare --config={cfg}'],
+         'exports': {'source_build_id': 'RELEASE_SOURCE_BUILD_ID'}},
+        copy.deepcopy(stages[1]),
+        *copy.deepcopy(stages[build_stage_count:]),
+    ]
+    repair['stages'][2]['script'] = ['set -eu\n: "${CNB_TAT_BINDING_JSON:?required}"\numask 077\nprintf \'%s\\n\' "$CNB_TAT_BINDING_JSON" > .cnb-release/tat-binding.json\nnode ' + VENDOR + '/ci/test-repair.mjs --action=deploy --config=' + cfg + ' --binding=.cnb-release/tat-binding.json --receipt=.cnb-release/receipt.json']
     blocked = {'name': f'cnb-devops-{project}-production-blocked', 'docker': {'image': config['ci']['image']},
                'stages': [{'name': 'production adapter pending verification',
                            'script': ['echo "Production is not enabled in this bundle version; staging candidates remain available." >&2\nexit 1']}]}
@@ -173,7 +189,8 @@ def pipeline(config):
     if config.get('production'):
         production_jobs = {'web_trigger_production_readiness': [production_job(config, 'readiness')],
                            'tag_deploy.production': [production_job(config, 'apply')]}
-    return {config['test_branch']: {'push': [job]}, project + '-candidate-*': production_jobs}
+    return {config['test_branch']: {'push': [job], 'api_trigger_prepare_repair': [prepare_repair],
+                                   'api_trigger_repair_test': [repair]}, project + '-candidate-*': production_jobs}
 
 
 def production_job(config, phase):

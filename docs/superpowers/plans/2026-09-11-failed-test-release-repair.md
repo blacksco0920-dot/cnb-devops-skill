@@ -22,41 +22,41 @@
 Files: `assets/cnb-tcr-tat/host/recover-project.py`, `scripts/rehearse-recovery.py`, focused recovery tests.
 Interface: `source_record(host, account, failed_transaction_sha256=None) -> (raw, record)`; CLI opt-in `--failed-transaction-sha256`. Existing passed-only source API and v1 receipts remain compatible. Failed mode uses v2 evidence with `source_kind=failed-test-release`, `source_baseline_sha256`, actual failed transaction as source, and `public_identity_verified=false`.
 
-- [ ] Reproduce the failed/probe source rejection with a temporary real transaction and snapshot fixture.
-- [ ] Add exact failed-source, baseline, snapshot, runtime and export journal checks.
-- [ ] Reuse export/restore while retaining application marker and all actual data; preserve interrupted export resume.
-- [ ] Test wrong pin/phase/production, source drift, archive checksums, unchanged marker and original-container resume.
+- [x] Reproduce the failed/probe source rejection with a temporary real transaction and snapshot fixture.
+- [x] Add exact failed-source, baseline, snapshot, runtime and export journal checks.
+- [x] Reuse export/restore while retaining application marker and all actual data; preserve interrupted export resume.
+- [x] Test wrong pin/phase/production, source drift, archive checksums, unchanged marker and original-container resume.
 
 ## Task 2: Reviewed fixed-controller upgrade
 
 Files: new fixed host/local upgrade entries, installer/rehearsal integration only if required, focused upgrade tests.
 Interface: old accepted installation + old/new fully pinned bundles + exact failed transaction; output new installation receipt and independent upgrade receipt linking old/new identities. Runtime policy, Compose, recovery policy and empty baseline must remain byte-identical.
 
-- [ ] Reproduce rejection of an active-controller change by the first-install path; keep that rejection intact.
-- [ ] Implement strict old/new runtime inventory and durable administrator upgrade journal under the same release lock.
-- [ ] Install only reviewed fixed program/shim/manifest files; interruption leaves release blocked and resumes only exact recorded inputs.
-- [ ] Verify all installed bytes and preserve original app transaction/config/data; test interruption and mismatched retry.
+- [x] Reproduce rejection of an active-controller change by the first-install path; keep that rejection intact.
+- [x] Implement strict old/new runtime inventory and durable administrator upgrade journal under the same release lock.
+- [x] Install only reviewed fixed program/shim/manifest files; interruption leaves release blocked and resumes only exact recorded inputs.
+- [x] Verify all installed bytes and preserve original app transaction/config/data; test interruption and mismatched retry.
 
 ## Task 3: Single-use failed-test repair transaction
 
 Files: `assets/cnb-tcr-tat/host/tat-deploy-test.py`, fixed administrator permit entry, focused transaction tests.
-Interface: existing `cnb-release-request/v1` unchanged. A root-owned permit selects repair only when exact old transaction and new request match; the permit includes recovered source/data identity, unchanged migration review and expiry. No caller-supplied recovery command or arbitrary path.
+Interface: ordinary `cnb-release-request/v1` remains unchanged. The repair adapter sends the same eight fields under test-only `cnb-test-repair-request/v1`, which requires an exact failed transaction and root permit and cannot fall back to ordinary deployment or replay after success. The permit hashes the normalized ordinary request and binds recovered source/data identity, unchanged Prisma migration review and expiry. No caller-supplied executable command.
 
-- [ ] Reproduce ordinary blocked retry and missing repair path; keep ordinary no-permit rejection.
-- [ ] Validate root permit, source runtime/data and original snapshot before any new runtime mutation.
-- [ ] Permanently archive parent transaction/snapshot binding, then atomically transition to a linked child transaction while holding original lock.
-- [ ] Reuse backup/migration/start/probe/record logic. Failure stays blocked; success writes a real passed record only after all checks.
-- [ ] Test expired/mismatched/reused permits, migration changes, interruption, retention protection, and source drift.
+- [x] Reproduce ordinary blocked retry and missing repair path; keep ordinary no-permit rejection.
+- [x] Validate root permit, source runtime/data and original snapshot before any new runtime mutation.
+- [x] Permanently archive parent transaction/snapshot binding, then atomically transition to a linked child transaction while holding original lock.
+- [x] Reuse backup/start/probe/record logic. Verify identical Prisma files, schema, provider lock and complete database migration history, then skip the entire already-completed migration argv. Failure stays blocked; success writes a real passed record only after all checks.
+- [x] Test expired/mismatched/reused permits, migration changes, interruption, retention protection, and source drift.
 
 ## Task 4: Reusable orchestration and CNB repair event
 
 Files: fixed local repair-session entry, `assets/cnb-tcr-tat/templates/render.py`, small CI request adapter and focused tests; bundle hashes/version and reference docs.
 Interface: administrator prepares a reviewed request from the complete verified build; API-triggered test repair reuses that build's exact SHA/build/images, existing TAT and candidate stages. It does not rebuild application images or require the user to assemble commands.
 
-- [ ] Verify the request is bound to the current commit, generated controller/config and complete service set.
-- [ ] Add fixed repair preparation/publish flow and generated `api_trigger` event that omits build stages only for this bound repair path.
-- [ ] Validate normal push/production output and candidate checks remain effective.
-- [ ] Update discoverable Skill guidance with one recovery decision path; retain honest boundaries.
+- [x] Verify the request is bound to the current commit, generated controller/config and complete service set.
+- [x] Add fixed repair preparation/publish flow and generated `api_trigger` event that omits build stages only for this bound repair path.
+- [x] Validate normal push/production output and candidate checks remain effective.
+- [x] Update discoverable Skill guidance with one recovery decision path; retain honest boundaries.
 
 ## Task 5: Independent review and real CRM validation
 
@@ -70,3 +70,5 @@ Interface: administrator prepares a reviewed request from the complete verified 
 ## Execution record
 
 2026-09-11: design approved; existing worktree is clean at b7efc14. CRM adapter fix committed locally at 5611643 and verified; live source remains d8c09d4 / cnb-7dg-1k26206df failed/probe. No host mutation has occurred for this plan yet.
+
+2026-09-11 execution: local fixed-host/CI/request/upgrade/recovery regressions and independent boundary review completed. CRM test controller upgrade and failed-source export/isolated restore both passed on their first execution. Original failed transaction, empty baseline and source containers retained; database/tables/sequences/uploads reconciled on a different local Docker daemon. Fixed TAT updated in place and CNB test Secret binding read back. Application repair build and release are still pending.

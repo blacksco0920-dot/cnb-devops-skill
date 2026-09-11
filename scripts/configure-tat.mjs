@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Administrator setup only. Never invokes, modifies, or deletes a command.
+// Administrator configuration only. Updates require explicit previous spec/binding.
+// Never invokes or deletes a command.
 // Official API 2020-10-28: https://cloud.tencent.com/document/api/1340/52684
 // DescribeCommands: https://cloud.tencent.com/document/api/1340/52681
 // Install the bundle's pinned dependencies with npm ci --ignore-scripts.
@@ -229,6 +230,77 @@ export async function configureTat({ spec, apply = false, client, instanceClient
   if (filename) writeExclusive(filename, result);
   return result;
 }
+
+// ModifyCommand: https://cloud.tencent.com/document/product/1340/52677
+// A durable intent precedes the single write. Uncertain old state is not retried.
+export async function updateTat({spec, previousSpec, previousBinding, apply = false, client, instanceClient = client, output}) {
+  validateSpec(spec); validateSpec(previousSpec);
+  const old = previousSpec.expectedCommand, next = spec.expectedCommand;
+  if (typeof apply !== 'boolean' || spec.environment !== 'test' || previousSpec.environment !== 'test' ||
+      spec.project !== previousSpec.project || canonical(spec.target) !== canonical(previousSpec.target) ||
+      !spec.expected_artifacts || !previousSpec.expected_artifacts ||
+      ['compose_sha256', 'policy_sha256'].some(k => spec.expected_artifacts[k] !== previousSpec.expected_artifacts[k]) ||
+      ['CommandType','Username','WorkingDirectory','Timeout','EnableParameter','DefaultParameters','DefaultParameterConfs']
+        .some(k => canonical(old[k]) !== canonical(next[k]))) fail('TAT_UPDATE_SCOPE_MISMATCH');
+  const oldPlan = await configureTat({spec: previousSpec});
+  if (!object(previousBinding) || previousBinding.status !== 'verified' || previousBinding.target_verified !== true ||
+      !/^cmd-[a-z0-9]{4,32}$/.test(previousBinding.command_id) ||
+      Object.keys(oldPlan).filter(k => !['status','target_verified'].includes(k))
+        .some(k => canonical(previousBinding[k]) !== canonical(oldPlan[k]))) fail('TAT_PREVIOUS_BINDING_MISMATCH');
+  const result = {...await configureTat({spec}), command_id: previousBinding.command_id};
+  if (!apply) return result;
+  if (!output) fail('TAT_OUTPUT_REQUIRED');
+  const filename = path.resolve(output);
+  safeDirectory(path.dirname(filename));
+  const journal = filename + '.update-intent.json';
+  const intent = {schema: 'cnb-tat-update-intent/v1', command_id: result.command_id,
+    previous_spec_sha256: hash(canonical(previousSpec)), spec_sha256: hash(canonical(spec)),
+    previous_binding_sha256: hash(canonical(previousBinding))};
+  const exists = name => {
+    try {fs.lstatSync(name); return true;} catch (error) {if (error.code === 'ENOENT') return false; throw error;}
+  };
+  const pending = exists(journal), finished = exists(filename);
+  if (pending && canonical(readJson(journal, true)) !== canonical(intent)) fail('TAT_UPDATE_INTENT_MISMATCH');
+  if (finished && !pending) fail('TAT_UPDATE_INTENT_REQUIRED');
+  if (!client || typeof client.DescribeCommands !== 'function' || typeof client.ModifyCommand !== 'function') fail('TAT_CLIENT_REQUIRED');
+  const targetStatus = await verifyTarget(spec.target, client, instanceClient);
+  const current = await describe(client, {CommandIds: [result.command_id]});
+  if (current.length !== 1) fail('TAT_READBACK_INCOMPLETE');
+  if (pending) {
+    try {verifyCommand(current[0], next, result.command_id);}
+    catch {
+      verifyCommand(current[0], old, result.command_id); // unknown state remains a hard drift error
+      fail('TAT_UPDATE_UNCERTAIN_REVIEW_REQUIRED');
+    }
+  } else {
+    verifyCommand(current[0], old, result.command_id);
+    const destination = await describe(client, {Filters: [{Name: 'command-name', Values: [next.CommandName]}]});
+    if (next.CommandName === old.CommandName) {
+      if (destination.length !== 1) fail('TAT_READBACK_INCOMPLETE');
+      verifyCommand(destination[0], old, result.command_id);
+    } else if (destination.length !== 0) fail('TAT_COMMAND_DRIFT');
+    writeExclusive(journal, intent);
+    try {
+      await client.ModifyCommand({CommandId: result.command_id, Content: Buffer.from(next.Content).toString('base64'),
+        CommandName: next.CommandName, Description: next.Description, Timeout: next.Timeout});
+    } catch {fail('TAT_UPDATE_UNCERTAIN');}
+  }
+  const readback = await describe(client, {CommandIds: [result.command_id]});
+  if (readback.length !== 1) fail('TAT_READBACK_INCOMPLETE');
+  verifyCommand(readback[0], next, result.command_id);
+  const byName = await describe(client, {Filters: [{Name: 'command-name', Values: [next.CommandName]}]});
+  if (byName.length !== 1) fail('TAT_READBACK_INCOMPLETE');
+  verifyCommand(byName[0], next, result.command_id);
+  Object.assign(result, {status: 'verified', target_verified: true, target_status: targetStatus});
+  if (finished) {
+    const saved = readJson(filename, true);
+    // Request IDs change on every read; all fixed binding fields must be identical.
+    if (canonical({...saved, target_status: null}) !== canonical({...result, target_status: null})) fail('TAT_UPDATE_RESULT_MISMATCH');
+    return saved;
+  }
+  writeExclusive(filename, result);
+  return result;
+}
 function readJson(filename, secret = false) {
   safeDirectory(path.dirname(path.resolve(filename)));
   const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -236,7 +308,7 @@ function readJson(filename, secret = false) {
     const st = fs.fstatSync(fd);
     if (!st.isFile() || st.nlink !== 1 || ![0, process.getuid()].includes(st.uid) ||
         (st.mode & 0o022) || (secret && (st.mode & 0o777) !== 0o600) || st.size > 1024 * 1024) fail('TAT_INPUT_UNSAFE');
-    return JSON.parse(fs.readFileSync(fd, 'utf8'));
+    return parseStrictJson(fs.readFileSync(fd, 'utf8'), {maxBytes: 1024 * 1024});
   } finally { fs.closeSync(fd); }
 }
 function credentials(filename) {
@@ -278,7 +350,7 @@ export async function main(args = process.argv.slice(2)) {
   const options = {};
   for (let i = 0; i < args.length; i++) {
     const key = args[i];
-    if (!['--spec', '--output', '--apply', '--credentials', '--sdk-root'].includes(key) || Object.hasOwn(options, key)) fail('TAT_ARGUMENTS_INVALID');
+    if (!['--spec', '--output', '--apply', '--credentials', '--sdk-root', '--previous-spec', '--previous-binding'].includes(key) || Object.hasOwn(options, key)) fail('TAT_ARGUMENTS_INVALID');
     if (key === '--apply') options[key] = true;
     else {
       if (!args[i + 1] || args[i + 1].startsWith('--')) fail('TAT_ARGUMENTS_INVALID');
@@ -288,7 +360,11 @@ export async function main(args = process.argv.slice(2)) {
   if (!options['--spec']) fail('TAT_ARGUMENTS_INVALID');
   const spec = validateSpec(readJson(options['--spec']));
   const output = options['--output'];
-  if (output) outputAvailable(output);
+  const updating = !!options['--previous-spec'];
+  if (updating !== !!options['--previous-binding']) fail('TAT_ARGUMENTS_INVALID');
+  const previous = updating ? {previousSpec: readJson(options['--previous-spec']), previousBinding: readJson(options['--previous-binding'], true)} : {};
+  if (output && !updating) outputAvailable(output);
+  if (updating) await updateTat({spec, ...previous}); // reject scope drift before loading credentials
   let clients;
   if (options['--apply']) {
     if (!output) fail('TAT_OUTPUT_REQUIRED');
@@ -296,7 +372,7 @@ export async function main(args = process.argv.slice(2)) {
     const makeClient = clientFactory(options['--sdk-root'] || fileURLToPath(new URL('../assets/cnb-tcr-tat/dependencies', import.meta.url)));
     clients = makeClient(credentials(options['--credentials']), spec.target); // Same credentials and region for both APIs; read last.
   }
-  return configureTat({ spec, output, ...clients, apply: options['--apply'] === true });
+  return (updating ? updateTat : configureTat)({ spec, ...previous, output, ...clients, apply: options['--apply'] === true });
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().then(result => process.stdout.write(`${canonical(result)}\n`)).catch(error => {

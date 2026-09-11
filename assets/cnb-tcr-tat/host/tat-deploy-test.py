@@ -21,6 +21,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
+from types import ModuleType, SimpleNamespace
 from urllib.parse import parse_qs, unquote, urlsplit
 
 
@@ -62,6 +63,7 @@ RELEASE_SCHEMA_V2 = "cnb-test-release/v2"
 EMPTY_BASELINE_SCHEMA = "cnb-test-empty-baseline/v1"
 TRANSACTION_SCHEMA_V1 = "cnb-test-release-transaction/v1"
 TRANSACTION_SCHEMA_V2 = "cnb-test-release-transaction/v2"
+TRANSACTION_SCHEMA_V3 = "cnb-test-release-transaction/v3"
 RELEASE_TRANSACTION_PHASES = frozenset(
     {
         "prepared",
@@ -336,8 +338,8 @@ def render_tat_template(policy, controller_sha256, policy_sha256):
     return text.encode("ascii")
 
 
-def read_root_owned_json(path):
-    """Read a no-follow root-owned 0444 JSON file through non-writable ancestors."""
+def _read_root_owned_bytes(path, *, mode=0o444, maximum=128 * 1024):
+    """Capture a fixed root-owned file through non-writable, no-follow ancestors."""
     descriptor = -1
     file_descriptor = -1
     try:
@@ -355,9 +357,9 @@ def read_root_owned_json(path):
         file_descriptor = os.open(path.name, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=descriptor)
         before = os.fstat(file_descriptor)
         if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0
-            or before.st_nlink != 1 or stat.S_IMODE(before.st_mode) != 0o444 or not 0 < before.st_size <= 128 * 1024):
+            or before.st_nlink != 1 or stat.S_IMODE(before.st_mode) != mode or not 0 < before.st_size <= maximum):
             raise ValueError("unsafe policy file")
-        raw = os.read(file_descriptor, 128 * 1024 + 1)
+        raw = os.read(file_descriptor, maximum + 1)
         after = os.fstat(file_descriptor)
         current = os.stat(path.name, dir_fd=descriptor, follow_symlinks=False)
         def identity(info):
@@ -366,9 +368,7 @@ def read_root_owned_json(path):
                     info.st_size, info.st_mtime, info.st_ctime)
         if identity(before) != identity(after) or identity(after) != identity(current) or len(raw) != before.st_size:
             raise ValueError("policy changed while reading")
-        model = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_unique_json_object,
-                           parse_constant=_reject_json_constant)
-        return model, hashlib.sha256(raw).hexdigest()
+        return raw
     except (OSError, ValueError, UnicodeError, TypeError) as exc:
         raise DeploymentError("host_policy_unsafe") from exc
     finally:
@@ -376,6 +376,42 @@ def read_root_owned_json(path):
             os.close(file_descriptor)
         if descriptor >= 0:
             os.close(descriptor)
+
+
+def read_root_owned_json(path):
+    raw = _read_root_owned_bytes(path)
+    try:
+        model = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_unique_json_object,
+                           parse_constant=_reject_json_constant)
+        return model, hashlib.sha256(raw).hexdigest()
+    except (ValueError, UnicodeError, TypeError) as exc:
+        raise DeploymentError("host_policy_unsafe") from exc
+
+
+def _load_installed_module(name):
+    if name not in {"repair-test-release.py", "recover-project.py"}:
+        raise DeploymentError("repair_helper_invalid")
+    install = Path(POLICY["install_dir"])
+    lock, lock_sha = read_root_owned_json(install / "artifact-lock.json")
+    receipt, _ = read_root_owned_json(install / "installation.json")
+    if (receipt != {"schema": "cnb-test-installation/v1", "lock_sha256": lock_sha}
+        or type(lock) is not dict or lock.get("schema") != "cnb-devops-artifacts/v1"
+        or type(lock.get("files")) is not dict
+        or lock["files"].get("host/tat-deploy-test.py") != controller_program_sha256()
+        or lock["files"].get("host-policy.json") != POLICY_SHA256
+        or lock["files"].get("docker-compose.yml") != CONTROLLER_COMPOSE_SHA256):
+        raise DeploymentError("repair_installation_mismatch")
+    raw = _read_root_owned_bytes(install / name, mode=0o555, maximum=256 * 1024)
+    if hashlib.sha256(raw).hexdigest() != lock["files"].get("host/" + name):
+        raise DeploymentError("repair_helper_digest_mismatch")
+    module = ModuleType("verified_" + name.replace("-", "_").replace(".", "_"))
+    module.__file__ = str(install / name)
+    exec(compile(raw, module.__file__, "exec"), module.__dict__)
+    return module
+
+
+def _load_repair_helper():
+    return _load_installed_module("repair-test-release.py")
 
 
 def read_root_owned_policy(path):
@@ -482,6 +518,11 @@ def parse_tat_release_script(data):
                            parse_constant=_reject_json_constant)
         if raw != json.dumps(model, sort_keys=True, separators=(",", ":")).encode("ascii"):
             raise ValueError("non-canonical request")
+        if type(model) is dict and model.get("schema") == "cnb-test-repair-request/v1":
+            if POLICY["environment"] != "test":
+                raise ValueError("repair is test only")
+            normalized = {**model, "schema": "cnb-release-request/v1"}
+            return {**validate_release_request_model(normalized), "repair_required": True}
         return validate_release_request_model(model)
     except (ValueError, UnicodeError, TypeError, KeyError, json.JSONDecodeError) as exc:
         raise DeploymentError("release_request_invalid") from exc
@@ -1193,6 +1234,7 @@ def _validate_release_transaction_model(model):
     if type(model) is not dict or model.get("schema") not in {
         TRANSACTION_SCHEMA_V1,
         TRANSACTION_SCHEMA_V2,
+        TRANSACTION_SCHEMA_V3,
     }:
         raise DeploymentError("backup_retention_failed")
     common = {
@@ -1209,6 +1251,11 @@ def _validate_release_transaction_model(model):
         "updated_at",
     }
     expected = set(common)
+    repair = model["schema"] == TRANSACTION_SCHEMA_V3
+    if repair:
+        expected.remove("previous_images")
+        expected |= {"accepted_release_sha256", "source_images", "parent_transaction_sha256",
+                     "permit_sha256", "source_state_sha256", "snapshot", "snapshot_manifest_sha256"}
     if model["schema"] == TRANSACTION_SCHEMA_V1:
         expected |= {
             "compose_backup",
@@ -1216,7 +1263,7 @@ def _validate_release_transaction_model(model):
             "database_backup_sha256",
             "env_backup",
         }
-    else:
+    elif not repair:
         expected |= {
             "previous_release_sha256",
             "snapshot",
@@ -1236,7 +1283,10 @@ def _validate_release_transaction_model(model):
         or type(model.get("build_id")) is not str
         or not BUILD_ID.fullmatch(model["build_id"])
         or not _valid_release_images(model.get("images"))
-        or not _valid_previous_images(model)
+        or (not _valid_release_images(model.get("source_images")) if repair else not _valid_previous_images(model))
+        or (repair and (POLICY["environment"] != "test" or any(type(model.get(key)) is not str
+            or not SHA256.fullmatch(model[key]) for key in ("accepted_release_sha256", "parent_transaction_sha256",
+                                                           "permit_sha256", "source_state_sha256"))))
         or model.get("phase") not in RELEASE_TRANSACTION_PHASES
         or not _valid_utc_timestamp(model.get("updated_at"))
         or (
@@ -1261,8 +1311,8 @@ def _validate_release_transaction_model(model):
             raise DeploymentError("backup_retention_failed")
     elif (
         not _valid_snapshot_binding(model)
-        or type(model.get("previous_release_sha256")) is not str
-        or not SHA256.fullmatch(model["previous_release_sha256"])
+        or (not repair and (type(model.get("previous_release_sha256")) is not str
+                            or not SHA256.fullmatch(model["previous_release_sha256"])))
     ):
         raise DeploymentError("backup_retention_failed")
     return model
@@ -2665,6 +2715,11 @@ def enforce_release_snapshot_retention(release_root, *, current_snapshot, uid, g
     try:
         if type(current_snapshot) is not str or not SNAPSHOT_NAME.fullmatch(current_snapshot):
             raise DeploymentError("backup_retention_failed")
+        history = APP_DIR / ".repair-history"
+        if os.path.lexists(history):
+            _require_private_directory(history, uid, gid)
+            # A parent snapshot is a permanent hold in this first repair version.
+            return None
         authority = _load_retention_authority(uid, gid)
         release_record = authority.release_record
         release_transaction = authority.transaction_record
@@ -3037,6 +3092,7 @@ def _arguments(argv=None):
     values.git_sha = release["git_sha"]
     values.build_id = release["build_id"]
     values.controller_commit = release["controller_commit"]
+    values.repair_required = release.get("repair_required", False)
     return values, release["images"], _read_controller_compose()
 
 
@@ -3058,6 +3114,9 @@ def deploy(argv=None, *, release_override=None, authorize_locked=None):
     phase = "lock"
     transaction_active = False
     transaction = None
+    repair_context = None
+    repair_helper = None
+    core_view = None
     candidate_env = None
     candidate_compose = None
     lock_descriptor = os.open(
@@ -3072,7 +3131,18 @@ def deploy(argv=None, *, release_override=None, authorize_locked=None):
             fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise DeploymentError("release_busy") from exc
-        _assert_release_unblocked()
+        if getattr(values, "repair_required", False):
+            if POLICY["environment"] != "test" or not os.path.lexists(TRANSACTION_PATH):
+                raise DeploymentError("repair_failed_transaction_required")
+            # Only a root-installed helper and its fixed, exact-request permit may
+            # authorize the existing failed probe transaction selected by the repair schema.
+            phase = "authorization"
+            repair_helper = _load_repair_helper()
+            core_view = SimpleNamespace(**globals())
+            account = SimpleNamespace(pw_uid=os.geteuid(), pw_gid=os.getegid())
+            repair_context = repair_helper.authorize_locked(core_view, request_model, account)
+        else:
+            _assert_release_unblocked()
         if authorize_locked is not None:
             phase = "authorization"
             cached = authorize_locked(request_model)
@@ -3112,7 +3182,8 @@ def deploy(argv=None, *, release_override=None, authorize_locked=None):
         _write_new(candidate_env, candidate_env_bytes, 0o600, env_info.st_uid, env_info.st_gid)
         _write_new(candidate_compose, compose_bytes, 0o600, compose_info.st_uid, compose_info.st_gid)
         _preflight(env_text, images, candidate_compose, candidate_env)
-        _assert_empty_baseline_runtime(env_bytes, env_info.st_uid, env_info.st_gid)
+        if repair_context is None:
+            _assert_empty_baseline_runtime(env_bytes, env_info.st_uid, env_info.st_gid)
         phase = "pull"
         _compose(candidate_compose, candidate_env, ["pull", *SERVICES], images, timeout=600)
 
@@ -3168,30 +3239,37 @@ def deploy(argv=None, *, release_override=None, authorize_locked=None):
         if previous_release_raw != previous_release_raw_before:
             raise DeploymentError("backup_retention_failed")
 
-        transaction = {
-            "schema": TRANSACTION_SCHEMA_V2,
-            "status": "active",
-            "phase": "prepared",
-            "controller": CONTROLLER_ID,
-            "controller_program_sha256": controller_program_digest,
-            "controller_compose_sha256": CONTROLLER_COMPOSE_SHA256,
-            "git_sha": values.git_sha,
-            "build_id": values.build_id,
-            "images": images,
-            "previous_images": previous_release["images"],
-            "previous_release_sha256": hashlib.sha256(previous_release_raw).hexdigest(),
-            "snapshot": snapshot_ref.name,
-            "snapshot_manifest_sha256": snapshot_ref.manifest_sha256,
-            "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        }
-        transaction_bytes = (json.dumps(transaction, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
-        _write_new(
-            TRANSACTION_PATH,
-            transaction_bytes,
-            0o600,
-            env_info.st_uid,
-            env_info.st_gid,
-        )
+        if repair_context is not None:
+            try:
+                transaction = repair_helper.begin_locked(core_view, repair_context, snapshot_ref,
+                                                         env_info.st_uid, env_info.st_gid)
+            except Exception as exc:
+                raise DeploymentError("repair_transaction_switch_failed") from exc
+        else:
+            transaction = {
+                "schema": TRANSACTION_SCHEMA_V2,
+                "status": "active",
+                "phase": "prepared",
+                "controller": CONTROLLER_ID,
+                "controller_program_sha256": controller_program_digest,
+                "controller_compose_sha256": CONTROLLER_COMPOSE_SHA256,
+                "git_sha": values.git_sha,
+                "build_id": values.build_id,
+                "images": images,
+                "previous_images": previous_release["images"],
+                "previous_release_sha256": hashlib.sha256(previous_release_raw).hexdigest(),
+                "snapshot": snapshot_ref.name,
+                "snapshot_manifest_sha256": snapshot_ref.manifest_sha256,
+                "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            }
+            transaction_bytes = (json.dumps(transaction, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+            _write_new(
+                TRANSACTION_PATH,
+                transaction_bytes,
+                0o600,
+                env_info.st_uid,
+                env_info.st_gid,
+            )
         transaction_active = True
 
         phase = "migrate"
@@ -3204,7 +3282,7 @@ def deploy(argv=None, *, release_override=None, authorize_locked=None):
             env_info.st_uid,
             env_info.st_gid,
         )
-        if POLICY["migration"] is not None:
+        if repair_context is None and POLICY["migration"] is not None:
             _compose(
                 candidate_compose, candidate_env,
                 ["run", "--rm", "--no-deps", POLICY["migration"]["service"], *POLICY["migration"]["argv"]],
@@ -3268,6 +3346,11 @@ def deploy(argv=None, *, release_override=None, authorize_locked=None):
         }
         record_bytes = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
         _atomic_write(RELEASE_PATH, record_bytes, 0o600, env_info.st_uid, env_info.st_gid)
+        if repair_context is not None:
+            try:
+                repair_helper.complete_locked(core_view, transaction, hashlib.sha256(record_bytes).hexdigest())
+            except Exception as exc:
+                raise DeploymentError("repair_completion_failed") from exc
         TRANSACTION_PATH.unlink()
         _fsync_directory(APP_DIR)
         transaction_active = False

@@ -332,6 +332,8 @@ def apply_install(plan, runtime_env, *, installed_lock_sha256=None):
     if "recovery-policy.json" in plan["files"]:
         fixed.update({"recovery-policy.json": (plan["files"]["recovery-policy.json"], 0o444),
                       "recover-project.py": (plan["files"]["host/recover-project.py"], 0o555)})
+    if policy["environment"] == "test" and "host/repair-test-release.py" in plan["files"]:
+        fixed["repair-test-release.py"] = (plan["files"]["host/repair-test-release.py"], 0o555)
     # Completed installation is read-only even after ordinary release changes its runtime env.
     receipt_path = install / "installation.json"
     if receipt_path.exists():

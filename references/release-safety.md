@@ -202,6 +202,13 @@ assumption. Complete the configured recovery review, produce a new readiness
 result, and obtain new approval before any retry, even when the candidate's
 digest map is unchanged.
 
+For the supported test-only failed/probe case, [failed test repair](failed-test-repair.md)
+implements that review with an exact failed-source restore, unchanged Prisma
+migration proof and a root-owned short-lived permit. Reuse an existing explicit
+authorization for this scoped repair; the permit records the concrete reviewed
+request. It does not authorize production. Ordinary release requests cannot
+consume it, and repair requests cannot run after the failed source is gone.
+
 ## Atomic records and retention
 
 Update current, previous, and append-only history records atomically. A failed
