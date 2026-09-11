@@ -186,6 +186,13 @@
     ]
   },
   {
+    "scenario_id": "NOVICE_POSTGRES_FIRST_USE",
+    "tests": [
+      "tests.test_skill_package.SkillPackageTests.test_usage_fixtures_have_safe_paths_and_linked_scenario_ids",
+      "tests.test_prepare_project.PrepareProjectTests.test_preview_is_readonly_then_two_projects_share_identical_core"
+    ]
+  },
+  {
     "scenario_id": "SECOND_PROJECT_REUSE",
     "tests": [
       "tests.test_skill_package.SkillPackageTests.test_status_example_carries_a_usable_value_free_resume_checkpoint"

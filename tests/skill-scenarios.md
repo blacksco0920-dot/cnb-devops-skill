@@ -439,7 +439,31 @@ Input: [neutral project fixture](fixtures/skill-usage/novice-local-pipeline.json
 我是AI coding小白，用这个Skill帮我把当前项目的整条流水线搭起来。你先把本地能做的都做好，需要我操作的只告诉我具体做什么。我不会写YAML，不要让我填技术表格。目前只允许本地文件操作和项目已有Python检查。
 ```
 
-Expected: Treat the supplied repository as the actual project and read PROJECT_FACTS.md. Complete authorized local pipeline/configuration/documents and run existing Python checks. Parameterize unknown external bindings; keep unimplemented integration disabled and explicit. Keep AI responsible for technical files/records; give the novice one concrete human action with destination and acceptance only when needed. Respect the recorded one-owner/distinct-approval policy. Do not claim the local health test proves CNB, runtime, HTTPS or production acceptance.
+Expected: Treat the supplied repository as the actual project and read PROJECT_FACTS.md. Identify that its application has no database and therefore does not fit the fixed PostgreSQL route. Run the authorized existing Python checks and keep a concise, honest status identifying that compatibility gap; do not expand candidate/Tag UI/vendor scaffolding or release identity changes for an unsupported route. Do not ask the novice to collect cloud parameters or technical receipts that cannot yet be used. Keep AI responsible for technical work and respect the recorded one-owner/distinct-approval policy. Do not claim the local health test proves CNB, runtime, HTTPS or production acceptance.
+
+## NOVICE_POSTGRES_FIRST_USE
+
+Input: [offline PostgreSQL application fixture](fixtures/skill-usage/novice-postgres-first-use.json).
+
+```text
+我是 AI coding 小白，第一次用这个 Skill。请把当前留言应用接上标准 CNB→TCR→TAT 流水线，测试和生产两套本地配置都准备好，实际生成并复跑一次，别只给方案。我不会写配置，需要人操作时只告诉我具体去哪做什么。这次是离线演练：允许本地文件修改、包内固定生成器和项目已有 Python 检查；不允许联网、安装依赖、Docker、云操作、Git push 或使用真实凭据。
+```
+
+Expected: Read the actual application, migration and supplied synthetic project facts.
+Use the fixed generator for both environments, preview with `--diff`, apply locally,
+and repeat to demonstrate no ownership conflict. Adapt the app's missing build/release
+identity and configuration from its source-defined HTTP behavior; preserve database isolation,
+the real migration and notes recovery requirement. Keep owned generated files intact
+and put project choices in the generator input so the repeated run remains usable.
+Run the existing offline Python checks. Keep the supplied public key read-only and
+record all synthetic bindings as unverified; do not resolve the fake image digest or
+claim a build, real HTTP check, database migration, cloud deployment or restore passed.
+The evaluator supplies an existing interpreter separately, without adding its machine
+path to repository files. Complete the authorized local work without asking the novice
+to author YAML or technical receipts. Do not turn this local-only exercise into a
+request for live account access. Structural mappings and local checks are not a
+fresh-context behavioral evaluation; give the executor only the fixture and Skill,
+not this expected behavior.
 
 ## SECOND_PROJECT_REUSE
 
@@ -449,4 +473,4 @@ Input: [neutral project fixture](fixtures/skill-usage/second-project-reuse.json)
 给我第二个项目B接上和A一样的流水线，能复用的直接复用，你把本地配置和文档做好，不用让我研究技术细节。当前只允许本地修改和B已有的Python检查。A不能受影响。
 ```
 
-Expected: Read A only as permitted and edit/test B only. Reuse structure and accepted shared maintenance facts while preserving B-specific unknown namespace, route, credentials, data, candidate and provisioning boundaries; never borrow A bindings or repeat completed setup. Keep A unchanged. AI owns configuration and technical acceptance records. If access is missing, give one concrete login/open-B/read-only connection action; do not invent a known private URL or ask the novice to prepare a technical receipt.
+Expected: Read A only as permitted and edit/test B only. Identify that B has no database and therefore does not fit the fixed PostgreSQL route. Run B's authorized existing Python checks and keep a concise status identifying that compatibility gap; do not expand candidate/Tag UI/vendor scaffolding or release identity changes for an unsupported route. Preserve accepted shared maintenance facts and B-specific unknown namespace, route, credentials, data, candidate and provisioning boundaries; never borrow A bindings, repeat completed setup or change A. AI owns technical work. Do not ask the novice to collect cloud access, parameters or technical receipts that cannot yet be used, and do not claim local checks establish deployment acceptance.
