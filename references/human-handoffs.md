@@ -699,14 +699,29 @@ browser automation is optional, not a prerequisite.
    Verify metadata through the organization listing and prepare exact file links.
 2. AI classifies the consuming job and prepares the narrow repository/event/branch
    rules. Script/commands tasks omit `allow_images`; plugin tasks constrain the
-   pinned image and use the applicable variable-loading mechanism.
-3. The maintainer opens the prepared file in CNB Web and saves the prepared
-   content through the audited flow. Explain only the concrete action; do not
-   ask the person to design permissions or write YAML. Sensitive values stay in
-   the approved private handoff and editor, never chat or ordinary artifacts.
-4. AI performs an authorized harmless validation, verifies permitted references
+   pinned image and use the applicable variable-loading mechanism. Validate the
+   complete file against the [consumer's format](cnb-openapi.md#secret-repositories)
+   before handing it over.
+3. AI makes the complete material available through an approved private channel
+   the person can actually open. For a local file, provide a direct file entry
+   and an ordinary editor fallback; a directory or shell variable is insufficient.
+   State whether the editor has actually been opened. This is a prepared-file
+   handoff, distinct from importing a newly created PAT through hidden input;
+   it needs no interactive terminal or browser automation.
+4. Give one current action with a completion signal: open the prepared source,
+   copy all content, paste into the exact verified CNB file editor and save,
+   then report that the page shows success. AI supplies the repository, branch,
+   filename, actual edit/create entry and required save fields; the person does
+   not write YAML, select permissions or prepare a receipt. If the target has
+   not been verified, record that gap rather than offer an inferred URL as an
+   actionable page. For an offline exercise, state its local action and completion
+   separately from any future online step. Sensitive values stay in the approved
+   private handoff and editor, never chat or ordinary artifacts.
+5. Record user-reported save separately from verified consumption. AI performs
+   an authorized harmless validation, verifies permitted references
    and the relevant out-of-scope rejection, then records variable names and a
-   value-free `secret receipt`.
+   value-free `secret receipt`. A prepared file or reported save does not complete
+   reference validation; unperformed checks remain pending.
 
 Secret repositories cannot be cloned or pushed from a local checkout. Do not
 substitute an undocumented browser-internal endpoint for the audited flow. If a

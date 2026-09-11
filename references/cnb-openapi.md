@@ -105,6 +105,25 @@ single-build `env` inputs as persistent Secret storage. Secret repositories
 cannot be Git cloned or locally pushed. Pipelines reference files with
 `imports`, `optionsFrom`, or `settingsFrom` subject to file-reference checks.
 
+For environment-variable `imports`, put each variable at the document root,
+alongside the `allow_*` rules; do not wrap variables in `env` or `envs`. The
+pipeline's inline `env` field is a different format. For example, a script
+consumer's complete file has this shape (illustrative values only):
+
+```yaml
+allow_slugs: [example-org/example-app]
+allow_branches: [test]
+allow_events: [push]
+TCR_USERNAME: example-user
+TCR_PASSWORD: example-value
+```
+
+Before handoff, parse the prepared file and verify the consuming task's required
+variable names at the root, their values against the approved private source,
+and the intended reference rules. YAML syntax alone does not prove the import
+contract. See [CNB environment imports](https://docs.cnb.cool/zh/build/env.html).
+`settingsFrom` and `optionsFrom` follow their respective consumer formats.
+
 AI identifies the consuming task type and prepares the applicable `allow_*`
 rules for the authorized Secret maintainer. An ordinary `script` or `commands`
 task may use `allow_slugs`, `allow_events`, and `allow_branches`, but its Secret
@@ -122,8 +141,9 @@ the plugin; use those variables only through substitution in `settings` or
 same image authorization. Once fields are declared, every declared check must
 pass.
 
-The AI handles variable names and `secret receipt`s only; it does not ask for
-values or invent a Secret write API. If any credential value appears in chat,
+The AI reports variable names and value-free `secret receipt`s only; prepared
+values stay in the approved private channel, never a chat request or reply.
+Do not invent a Secret write API. If any credential value appears in chat,
 logs, or another ordinary artifact, treat it as exposed and never echo the
 value. Direct the authorized maintainer to rotate it at the source, replace it
 inside CNB Web, and return only a value-free receipt.
