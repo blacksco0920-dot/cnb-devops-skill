@@ -60,15 +60,14 @@ Interface: administrator prepares a reviewed request from the complete verified 
 
 ## Task 5: Independent review and real CRM validation
 
-- [ ] Run focused regression tests, generated-bundle validation and relevant existing controller/recovery/CI tests.
-- [ ] Independent whole-change review; fix actionable findings and rerun affected checks.
-- [ ] Regenerate CRM bundle, pin exact new controller and TAT binding, then execute reviewed test upgrade.
-- [ ] Export failed source and restore on local isolated daemon; verify all actual tables/sequences/uploads and preserved source.
-- [ ] Build repaired CRM once, grant scoped repair, invoke fixed test event, verify candidate and original FinAgent coexistence.
-- [ ] Continue actual CRM login/business/browser/recovery/update acceptance; production remains subject to existing user branch/candidate governance.
+- [x] Run focused regression tests, generated-bundle validation and relevant existing controller/recovery/CI tests.
+- [x] Independent whole-change review; fix actionable findings and rerun affected checks.
+- [x] Regenerate CRM bundle, pin exact new controller and TAT binding, then execute reviewed test upgrade.
+- [x] Export failed source and restore on local isolated daemon; verify all actual tables/sequences/uploads and preserved source.
+- [x] Build repaired CRM once, grant scoped repair, invoke fixed test event and verify candidate.
+- [x] Finish shared-host acceptance after correcting the new Web container's initial DNS startup restart; the existing project's baseline checks pass.
+- [x] Complete actual CRM test login/business/browser/recovery/update acceptance; production remains uninstalled and subject to separate preparation and user branch/candidate governance.
 
 ## Execution record
 
-2026-09-11: design approved; existing worktree is clean at b7efc14. CRM adapter fix committed locally at 5611643 and verified; live source remains d8c09d4 / cnb-7dg-1k26206df failed/probe. No host mutation has occurred for this plan yet.
-
-2026-09-11 execution: local fixed-host/CI/request/upgrade/recovery regressions and independent boundary review completed. CRM test controller upgrade and failed-source export/isolated restore both passed on their first execution. Original failed transaction, empty baseline and source containers retained; database/tables/sequences/uploads reconciled on a different local Docker daemon. Fixed TAT updated in place and CNB test Secret binding read back. Application repair build and release are still pending.
+2026-09-11: the approved repair flow is implemented at Skill commit `76595bb`. Controller upgrade, failed-source restore, fixed TAT update, complete source build and repair event passed. Accepted application is `8ddd8b73b45fd9e05d66229bc966253a4407f14c` / `cnb-qu8-1k26vakd2`; repair execution is `cnb-7ao-1k270ffpv`. Original failure/history/snapshots and the consumed permit remain independently verified. Real business and representative-data restore passed. Minimal mobile/startup fixes then passed ordinary update `c1210e8a` / `cnb-0ih-1k271p8iu`, real UI, shared-host checks, preserved data and another isolated restore. Production has not been installed or released. Exact scope and timing are recorded in [shared-host validation](../../history/2026-09-09-shared-host-preparation.md).
