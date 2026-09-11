@@ -175,10 +175,11 @@ class SkillPackageTests(unittest.TestCase):
             "secret receipt",
             "release evidence",
             "TCR Personal",
-            "PullRepositoryPersonal",
             "cross-account role",
         ):
             self.assertIn(phrase, handoffs)
+        self.assert_local_route("references/human-handoffs.md", "tcr-setup.md")
+        self.assertIn("PullRepositoryPersonal", self.text("references/tcr-setup.md"))
 
     def test_handoffs_cover_lighthouse_and_the_fixed_tat_command_contract(self):
         handoffs = " ".join(self.text("references/human-handoffs.md").split())

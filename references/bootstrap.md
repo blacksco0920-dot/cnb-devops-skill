@@ -52,7 +52,7 @@ AI 先形成一批具体材料，避免逐个猜测、重复申请：
 | 位置 | 材料与核验 |
 | --- | --- |
 | CNB 业务仓库 | 测试分支、候选 Tag 写入权限；按需接入已有 GitHub 同步工作流 |
-| TCR | 各服务镜像仓库；CNB 推送身份与主机只读拉取身份分开 |
+| TCR | 用[TCR 初始化入口](tcr-setup.md)准备个人版仓库与分离的推送/只读身份，或复用现有接受的 Registry 配置 |
 | 腾讯云 | 已授权实例和地域、TAT Agent 可用；管理员配置身份与日常 Invoke/Describe 身份分开 |
 | 主机 | 每台主机的 SSH host/port/user、私密 identity_file 和已核验 known_hosts_file；项目独立数据库、网络、域名与拉取凭据 |
 | 生产授权 | 本机 Ed25519 私钥及匹配公钥；发布授权 annotations 的本机 PAT 限定目标仓库并具备 `repo-release:rw`，与 TAT 云凭据分开 |

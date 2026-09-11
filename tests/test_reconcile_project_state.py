@@ -1,4 +1,6 @@
 """Exercise local closeout against real files; no deployment or cloud doubles."""
+import base64
+from datetime import datetime
 import hashlib
 import importlib.util
 import json
@@ -21,6 +23,10 @@ def raw(value):
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def canonical(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
 
 
 class CloseoutTests(unittest.TestCase):
@@ -112,7 +118,7 @@ class CloseoutTests(unittest.TestCase):
         for name in ['business', 'ui']:
             path = self.private / (name + '.json')
             self.put(path, {'schema': 'sample-' + name + '/v1', 'status': 'passed',
-                            'environment': 'production', 'git_sha': COMMIT, 'build_id': BUILD,
+                            'environment': self.identity['environment'], 'git_sha': COMMIT, 'build_id': BUILD,
                             'checks': [{'name': 'real-flow', 'status': 'passed'}]})
             self.spec['checks'][name] = self.ref(path)
         source = self.private / 'observation.json'
@@ -137,6 +143,294 @@ class CloseoutTests(unittest.TestCase):
                             'restore_receipt_sha256': self.ref(receipt)['sha256'],
                             'scope': {'postgres': True, 'business_mounts': ['uploads'], 'redis': False, 'full_host': False}})
         self.spec['checks']['recovery'] = self.ref(recovery)
+
+    def use_test_deployment(self):
+        self.identity['environment'] = self.spec['environment'] = 'test'
+        images = {'api': 'registry.invalid/sample/api@sha256:' + 'b' * 64}
+        controller = 'sample-test-v1'
+        command = b'#!/bin/sh\nrequest="{{release_request_b64url}}"\nexec /opt/release/command\n'
+        binding = {'schema': 'cnb-tat-binding/v1', 'project': 'sample', 'environment': 'test',
+                   'region': 'ap-guangzhou', 'instance_id': 'lhins-SYNTHETIC', 'command_id': 'cmd-example1',
+                   'command_sha256': digest(command), 'username': 'release', 'working_directory': '/home/release',
+                   'timeout': 3600, 'program_sha256': 'c' * 64, 'compose_sha256': 'd' * 64, 'policy_sha256': '6' * 64}
+        request = {'schema': 'cnb-release-request/v1', 'project': 'sample', 'environment': 'test',
+                   'controller': controller, 'git_sha': COMMIT, 'controller_commit': COMMIT, 'build_id': BUILD, 'images': images}
+        release = {**request, 'schema': 'cnb-deploy-result/v1', 'status': 'passed',
+                   'controller_program_sha256': 'c' * 64, 'controller_compose_sha256': 'd' * 64, 'policy_sha256': '6' * 64,
+                   'database_backup_sha256': 'f' * 64, 'container_count': 1, 'probe_count': 1,
+                   'probes': ['https://sample.example/health']}
+        release_raw = canonical(release) + b'\n'
+        created = '2026-09-11T04:30:00Z'
+        build_url = 'https://cnb.cool/example/sample/-/build/logs/' + BUILD
+        candidate = {**self.identity, 'schema': 'cnb-candidate/v1', 'controller': controller, 'controller_commit': COMMIT,
+                     'candidate_tag': 'sample-candidate-' + BUILD, 'services': images, 'build_url': build_url,
+                     'created_at': created, 'controller_program_sha256': 'c' * 64, 'controller_compose_sha256': 'd' * 64,
+                     'policy_sha256': '6' * 64, 'release_receipt_sha256': digest(release_raw),
+                     'evidence': {'build': {'status': 'passed', 'verified_at': created, 'reference': build_url},
+                                  'runtime': {'status': 'passed', 'verified_at': created, 'reference': 'tat:inv-12345678', 'container_count': 1},
+                                  'public': {'status': 'passed', 'verified_at': created, 'reference': 'tat:inv-12345678',
+                                             'probe_count': 1, 'probes': release['probes']}}}
+        candidate['manifest_sha256'] = digest(canonical(candidate))
+        candidate_raw = canonical(candidate) + b'\n'
+        tag_raw = (f'object {COMMIT}\ntype commit\ntag {candidate["candidate_tag"]}\n'
+                   f'tagger Release <release@example.invalid> {int(datetime.fromisoformat(created).timestamp())} +0000\n\n').encode() + candidate_raw
+        command_fields = {'CommandType': 'SHELL', 'Username': binding['username'],
+                          'WorkingDirectory': binding['working_directory'], 'Timeout': binding['timeout'],
+                          'OutputCOSBucketUrl': '', 'OutputCOSKeyPrefix': ''}
+        commands = {'TotalCount': 1, 'CommandSet': [{**command_fields, 'CommandId': binding['command_id'],
+                    'Content': base64.b64encode(command).decode(), 'EnableParameter': True, 'CreatedBy': 'USER',
+                    'DefaultParameters': '{"release_request_b64url":"INVALID"}'}]}
+        script = command.replace(b'{{release_request_b64url}}', base64.urlsafe_b64encode(canonical(request)).rstrip(b'='))
+        tasks = {'TotalCount': 1, 'InvocationTaskSet': [{'InvocationId': 'inv-12345678',
+                 'InstanceId': binding['instance_id'], 'CommandId': binding['command_id'], 'TaskStatus': 'SUCCESS',
+                 'CommandDocument': {**command_fields, 'Content': base64.b64encode(script).decode()},
+                 'TaskResult': {'ExitCode': 0, 'Dropped': 0, 'Output': base64.b64encode(release_raw).decode(),
+                                'ExecStartTime': '2026-09-11T04:26:00Z', 'ExecEndTime': '2026-09-11T04:27:00Z'}}]}
+        sources = {'candidate.json': candidate_raw, 'candidate-tag.raw': tag_raw, 'binding.json': raw(binding),
+                   'describe-commands.json': raw(commands), 'describe-invocation-tasks.json': raw(tasks),
+                   'release-receipt.json': release_raw}
+        for name, content in sources.items():
+            path = self.private / name
+            path.write_bytes(content)
+            path.chmod(0o600)
+        deployment = {**self.identity, 'schema': 'cnb-test-deployment-verification/v1', 'status': 'verified',
+                      'candidate_tag': candidate['candidate_tag'], 'invocation_id': 'inv-12345678', 'controller': controller,
+                      'verified_at': '2026-09-11T04:50:00Z', 'candidate_created_at': created,
+                      'execution_started_at': tasks['InvocationTaskSet'][0]['TaskResult']['ExecStartTime'],
+                      'execution_finished_at': tasks['InvocationTaskSet'][0]['TaskResult']['ExecEndTime'],
+                      'verification_scope': 'historical_completed_deployment', 'current_runtime_verified': False,
+                      'images': images, 'saved_tag_verified': True, 'current_annotations_status': 'not_checked',
+                      'current_tag_status': 'not_checked', 'candidate_manifest_sha256': candidate['manifest_sha256'],
+                      'candidate_bytes_sha256': digest(candidate_raw), 'tag_object_sha256': digest(tag_raw),
+                      'binding_sha256': digest(sources['binding.json']), 'release_receipt_sha256': digest(release_raw),
+                      'controller_program_sha256': 'c' * 64, 'controller_compose_sha256': 'd' * 64, 'policy_sha256': '6' * 64,
+                      'bundle_lock_sha256': '7' * 64, 'verification_spec_sha256': '8' * 64, 'input_sha256': '9' * 64,
+                      **{k: binding[k] for k in ['region', 'instance_id', 'command_id']}, 'evidence_base': 'receipt_directory',
+                      'evidence': [{'path': name, 'sha256': digest(content)} for name, content in sources.items()]}
+        self.put(self.deployment, deployment)
+        self.spec['deployment'] = self.ref(self.deployment)
+
+    def change_deployment(self, updates):
+        self.put(self.deployment, {**json.loads(self.deployment.read_text()), **updates})
+        self.spec['deployment'] = self.ref(self.deployment)
+
+    def repin_test_source(self, name, content):
+        path = self.private / name
+        path.write_bytes(content)
+        deployment = json.loads(self.deployment.read_text())
+        for ref in deployment['evidence']:
+            if ref['path'] == name:
+                ref['sha256'] = digest(content)
+        key = {'candidate.json': 'candidate_bytes_sha256', 'candidate-tag.raw': 'tag_object_sha256',
+               'binding.json': 'binding_sha256', 'release-receipt.json': 'release_receipt_sha256'}.get(name)
+        if key:
+            deployment[key] = digest(content)
+        self.change_deployment(deployment)
+
+    def repin_test_candidate(self, candidate):
+        candidate.pop('manifest_sha256', None)
+        candidate['manifest_sha256'] = digest(canonical(candidate))
+        self.change_deployment({'candidate_manifest_sha256': candidate['manifest_sha256']})
+        candidate_raw = canonical(candidate) + b'\n'
+        self.repin_test_source('candidate.json', candidate_raw)
+        header = (self.private / 'candidate-tag.raw').read_bytes().partition(b'\n\n')[0]
+        self.repin_test_source('candidate-tag.raw', header + b'\n\n' + candidate_raw)
+
+    def test_test_deployment_closes_only_test_and_repeats_without_writes(self):
+        self.use_test_deployment()
+        self.complete_checks()
+        self.invoke(apply=True)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['environments']['test']['current']['status'], 'declared_acceptance_verified')
+        self.assertEqual(state['environments']['production'], self.original['environments']['production'])
+        self.assertEqual(state['test_build_id'], BUILD)
+        self.assertIn('Human notes stay here.', self.document.read_text())
+        self.assertIn('cnb-devops:current:test:begin', self.document.read_text())
+        paths = [self.state, self.document, Path(self.spec['output_dir']) / 'receipt.json']
+        before = [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths]
+        self.assertTrue(self.invoke(apply=True)['reused'])
+        self.assertEqual(before, [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths])
+
+    def test_test_preview_retains_pending_acceptance_and_no_current_runtime_claim(self):
+        self.use_test_deployment()
+        before = self.state.read_bytes(), self.document.read_bytes()
+        current = self.invoke()['current']
+        self.assertEqual(current['status'], 'deployment_verified')
+        self.assertEqual(current['pending_checks'], ['business', 'ui', 'coexistence', 'recovery'])
+        self.assertFalse(current['current_runtime_verified'])
+        self.assertEqual(before, (self.state.read_bytes(), self.document.read_bytes()))
+        self.assertFalse(Path(self.spec['output_dir']).exists())
+
+    def test_production_verification_schema_cannot_close_test_environment(self):
+        self.spec['environment'] = 'test'
+        result = json.loads((self.private / 'production-receipt.json').read_text())
+        result['environment'] = 'test'
+        self.put(self.private / 'production-receipt.json', result)
+        deployment = json.loads(self.deployment.read_text())
+        deployment['environment'] = 'test'
+        deployment['production_receipt_sha256'] = self.ref(self.private / 'production-receipt.json')['sha256']
+        for ref in deployment['evidence']:
+            if ref['path'] == 'production-receipt.json':
+                ref['sha256'] = deployment['production_receipt_sha256']
+        self.change_deployment(deployment)
+        self.assertEqual(self.invoke(apply=True, ok=False)['code'], 'DEPLOYMENT_INVALID')
+        self.assertEqual(json.loads(self.state.read_text()), self.original)
+
+    def test_test_schema_cannot_close_production_environment(self):
+        self.use_test_deployment()
+        self.spec['environment'] = 'production'
+        self.change_deployment({'environment': 'production'})
+        self.assertEqual(self.invoke(apply=True, ok=False)['code'], 'DEPLOYMENT_INVALID')
+
+    def test_test_receipt_requires_full_records_and_saved_historical_scope(self):
+        for update in [{'saved_tag_verified': False}, {'current_annotations_status': 'verified'},
+                       {'current_tag_status': 'verified'}, {'bundle_lock_sha256': 'invalid'},
+                       {'controller': ''}, {'region': ''}, {'instance_id': ''}, {'command_id': ''}, {'evidence': []}]:
+            with self.subTest(update=update):
+                self.use_test_deployment()
+                self.change_deployment(update)
+                result = self.invoke(apply=True, ok=False)
+                self.assertIn(result['code'], ['TEST_DEPLOYMENT_RECORD_INCOMPLETE', 'TEST_DEPLOYMENT_FILES_INCOMPLETE'])
+                self.assertEqual(json.loads(self.state.read_text()), self.original)
+
+    def test_test_tag_headers_and_exact_message_are_revalidated_after_repinning(self):
+        for old, new in [(b'type commit', b'type tree'), (COMMIT.encode(), b'f' * 40),
+                         (b'tag sample-candidate-', b'tag other-candidate-'),
+                         (b'type commit\n', b'type commit\ntype commit\n'),
+                         (b'\n\n', b'\nencoding utf-8\n\n'), (b'"status":"passed"', b'"status":"failed"')]:
+            with self.subTest(old=old, new=new):
+                self.use_test_deployment()
+                tag = (self.private / 'candidate-tag.raw').read_bytes().replace(old, new, 1)
+                self.repin_test_source('candidate-tag.raw', tag)
+                self.assertEqual(self.invoke(ok=False)['code'], 'TEST_TAG_SOURCE_MISMATCH')
+
+    def test_test_candidate_source_and_execution_window_are_revalidated(self):
+        for field, value in [('services', {}), ('controller_commit', 'f' * 40), ('manifest_sha256', '0' * 64),
+                             ('created_at', '2026-09-11T04:20:00Z'), ('environment', 'production')]:
+            with self.subTest(field=field):
+                self.use_test_deployment()
+                candidate = json.loads((self.private / 'candidate.json').read_text())
+                candidate[field] = value
+                self.repin_test_source('candidate.json', canonical(candidate) + b'\n')
+                self.assertEqual(self.invoke(ok=False)['code'], 'CANDIDATE_SOURCE_MISMATCH')
+        for updates in [{'execution_finished_at': '2026-09-11T04:31:00Z'},
+                        {'candidate_created_at': '2026-09-11T04:20:00Z'}, {'verified_at': '2026-09-11T04:29:00Z'}]:
+            with self.subTest(updates=updates):
+                self.use_test_deployment()
+                self.change_deployment(updates)
+                self.assertEqual(self.invoke(ok=False)['code'], 'TEST_DEPLOYMENT_TIME_INVALID')
+
+    def test_test_binding_identity_and_controller_hashes_cannot_be_repointed(self):
+        for field, value in [('environment', 'production'), ('instance_id', 'lhins-DIFFERENT'),
+                             ('command_id', 'cmd-different'), ('program_sha256', '0' * 64),
+                             ('compose_sha256', '0' * 64), ('policy_sha256', '0' * 64)]:
+            with self.subTest(field=field):
+                self.use_test_deployment()
+                binding = json.loads((self.private / 'binding.json').read_text())
+                binding[field] = value
+                self.repin_test_source('binding.json', raw(binding))
+                self.assertEqual(self.invoke(ok=False)['code'], 'TEST_BINDING_SOURCE_MISMATCH')
+
+    def test_test_candidate_invocation_cannot_be_repointed_with_fresh_hashes(self):
+        for plane in ['runtime', 'public']:
+            with self.subTest(plane=plane):
+                self.use_test_deployment()
+                candidate = json.loads((self.private / 'candidate.json').read_text())
+                candidate['evidence'][plane]['reference'] = 'tat:inv-DIFFERENT'
+                self.repin_test_candidate(candidate)
+                self.assertEqual(self.invoke(ok=False)['code'], 'CANDIDATE_SOURCE_MISMATCH')
+
+    def test_test_release_source_cannot_change_identity_after_every_hash_is_repinned(self):
+        for field, value in [('schema', 'other/v1'), ('status', 'failed'), ('project', 'other'),
+                             ('environment', 'production'), ('controller', 'sample-production-v1'),
+                             ('git_sha', 'f' * 40), ('controller_commit', 'f' * 40), ('build_id', 'cnb-other-build'),
+                             ('images', {}), ('controller_program_sha256', 'f' * 64),
+                             ('controller_compose_sha256', 'f' * 64), ('policy_sha256', 'f' * 64),
+                             ('container_count', True), ('probe_count', True), ('probes', []),
+                             ('database_backup_sha256', 'invalid'), ('database_backup_sha256', None),
+                             ('database_backup_sha256', True), ('unexpected_receipt_key', 'not-v1')]:
+            with self.subTest(field=field):
+                self.use_test_deployment()
+                release = json.loads((self.private / 'release-receipt.json').read_text())
+                release[field] = value
+                content = canonical(release) + b'\n'
+                self.repin_test_source('release-receipt.json', content)
+                candidate = json.loads((self.private / 'candidate.json').read_text())
+                candidate['release_receipt_sha256'] = digest(content)
+                self.repin_test_candidate(candidate)
+                tasks = json.loads((self.private / 'describe-invocation-tasks.json').read_text())
+                tasks['InvocationTaskSet'][0]['TaskResult']['Output'] = base64.b64encode(content).decode()
+                self.repin_test_source('describe-invocation-tasks.json', raw(tasks))
+                self.assertEqual(self.invoke(ok=False)['code'], 'RELEASE_SOURCE_MISMATCH')
+                self.assertEqual(self.invoke(apply=True, ok=False)['code'], 'RELEASE_SOURCE_MISMATCH')
+                self.assertEqual(json.loads(self.state.read_text()), self.original)
+                self.assertFalse(Path(self.spec['output_dir']).exists())
+
+    def test_test_saved_command_policy_conflicts_rejected_after_repinning(self):
+        good_conf = {'ParameterName': 'release_request_b64url', 'ParameterValue': 'INVALID', 'ParameterDescription': ''}
+        updates = [{'DefaultParameters': '{"release_request_b64url":"ALLOW"}'}, {'EnableParameter': False},
+                   {'EnableParameter': 1}, {'CreatedBy': 'OTHER'}, {'DefaultParameters': ''},
+                   {'DefaultParameterConfs': [{**good_conf, 'ParameterValue': 'ALLOW'}]},
+                   {'DefaultParameterConfs': [{**good_conf, 'ParameterName': 'other'}]},
+                   {'DefaultParameterConfs': [{**good_conf, 'ParameterDescription': 'unbound'}]},
+                   {'DefaultParameterConfs': [{**good_conf, 'extra': 'field'}]},
+                   {'DefaultParameterConfs': [good_conf, good_conf]}]
+        for update in updates:
+            with self.subTest(update=update):
+                self.use_test_deployment()
+                commands = json.loads((self.private / 'describe-commands.json').read_text())
+                commands['CommandSet'][0].update(update)
+                self.repin_test_source('describe-commands.json', raw(commands))
+                self.assertEqual(self.invoke(ok=False)['code'], 'TEST_TAT_SOURCE_MISMATCH')
+                self.assertEqual(self.invoke(apply=True, ok=False)['code'], 'TEST_TAT_SOURCE_MISMATCH')
+                self.assertEqual(json.loads(self.state.read_text()), self.original)
+                self.assertFalse(Path(self.spec['output_dir']).exists())
+
+    def test_test_saved_command_supports_both_official_parameter_default_representations(self):
+        conf = {'ParameterName': 'release_request_b64url', 'ParameterValue': 'INVALID', 'ParameterDescription': ''}
+        for update in [{'DefaultParameterConfs': None}, {'DefaultParameterConfs': []}, {'DefaultParameterConfs': [conf]},
+                       {'DefaultParameters': '', 'DefaultParameterConfs': [conf]}]:
+            with self.subTest(update=update):
+                self.use_test_deployment()
+                commands = json.loads((self.private / 'describe-commands.json').read_text())
+                commands['CommandSet'][0].update(update)
+                self.repin_test_source('describe-commands.json', raw(commands))
+                self.assertEqual(self.invoke()['current']['status'], 'deployment_verified')
+
+    def test_test_task_and_saved_command_evidence_cannot_be_repointed(self):
+        for change in ['task_count', 'instance', 'invocation', 'command', 'failed', 'dropped', 'exit',
+                       'output', 'timestamp', 'script', 'saved_command', 'saved_hash', 'boolean_count',
+                       'boolean_dropped', 'boolean_exit']:
+            with self.subTest(change=change):
+                self.use_test_deployment()
+                name = 'describe-invocation-tasks.json'
+                data = json.loads((self.private / name).read_text())
+                task = data['InvocationTaskSet'][0]
+                if change == 'task_count': data['InvocationTaskSet'].append(task)
+                elif change == 'boolean_count': data['TotalCount'] = True
+                elif change == 'instance': task['InstanceId'] = 'lhins-DIFFERENT'
+                elif change == 'invocation': task['InvocationId'] = 'inv-DIFFERENT'
+                elif change == 'command': task['CommandId'] = 'cmd-DIFFERENT'
+                elif change == 'failed': task['TaskStatus'] = 'FAILED'
+                elif change == 'dropped': task['TaskResult']['Dropped'] = 1
+                elif change == 'exit': task['TaskResult']['ExitCode'] = 1
+                elif change == 'boolean_dropped': task['TaskResult']['Dropped'] = False
+                elif change == 'boolean_exit': task['TaskResult']['ExitCode'] = False
+                elif change == 'output': task['TaskResult']['Output'] = base64.b64encode(b'{}\n').decode()
+                elif change == 'timestamp': task['TaskResult']['ExecEndTime'] = '2026-09-11T04:28:00Z'
+                elif change == 'script': task['CommandDocument']['Content'] = base64.b64encode(b'echo passed\n').decode()
+                else:
+                    name = 'describe-commands.json'
+                    data = json.loads((self.private / name).read_text())
+                    if change == 'saved_command': data['CommandSet'][0]['CommandId'] = 'cmd-DIFFERENT'
+                    else: data['CommandSet'][0]['Content'] = base64.b64encode(b'echo passed\n').decode()
+                self.repin_test_source(name, raw(data))
+                self.assertEqual(self.invoke(ok=False)['code'], 'TEST_TAT_SOURCE_MISMATCH')
+
+    def test_raw_tag_does_not_allow_non_json_business_receipts(self):
+        self.use_test_deployment()
+        self.spec['checks']['business'] = self.ref(self.private / 'candidate-tag.raw')
+        self.assertEqual(self.invoke(ok=False)['code'], 'JSON_INVALID')
 
     def test_preview_has_no_output_or_state_changes(self):
         before = self.state.read_bytes(), self.document.read_bytes()

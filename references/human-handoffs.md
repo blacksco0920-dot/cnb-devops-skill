@@ -318,83 +318,31 @@ TCR Personal is the selected free path within its service limits and has no SLA.
 TCR Enterprise service accounts are an optional paid upgrade, not the assumed
 free mechanism.
 
-### Exact setup steps
+### AI-owned setup
 
-1. Confirm the build-push credential belongs to a dedicated programmatic CAM
-   identity with only the required repository push/read scope. Then, in
-   **CAM → Users**, create a different dedicated programmatic subuser for one
-   customer/project repository set's pull access.
-2. In **CAM → Policies**, grant the host only `tcr:PullRepositoryPersonal` on
-   each exact repository. Use the Personal edition form below; list multiple
-   repositories individually, without namespace or descendant wildcards.
-   For CI, add only `tcr:PushRepositoryPersonal` to its approved repository set.
-   Replace the expiry placeholder with the approved lease's UTC deadline:
+Use the [fixed TCR initializer](tcr-setup.md) for supported Personal resources.
+AI prepares the complete spec, previews it, applies within the existing scope,
+and records readback and private credential locations. The user does not create
+policies, write JSON, or copy passwords between technical tools. Existing
+accepted resources are reused; explicit existing-resource verification is
+read-only and never resets credentials.
 
-   ```json
-   {
-     "version": "2.0",
-     "statement": [{
-       "effect": "allow",
-       "action": ["tcr:PullRepositoryPersonal"],
-       "resource": [
-         "qcs::tcr:::repo/<NAMESPACE>/<REPOSITORY>"
-       ],
-       "condition": {
-         "date_less_than": {
-           "qcs:current_time": "<APPROVED_EXPIRY_IN_UTC>"
-         }
-       }
-     }]
-   }
-   ```
+The fixed path creates dedicated push/pull identities, initializes each Registry
+user once under its own API identity, and removes the temporary initialization
+grant. API keys stay local; CNB receives only its push Registry credential and
+the host receives only its pull Registry credential. Unknown results retain the
+same attempt and require reconciliation, not another password or key.
 
-   Tencent's Personal resource guide allows these empty fields: region covers
-   all regions and account resolves to the policy creator's parent account.
-   This documented format still names the exact repository; successful policy
-   creation alone does not prove that Registry authorization matches it.
-   Verified on 2026-09-06: private digest manifest reads succeeded with this
-   exact-repository form using the existing credential. This proves those
-   manifest reads, not every image-layer download or a denied write attempt.
-3. Only for first-time Registry initialization, temporarily grant
-   `tcr:CreateUserPersonal` on resource `*`, within the approved lease.
-   Do not also grant `tcr:ModifyUserPasswordPersonal`.
-4. Use the official SDK/CLI under that subuser's own API identity to call
-   `CreateUserPersonal` once, with `Password` and no `Region`. Console login
-   for the subuser is not required. Generate a private random 16-character
-   password, persist it in a protected attempt file before the request, and
-   retain the attempt if the response is uncertain. An existing initialized
-   user or uncertain response requires review, never an automatic retry with a
-   new password or an unapproved reset. Remove the initialization grant after
-   success and verify that its association is gone.
-5. Use that initialized identity's actual UIN as the Docker username, confirmed
-   from CAM; do not substitute its display name, UserId, or parent account UIN.
-   Keep the private Registry password distinct from its API SecretId/SecretKey.
-6. Enter the build-push Registry credential in the project's CNB Secret file.
-   Enter only the pull-only Docker credential on the target host using the
-   approved runtime-secret mechanism; do not transfer the initialization API
-   key to the host. Record only `secret receipt`s.
-7. Read back the effective policy and associations, then verify an actual
-   private `repository@sha256:digest` with an isolated Docker configuration.
-   A successful login proves authentication, not repository pull permission.
-   Check that the host's effective grants contain no push/write authority;
-   this policy evidence is separate from the real digest-read result. Do not
-   require a real push attempt or access to another project's repository as a
-   negative test. Any additional denial probe needs an approved, non-mutating
-   scope and must be reported only as evidence for that specific request.
+If the main account must first activate Personal or organizational policy
+requires a human administrator, AI gives the exact official page and necessary
+action. Keep this exception separate from completed resource configuration;
+do not turn every new project into another console walkthrough.
 
-Official guidance:
-
-- <https://cloud.tencent.com/document/product/1141/40540>
-- <https://cloud.tencent.com/document/product/1141/41409>
-- <https://cloud.tencent.com/document/product/1141/41415>
-- <https://cloud.tencent.com/document/product/1141/41596>
-- <https://cloud.tencent.com/document/product/1141/41412>
-- <https://intl.cloud.tencent.com/zh/document/product/1051/39862>
-- <https://cloud.tencent.com/document/product/598/10608>
-
-CNB SaaS egress addresses change dynamically. Do not create a permanent CNB IP
-allowlist or weaken authentication; use TAT or a controlled proxy when a stable
-network boundary is required: <https://docs.cnb.cool/zh/faq.html>.
+After configuration, verify an actual private `repository@sha256:digest` through
+the approved CI/host workflow. Login proves authentication only. Effective
+pull-only policy, real manifest/layer reads, and any approved non-mutating denial
+probe are separate evidence. Do not test a write or another project's repository
+merely to prove a negative.
 
 ### Acceptance
 

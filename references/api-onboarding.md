@@ -104,7 +104,13 @@ node "$SKILL_DIR/scripts/configure-cnb.mjs" \
 
 当前公开接口没有已核实的个人令牌自动签发或网页预填契约，不承诺免除这次人工创建与安全导入。[统一申请 OAuth 应用](https://docs.cnb.cool/zh/oauth/developer.html)可作为维护者后续方向，不能让每个使用者自行申请。2026-09-08 已用此入口完成真实私有/Secret 仓库创建、构建设置读写及重复复用；[实测记录](../docs/history/2026-09-07-api-live-validation.md#pat-followup)同时保留人工交接问题和未验证范围。
 
-## 3．接通固定 TAT 与专用云身份
+## 3．准备 TCR 仓库与推拉身份
+
+使用 [TCR 固定初始化入口](tcr-setup.md)准备已授权的个人版私有仓库、专用推送和只读拉取身份。AI 填写 spec，离线预览后执行并回读；密码与 API key 直接保存到私密文件。已有接受的资源与凭据复用，必要时按明确资源信息做只读核验，不让用户逐项配置控制台。
+
+配置与凭据初始化、实际登录、镜像推送/拉取分别记录。新入口的支持范围及未知结果处理见该按需文档；主账号开通或组织不允许 API 配置等本人动作，才沿统一交接准备准确页面。
+
+## 4．接通固定 TAT 与专用云身份
 
 先按[主机首装](bootstrap.md#2一次核对账号和主机)完成盘点和安装。AI 从生成的每环境 `tat-spec.template.json` 填入已选实例与地域，使用上述临时身份运行[固定 TAT 配置](bootstrap.md#3配置固定-tat-命令)，传入 `--credentials "$PRIVATE_DIR/bootstrap-credentials.json"`。
 
@@ -132,9 +138,9 @@ node "$SKILL_DIR/scripts/configure-cam.mjs" --spec "$PRIVATE_DIR/cam-spec.json" 
 
 它仅创建无控制台登录的专用用户、固定 Invoke/Describe 策略及关联，并回读账号、策略、组权限和已有密钥；不接管不符的同名身份，也不修改已有密钥。`verified` 仅指身份/权限，`credential_status: not_created` 和 `deployment_ready: false` 明示后续工作。初始管理员需有本次 CAM 创建、关联及查询权限；现成且已验收的发布身份直接复用其回执和凭据，不因该脚本拒绝已有密钥而重建。
 
-本轮没有自动签发长期 AccessKey 的执行器。采用专用直接身份时，**后续仍由 AI** 在已授权安全通道调用官方 [CreateAccessKey](https://cloud.tencent.com/document/api/598/82370)，显式设置 `CreateAccessKey.TargetUin = cam-identity.user_uin`，不得省略而为当前管理员创建密钥；返回的 `AccessKeyId/SecretAccessKey` 直接保存为私密 `secretId/secretKey`，不让用户抄密钥。写前持久记录该签发动作；未知结果先 [ListAccessKeys](https://cloud.tencent.com/document/api/598/45156) 核对并进入恢复处理，不能因暂时查不到密钥就重发。成功后核验实际固定命令权限，再交给对应 Secret 消费者。管理员 OAuth 会话与日常发布身份不能混用。
+TAT 身份配置器不自动签发 AccessKey；TCR 初始化入口中的密钥流程只服务其专用推拉身份。TAT 采用专用直接身份时，**后续仍由 AI** 在已授权安全通道调用官方 [CreateAccessKey](https://cloud.tencent.com/document/api/598/82370)，显式设置 `CreateAccessKey.TargetUin = cam-identity.user_uin`，不得省略而为当前管理员创建密钥；返回的 `AccessKeyId/SecretAccessKey` 直接保存为私密 `secretId/secretKey`，不让用户抄密钥。写前持久记录该签发动作；未知结果先 [ListAccessKeys](https://cloud.tencent.com/document/api/598/45156) 核对并进入恢复处理，不能因暂时查不到密钥就重发。成功后核验实际固定命令权限，再交给对应 Secret 消费者。管理员 OAuth 会话与日常发布身份不能混用。
 
-## 4．把剩下的动作一次准备好
+## 5．把剩下的动作一次准备好
 
 AI 汇总所需 Secret 文件、变量名、允许引用的仓库/ref/event、准确页面和安全存储位置。按[Secret 保存交接](human-handoffs.md#cnb-secret-repository-operation)让人完成官方 Web 保存，再做无害引用验证；人不手写 YAML、不设计权限、不整理回执。仅把已确认无法通过当前授权通道完成的 CNB 创建/设置合并到这次交接；TAT 脚本与专用身份权限由 AI 配置。
 

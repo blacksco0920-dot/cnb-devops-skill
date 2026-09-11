@@ -1,8 +1,46 @@
 # 发布后核验与收尾
 
-用户完成原生批准后，AI 使用本文的固定入口取得结果，并更新项目原有状态文档。用户无需填写 JSON、阅读脚本或重新提供已经保存的配置。
+测试流水线完成，或用户完成生产原生批准后，AI 使用本文的固定入口取得结果，并更新项目原有状态文档。用户无需填写 JSON、阅读脚本或重新提供已经保存的配置。
 
-三个入口分别回答：发布当时是否正确完成、共享主机在观测时是否符合预期、项目当前还缺哪些验收。业务和页面检查仍由应用自己的验收程序负责。
+这些入口分别回答：发布当时是否正确完成、共享主机在观测时是否符合预期、项目当前还缺哪些验收。业务和页面检查仍由应用自己的验收程序负责。
+
+## 测试部署：核验已经发生的执行
+
+```sh
+node "$SKILL_DIR/scripts/verify-test-deployment.mjs" --spec "$PRIVATE_DIR/test-verification.json"
+node "$SKILL_DIR/scripts/verify-test-deployment.mjs" --spec "$PRIVATE_DIR/test-verification.json" --apply
+```
+
+默认预览离线；首次 `--apply` 只读 TAT 的固定命令和精确执行任务，保存本地证据，绝不触发部署。已有成功回执时，同输入离线重验全部证据，复用原结果；不覆盖不同候选或执行。输入由 AI 从本轮项目及候选生成：
+
+```json
+{
+  "schema": "cnb-test-deployment-verification-spec/v1",
+  "project": "example",
+  "environment": "test",
+  "project_dir": "/absolute/project",
+  "bundle_dir": "/absolute/project/deploy/vendor/cnb-devops",
+  "bundle_lock_sha256": "<artifact-lock.json 原字节摘要>",
+  "output_dir": "/absolute/private/test-verification",
+  "candidate_tag": "example-candidate-cnb-example-build",
+  "application_commit": "<完整应用提交>",
+  "invocation_id": "<候选绑定的真实测试 invocation>",
+  "candidate": {"path": "/absolute/private/candidate.json", "sha256": "<原字节摘要>"},
+  "tag_object": {"path": "/absolute/private/candidate-tag.raw", "sha256": "<原字节摘要>"},
+  "binding": {"path": "/absolute/private/tat-binding.json", "sha256": "<原字节摘要>"},
+  "tat_credentials_file": "/absolute/private/test-tat-credentials.json"
+}
+```
+
+`project`、`test` 与固定包一致。TAT 凭据复用本次已授权只读查询的身份，格式为私密 `secretId/secretKey` 与可选 `token`；不为历史回查创建新发布身份。可用 `sdk_root` 指向已安装且版本符合固定包锁文件的依赖目录，默认使用该包的 `dependencies`；仅有 package 文件时先由 AI 安装锁定依赖。spec、凭据及证据使用仓库外的 0700/0600 私密路径。
+
+输出目录不完整或完成前遗留锁时，保留现场并检查中断原因；不删除后重新查询、覆盖或触发部署。成功回执可离线重验，不需要为了重读证据重新登录。
+
+候选及 Tag 原文来自本轮已经读取的 annotated Tag；尚未保存时，AI 用已配置 Git 凭据读取精确远端 `refs/tags/<candidate_tag>`，`git cat-file tag` 保存完整原文，再将首个空行后的 message 原字节保存为 candidate.json。不得用 `git show` 的格式化文本或重新序列化 JSON 替代原文，不手工拼造 Tag。保存来源及读取时间供追溯。
+
+入口先检查固定包，再复用候选和 TAT 验证程序，核验提交/Tag message、镜像、控制器、目标、实际命令及参数、成功且未截断的输出、候选所引用的 invocation 与回执摘要。执行结束允许早于候选创建，因为 CI 还需轮询和发布候选。
+
+结果为 `cnb-test-deployment-verification/v1`，表示**历史测试执行与已保存候选证据通过**。当前远端 Tag 和 annotations 明确未检查，不申请额外 `repo-release:r`，也不把历史日志的一行 ready 当作当前状态。当前运行由下方共存检查补充；完整业务、恢复及共存是独立验收，不因测试候选存在就自动通过。
 
 ## 1. 核验已经发生的生产发布
 
@@ -119,6 +157,10 @@ AI 生成 `cnb-project-closeout/v1` spec，所有字段均必需；无可用可�
 
 已有绑定的业务、页面和恢复回执可复用，本入口不会再次运行业务程序或导出数据。提供的回执不合格则停止；声明必需的回执缺失则记录 `deployment_verified` 和具体待办，全部已声明检查通过才记录 `declared_acceptance_verified`。
 
+应用验收程序应直接输出 `schema/project/environment/application_commit/build_id/status/checks`。旧结果只有内部身份时，AI 先核验原始预期身份、实际 API/Web 身份及对应检查，再生成带原文路径/摘要和明确字段映射的投影回执；原文保留。不得仅依据一句 passed 补填环境或提交，也不为了使用旧结果放宽通用身份校验。
+
+私密状态的 `project` 使用固定包的项目标识，源码路径另存 `source_project_dir`。旧临时记录若把目录作为 project，AI 先保存原文及摘要，核对仓库、执行目录、固定包和已验证发布，再一次性迁移该字段并记录来源；不要放宽收尾入口的项目相等校验。
+
 `resource_refs` 可登记 `tat_binding`、`cam_identity`、`release_credential_receipt`、`accepted_installation` 的路径和摘要。只登记脱敏资源回执，不能把密钥文件作为回执。资源引用与 `current` 是接管索引，不是发布授权；后续操作仍需重验各自固定门禁。本入口核对已通过发布验证器的完整回执及原文绑定，不独立替代其签名和 TAT 验证。
 
 默认预览只读本地文件。`--apply` 更新原私密状态的 `environments.<environment>.current`，同步有限当前别名，并更新原 Markdown 的 `cnb-devops:current:<environment>` 受管块。其他环境、人工正文、用户授权及未拥有字段保留；完整旧状态、旧文档、目标内容和结果回执保存在事务目录。
@@ -127,4 +169,4 @@ AI 生成 `cnb-project-closeout/v1` spec，所有字段均必需；无可用可�
 
 同输入重跑不改写已经完成的状态和文档；两文件写入中断可核对续接。若第三方改过输入、状态或文档，停止检查差异，保留旧事务；确需更新时使用新的事务目录，不删除证据来绕过冲突。历史字段只供追溯，接管以该环境 `current` 为准。
 
-目前固定发布回查产出生产回执；共存程序可检查测试和生产。不要伪造发布回执，把测试部署硬塞入生产收尾流程。
+`deployment` 接受同环境的固定回查结果：测试使用 `cnb-test-deployment-verification/v1`，生产继续使用 `cnb-deployment-verification/v1`。二者分别绑定完整原文，测试不要求生产签名，也不能冒用生产 schema；生产的签名与授权要求保持不变。共存程序可检查测试和生产。

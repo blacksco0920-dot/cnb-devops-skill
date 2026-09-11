@@ -5,6 +5,8 @@ This entry never contacts a cloud or executes a project command. Its current
 record is an index, not authority to release or a replacement for live gates.
 """
 import argparse
+import base64
+import binascii
 from datetime import datetime, timezone
 import fcntl
 import hashlib
@@ -32,6 +34,15 @@ DEPLOYMENT_HASHES = ('candidate_manifest_sha256', 'candidate_bytes_sha256', 'pro
                      'release_record_sha256', 'approval_sha256', 'prepared_sha256', 'production_entry_sha256',
                      'production_authority_sha256', 'controller_program_sha256', 'controller_compose_sha256',
                      'policy_sha256', 'bundle_lock_sha256', 'production_lock_sha256')
+TEST_DEPLOYMENT_FILES = {'candidate.json', 'candidate-tag.raw', 'binding.json', 'describe-commands.json',
+                         'describe-invocation-tasks.json', 'release-receipt.json'}
+TEST_DEPLOYMENT_HASHES = ('candidate_manifest_sha256', 'candidate_bytes_sha256', 'tag_object_sha256',
+                          'binding_sha256', 'release_receipt_sha256', 'controller_program_sha256',
+                          'controller_compose_sha256', 'policy_sha256', 'bundle_lock_sha256',
+                          'verification_spec_sha256', 'input_sha256')
+TEST_RELEASE_KEYS = {'schema', 'status', 'project', 'environment', 'controller', 'git_sha', 'controller_commit',
+                     'build_id', 'images', 'controller_program_sha256', 'controller_compose_sha256', 'policy_sha256',
+                     'database_backup_sha256', 'container_count', 'probe_count', 'probes'}
 
 
 class CloseoutError(ValueError):
@@ -137,7 +148,7 @@ def stamp(value):
         raise CloseoutError('TIMESTAMP_INVALID') from None
 
 
-def reference(ref, inputs, base=None):
+def reference_bytes(ref, inputs, base=None):
     require(type(ref) is dict and set(ref) == {'path', 'sha256'}
             and type(ref['sha256']) is str and HASH.fullmatch(ref['sha256']), 'REFERENCE_INVALID')
     name = ref['path']
@@ -150,7 +161,11 @@ def reference(ref, inputs, base=None):
     data = read(path)
     require(sha(data) == ref['sha256'], 'EVIDENCE_HASH_MISMATCH')
     inputs[str(path)] = ref['sha256']
-    return decode(data)
+    return data
+
+
+def reference(ref, inputs, base=None):
+    return decode(reference_bytes(ref, inputs, base))
 
 
 def referenced_evidence(doc, path, inputs):
@@ -223,6 +238,134 @@ def complete_deployment(deployment, path, inputs):
             <= stamp(deployment['execution_finished_at']) < stamp(deployment['approval_expires_at']), 'APPROVAL_EXECUTION_WINDOW_INVALID')
 
 
+def tat_bytes(value):
+    require(type(value) is str and 0 < len(value) <= 128 * 1024, 'TEST_TAT_SOURCE_MISMATCH')
+    try:
+        result = base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error):
+        raise CloseoutError('TEST_TAT_SOURCE_MISMATCH') from None
+    require(base64.b64encode(result).decode() == value, 'TEST_TAT_SOURCE_MISMATCH')
+    return result
+
+
+def complete_test_deployment(deployment, path, inputs):
+    """Bind the fixed test verifier's summary to its saved evidence bytes.
+
+    The bundle verifier owns configuration and TAT policy validation. Rechecking
+    the saved tag and command here establishes source integrity, not a fresh
+    remote ref or current-runtime observation.
+    """
+    require(all(type(deployment.get(k)) is str and HASH.fullmatch(deployment[k]) for k in TEST_DEPLOYMENT_HASHES)
+            and deployment.get('saved_tag_verified') is True
+            and deployment.get('current_annotations_status') == 'not_checked'
+            and deployment.get('current_tag_status') == 'not_checked'
+            and all(type(deployment.get(k)) is str and re.fullmatch(pattern, deployment[k]) for k, pattern in
+                    [('controller', r'[a-z][a-z0-9-]{0,95}'), ('region', r'[a-z]+-[a-z]+[0-9]*'),
+                     ('instance_id', r'(?:lhins|ins)-[A-Za-z0-9-]{8,64}'), ('command_id', r'cmd-[A-Za-z0-9-]{8,64}')]),
+            'TEST_DEPLOYMENT_RECORD_INCOMPLETE')
+    require(stamp(deployment['execution_started_at']) <= stamp(deployment['execution_finished_at'])
+            <= stamp(deployment['candidate_created_at']) <= stamp(deployment['verified_at']), 'TEST_DEPLOYMENT_TIME_INVALID')
+    refs = deployment.get('evidence')
+    require(type(refs) is list and len(refs) == len(TEST_DEPLOYMENT_FILES)
+            and all(type(ref) is dict and type(ref.get('path')) is str for ref in refs)
+            and {ref['path'] for ref in refs} == TEST_DEPLOYMENT_FILES, 'TEST_DEPLOYMENT_FILES_INCOMPLETE')
+    sources = {ref['path']: reference_bytes(ref, inputs, path.parent) for ref in refs}
+    docs = {name: decode(content) for name, content in sources.items() if name != 'candidate-tag.raw'}
+    for name, key in [('candidate.json', 'candidate_bytes_sha256'), ('candidate-tag.raw', 'tag_object_sha256'),
+                      ('binding.json', 'binding_sha256'), ('release-receipt.json', 'release_receipt_sha256')]:
+        require(sha(sources[name]) == deployment[key], 'TEST_DEPLOYMENT_SOURCE_MISMATCH')
+    candidate, binding, release = docs['candidate.json'], docs['binding.json'], docs['release-receipt.json']
+    require(type(candidate) is dict and candidate.get('schema') == 'cnb-candidate/v1'
+            and candidate.get('environment') == 'test'
+            and all(candidate.get(k) == deployment[k] for k in ('project', 'application_commit', 'build_id',
+                    'candidate_tag', 'controller', 'controller_program_sha256', 'controller_compose_sha256',
+                    'policy_sha256', 'release_receipt_sha256'))
+            and candidate.get('controller_commit') == deployment['application_commit']
+            and candidate.get('services') == deployment['images']
+            and candidate.get('created_at') == deployment['candidate_created_at']
+            and candidate.get('manifest_sha256') == deployment['candidate_manifest_sha256']
+            and sha(encode({k: v for k, v in candidate.items() if k != 'manifest_sha256'})[:-1]) == candidate['manifest_sha256']
+            and encode(candidate) == sources['candidate.json'], 'CANDIDATE_SOURCE_MISMATCH')
+    evidence = candidate.get('evidence')
+    require(type(evidence) is dict and set(evidence) == {'build', 'runtime', 'public'}
+            and all(type(item) is dict and item.get('status') == 'passed' for item in evidence.values())
+            and evidence['runtime'].get('reference') == evidence['public'].get('reference') == 'tat:' + deployment['invocation_id'],
+            'CANDIDATE_SOURCE_MISMATCH')
+    tag = sources['candidate-tag.raw']
+    head, separator, message = tag.partition(b'\n\n')
+    headers = {}
+    for line in head.split(b'\n'):
+        name, space, value = line.partition(b' ')
+        require(space and value and name in (b'object', b'type', b'tag', b'tagger') and name not in headers,
+                'TEST_TAG_SOURCE_MISMATCH')
+        headers[name] = value
+    require(separator and {b'object', b'type', b'tag'} <= set(headers)
+            and headers[b'object'] == deployment['application_commit'].encode()
+            and headers[b'type'] == b'commit' and headers[b'tag'] == deployment['candidate_tag'].encode()
+            and message == sources['candidate.json'], 'TEST_TAG_SOURCE_MISMATCH')
+    require(type(binding) is dict and binding.get('schema') == 'cnb-tat-binding/v1' and binding.get('environment') == 'test'
+            and all(binding.get(k) == deployment.get(k) for k in ('project', 'region', 'instance_id', 'command_id'))
+            and all(binding.get(k) == deployment[v] for k, v in [('program_sha256', 'controller_program_sha256'),
+                    ('compose_sha256', 'controller_compose_sha256'), ('policy_sha256', 'policy_sha256')])
+            and type(binding.get('command_sha256')) is str and HASH.fullmatch(binding['command_sha256']),
+            'TEST_BINDING_SOURCE_MISMATCH')
+    require(type(release) is dict and set(release) == TEST_RELEASE_KEYS
+            and release.get('schema') == 'cnb-deploy-result/v1' and release.get('status') == 'passed'
+            and type(release.get('database_backup_sha256')) is str and HASH.fullmatch(release['database_backup_sha256'])
+            and all(release.get(k) == deployment[k] for k in ('project', 'environment', 'controller', 'build_id', 'images',
+                    'controller_program_sha256', 'controller_compose_sha256', 'policy_sha256'))
+            and release.get('git_sha') == release.get('controller_commit') == deployment['application_commit']
+            and type(release.get('container_count')) is int and type(evidence['runtime'].get('container_count')) is int
+            and release.get('container_count') == evidence['runtime'].get('container_count') == len(deployment['images'])
+            and release.get('probes') == evidence['public'].get('probes')
+            and type(release.get('probes')) is list and len(release['probes']) > 0
+            and type(release.get('probe_count')) is int and type(evidence['public'].get('probe_count')) is int
+            and release.get('probe_count') == evidence['public'].get('probe_count') == len(release['probes']),
+            'RELEASE_SOURCE_MISMATCH')
+    commands, tasks = docs['describe-commands.json'], docs['describe-invocation-tasks.json']
+    require(type(commands) is dict and type(commands.get('TotalCount')) is int and commands['TotalCount'] == 1
+            and type(commands.get('CommandSet')) is list and len(commands['CommandSet']) == 1
+            and type(tasks) is dict and type(tasks.get('TotalCount')) is int and tasks['TotalCount'] == 1
+            and type(tasks.get('InvocationTaskSet')) is list and len(tasks['InvocationTaskSet']) == 1, 'TEST_TAT_SOURCE_MISMATCH')
+    command, task = commands['CommandSet'][0], tasks['InvocationTaskSet'][0]
+    require(type(command) is dict and command.get('CommandId') == deployment['command_id']
+            and type(task) is dict and task.get('InvocationId') == deployment['invocation_id']
+            and task.get('InstanceId') == deployment['instance_id'] and task.get('CommandId') == deployment['command_id']
+            and task.get('TaskStatus') == 'SUCCESS', 'TEST_TAT_SOURCE_MISMATCH')
+    confs = command.get('DefaultParameterConfs')
+    valid_confs = (type(confs) is list and len(confs) == 1 and type(confs[0]) is dict
+                   and confs[0] == {'ParameterName': 'release_request_b64url', 'ParameterValue': 'INVALID', 'ParameterDescription': ''})
+    absent_confs = confs is None or type(confs) is list and len(confs) == 0
+    # Match both API representations accepted by the bundle's fixed verifier;
+    # conflicting populated representations must never hide one another.
+    valid_defaults = (command.get('DefaultParameters') == '{"release_request_b64url":"INVALID"}' and (absent_confs or valid_confs)
+                      or command.get('DefaultParameters') == '' and valid_confs)
+    require(command.get('EnableParameter') is True and command.get('CreatedBy') == 'USER'
+            and valid_defaults, 'TEST_TAT_SOURCE_MISMATCH')
+    content = tat_bytes(command.get('Content'))
+    require(sha(content) == binding['command_sha256'] and b'\0' not in content
+            and content.count(b'{{release_request_b64url}}') == 1
+            and not re.search(rb'\{\{|\}\}', content.replace(b'{{release_request_b64url}}', b'')), 'TEST_TAT_SOURCE_MISMATCH')
+    request = {'schema': 'cnb-release-request/v1', 'project': deployment['project'], 'environment': 'test',
+               'controller': deployment['controller'], 'git_sha': deployment['application_commit'],
+               'controller_commit': deployment['application_commit'], 'build_id': deployment['build_id'], 'images': deployment['images']}
+    script = content.replace(b'{{release_request_b64url}}', base64.urlsafe_b64encode(encode(request)[:-1]).rstrip(b'='))
+    document, result = task.get('CommandDocument'), task.get('TaskResult')
+    require(type(document) is dict and type(result) is dict
+            and type(result.get('ExitCode')) is int and result['ExitCode'] == 0
+            and type(result.get('Dropped')) is int and result['Dropped'] == 0
+            and result.get('ExecStartTime') == deployment['execution_started_at']
+            and result.get('ExecEndTime') == deployment['execution_finished_at']
+            and tat_bytes(result.get('Output')) == sources['release-receipt.json']
+            and tat_bytes(document.get('Content')) == script, 'TEST_TAT_SOURCE_MISMATCH')
+    for source in (command, document):
+        require(source.get('CommandType') == 'SHELL'
+                and all(k in binding and source.get(s) == binding[k] for s, k in
+                        [('Username', 'username'), ('WorkingDirectory', 'working_directory'), ('Timeout', 'timeout')])
+                and source.get('OutputCOSBucketUrl') in (None, '') and source.get('OutputCOSKeyPrefix') in (None, ''),
+                'TEST_TAT_SOURCE_MISMATCH')
+
+
 def inspect_spec(spec_path):
     spec_raw = read(path_value(str(spec_path)))
     spec = decode(spec_raw)
@@ -247,7 +390,8 @@ def inspect_spec(spec_path):
             and type(spec['resource_refs']) is dict and set(spec['resource_refs']) <= set(RESOURCES), 'CHECK_SPEC_INVALID')
     inputs = {str(spec_path): sha(spec_raw)}
     deployment = reference(spec['deployment'], inputs)
-    require(type(deployment) is dict and deployment.get('schema') == 'cnb-deployment-verification/v1'
+    deployment_schema = {'production': 'cnb-deployment-verification/v1', 'test': 'cnb-test-deployment-verification/v1'}
+    require(type(deployment) is dict and deployment.get('schema') == deployment_schema[spec['environment']]
             and deployment.get('status') == 'verified' and deployment.get('project') == spec['project']
             and deployment.get('environment') == spec['environment'], 'DEPLOYMENT_INVALID')
     require(type(deployment.get('application_commit')) is str and COMMIT.fullmatch(deployment['application_commit'])
@@ -264,7 +408,8 @@ def inspect_spec(spec_path):
             and deployment.get('evidence_base') == 'receipt_directory', 'DEPLOYMENT_SCOPE_INVALID')
     end = stamp(deployment['execution_finished_at'])
     require(stamp(deployment['execution_started_at']) <= end <= stamp(deployment['verified_at']), 'DEPLOYMENT_TIME_INVALID')
-    complete_deployment(deployment, path_value(spec['deployment']['path']), inputs)
+    validator = complete_test_deployment if spec['environment'] == 'test' else complete_deployment
+    validator(deployment, path_value(spec['deployment']['path']), inputs)
     current = {'schema': 'cnb-environment-current/v1', 'project': spec['project'], 'environment': spec['environment'],
                'application_commit': deployment['application_commit'], 'build_id': deployment['build_id'],
                'candidate_tag': deployment['candidate_tag'], 'invocation_id': deployment['invocation_id'],
