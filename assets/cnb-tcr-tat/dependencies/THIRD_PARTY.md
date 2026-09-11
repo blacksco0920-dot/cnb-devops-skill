@@ -1,6 +1,6 @@
 # Pinned npm dependency notices
 
-This inventory records license metadata from the locked packages. It does not change the packages’ licenses. npm ci installs their original LICENSE/NOTICE files; retain them if redistributing installed dependencies. The application-source rights gap is separate and recorded in SOURCES.md.
+This inventory records license metadata from the locked packages. It does not change the packages’ licenses. npm ci installs their original LICENSE/NOTICE files; retain them if redistributing installed dependencies. The source-project owner's MIT authorization is recorded separately in [SOURCES.md](SOURCES.md) and does not relicense these dependencies.
 
 | Package | Version | Declared license |
 | --- | --- | --- |

@@ -8,6 +8,18 @@ AI 执行时配合[完整输入与命令](bootstrap-inputs.md)：包含双环境
 
 用户要求在既有两台服务器追加项目时，符合原生 Caddy 条件的采用[同主机追加流程](native-caddy-shared.md)，保留旧项目并分别验证共存；不要默认替换已有环境。
 
+<a id="local-execution-environment"></a>
+## 先检查 AI 所在的执行环境
+
+本地工具要求与云服务器要求分别判断，不能用目标服务器是 Linux 来证明本地入口可运行。当前端到端实操来自 macOS 上的 Codex；Linux/POSIX 是实现的运行前提之一，不等于 Linux 桌面、WSL、远程开发环境或其他 AI 工具已完成相同实测。
+
+- 完整管理端流程使用 Node.js **22**、Python **3.12+**、Git、SSH/SFTP，以及可核验 UID、文件权限和文件锁的类 Unix 环境。原生 Windows 不支持这些完整入口；不跳过权限检查来兼容。
+- 复用现有工具；缺少依赖时，AI 在允许范围内准备独立目录和虚拟环境，按[API 接入](api-onboarding.md)及下方锁定版本安装，不让用户排查命令或改系统 Python。
+- 首次官方登录需要用户能访问登录页且本机回调可达；远程环境需已有合用凭据或受支持的登录方式。浏览器自动化插件不是必需条件。
+- 恢复验收还需要本地 Unix socket Docker daemon，与源服务器的 daemon 不同，并能使用所需的 PostgreSQL 镜像。提前检查这些条件，具体执行沿[恢复入口](bootstrap-inputs.md#recovery)，不能等源端停写后再准备本机工具。
+
+条件不满足时，继续当前可完成的项目检查和材料准备，将不支持的阶段及具体缺口写入原状态文档；不能把本地生成通过报告成完整首接通过。
+
 ## 1．生成项目文件
 
 <a id="generator-preflight"></a>

@@ -2,7 +2,15 @@
 
 This record describes historical code provenance and licensing, not runtime prerequisites or current acceptance. Consult the bundle manifest for fixed-version validation; source history alone does not validate a new bundle revision. The original source project is `ecat-energy`, Git commit `f52eb1ddf928729b3a4db23d8b0de9211984c4d9`. Read source files with the immutable Git object, not its current working tree.
 
-The source root has no LICENSE or NOTICE at that commit, and its package.json has `private: true`. Code ownership and permission for public redistribution remain **unverified**. This source record does not grant a license. Resolve that rights handoff before publishing derived source outside its authorized scope.
+The source root has no LICENSE or NOTICE at that commit, and its package.json has `private: true`. These are historical source facts, not the current authorization status.
+
+## Owner authorization (2026-09-11)
+
+During preparation of this Skill's public preview, the owner of the source projects confirmed that they hold the right to authorize public redistribution of the deployment scripts extracted from `ecat-energy` and `FinAgent`, and authorized their inclusion in this Skill under its [MIT license](../../../LICENSE). This owner confirmation resolves the previously recorded unverified redistribution status for the source-derived files listed below, including the production adaptations.
+
+The authorization covers the extracted deployment code in this Skill. It does not publish the full source applications, their configuration, credentials or data, and it does not change third-party dependency licenses. Preserve the provenance below and the separate [dependency notices](THIRD_PARTY.md). Authorization is based on the owner's express confirmation, not on repository access or successful deployment tests.
+
+## CI source files
 
 | Extracted file | Source path at pinned commit | Source SHA-256 |
 | --- | --- | --- |
@@ -29,7 +37,7 @@ Optional GitHub synchronization uses the source workflow with only the two manag
 
 ## Production source adaptation (2026-09-07)
 
-The following local FinAgent source copies informed the bounded production adapter. Directory labels are provenance hints, **not verified Git commit identities**: `c66c488` did not resolve in the inspected Git object database, and the older controller copy has not been byte-matched to that deployment. The rights limitation above also applies to these private source adaptations.
+The following local FinAgent source copies informed the bounded production adapter. Directory labels are provenance hints, **not verified Git commit identities**: `c66c488` did not resolve in the inspected Git object database, and the older controller copy has not been byte-matched to that deployment. The owner authorization above covers these source adaptations; it does not resolve their historical commit-identity limitations.
 
 | Local source copy | SHA-256 | Reused behavior |
 | --- | --- | --- |

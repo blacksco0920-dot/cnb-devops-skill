@@ -481,12 +481,16 @@ class SkillPackageTests(unittest.TestCase):
         public = self.public_package_text().lower()
         # The user explicitly requested ecat workflow provenance; account and
         # unrelated fixture identifiers remain excluded from the public package.
+        # The Skill's own public issue/release links are distribution metadata.
+        project_url = "https://github.com/" + "blacksco" + "0920-dot/cnb-devops-skill"
+        for destination in ("issues", "releases"):
+            public = public.replace(f"]({project_url}/{destination})", "](public-project-link)")
         for forbidden in (
             "swift" + "eng",
             "dianqi" + "mao",
             "blacksco" + "0920",
         ):
-            self.assertNotIn(forbidden, public)
+            self.assertFalse(forbidden in public, f"Unrelated fixture identifier found: {forbidden}")
 
     def test_public_runtime_has_no_network_cli_or_vendor_wrapper(self):
         forbidden = (
@@ -670,11 +674,12 @@ class SkillPackageTests(unittest.TestCase):
     def test_markdown_local_links_resolve(self):
         from markdown_link_support import local_link_errors
         markdown_files = [
-            ROOT / "SKILL.md", ROOT / "README.md",
+            ROOT / "SKILL.md", *sorted(ROOT.glob("README*.md")),
             *sorted((ROOT / "references").rglob("*.md")),
             ROOT / "tests/skill-scenarios.md",
             *sorted((ROOT / "tests/evaluations").rglob("*.md")),
             *sorted((ROOT / "docs/history").rglob("*.md")),
+            *sorted((ROOT / "docs/releases").rglob("*.md")),
         ]
         for source in markdown_files:
             self.assertEqual([], local_link_errors(source), str(source))
