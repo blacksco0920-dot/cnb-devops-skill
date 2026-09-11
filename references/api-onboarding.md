@@ -102,7 +102,7 @@ node "$SKILL_DIR/scripts/configure-cnb.mjs" \
 
 配置器只向本次 CLI 子进程注入文件值，保留原 OAuth 存储；所选文件无效、过期或缺权时只报告当前失败，不回退到另一身份。原始令牌不包含本入口可核验的授权/到期证明，实际权限仍由 CNB 判断。范围或到期信息缺失时记为 unknown，先做同身份只读预览，只补影响当前操作的非秘密授权事实或必要官方操作；预览成功不证明写权限或有效期，不因此重登。服务端已确认拒绝的创建与结果未知的创建继续按同一 journal 规则处理。
 
-当前公开接口没有已核实的个人令牌自动签发或网页预填契约，不承诺免除这次人工创建与安全导入。[统一申请 OAuth 应用](https://docs.cnb.cool/zh/oauth/developer.html)可作为维护者后续方向，不能让每个使用者自行申请。2026-09-08 已用此入口完成真实私有/Secret 仓库创建、构建设置读写及重复复用；[实测记录](../docs/history/2026-09-07-api-live-validation.md#pat-followup)同时保留人工交接问题和未验证范围。
+当前公开接口没有已核实的个人令牌自动签发或网页预填契约，不承诺免除这次人工创建与安全导入。[统一申请 OAuth 应用](https://docs.cnb.cool/zh/oauth/developer.html)可作为维护者后续方向，不能让每个使用者自行申请。2026-09-08 已用此入口完成真实私有/Secret 仓库创建、构建设置读写及重复复用；[实测记录](validation-summary.md#pat-followup)同时保留人工交接问题和未验证范围。
 
 ## 3．准备 TCR 仓库与推拉身份
 
@@ -150,6 +150,6 @@ AI 汇总所需 Secret 文件、变量名、允许引用的仓库/ref/event、�
 
 测试发布、生产执行及本机签名核验共用的 TAT 客户端已支持完整 `SecretId/SecretKey/Token`。环境变量可用 `TENCENTCLOUD_TOKEN` 或 `TENCENTCLOUD_SECURITY_TOKEN`；同时提供时必须相同，空值或冲突会拒绝执行。短期凭据的有效期应覆盖整个操作窗口。
 
-这只是临时凭据兼容，**尚未把 OIDC 设为新项目默认**。正式接入还需固定官方插件版本/镜像摘要，核验账号已启用联邦，建立环境专用角色和精确 subject 信任，并分别验收测试 push、生产就绪及同候选生产部署。参见[已核实的 OIDC 条件](../docs/history/2026-09-07-api-onboarding.md#进一步减少长期云密钥oidc)。现有 Secret、审批、镜像拉取身份和生产签名私钥的职责保持独立。
+这只是临时凭据兼容，**尚未把 OIDC 设为新项目默认**。正式接入还需固定官方插件版本/镜像摘要，核验账号已启用联邦，建立环境专用角色和精确 subject 信任，并分别验收测试 push、生产就绪及同候选生产部署。参见[已核实的 OIDC 条件](validation-summary.md#oidc)。现有 Secret、审批、镜像拉取身份和生产签名私钥的职责保持独立。
 
-接口依据：[CNB 官方 CLI](https://docs.cnb.cool/zh/develops/cnb-cli.html)、[CNB Swagger](https://api.cnb.cool/swagger.json)、[腾讯云 CLI 登录](https://cloud.tencent.com/document/product/440/111345)、[官方 OAuth 实现](https://github.com/TencentCloud/tencentcloud-cli/blob/master/tccli/oauth.py)。[本轮真实 API 验证](../docs/history/2026-09-07-api-live-validation.md)覆盖登录及部分配置，不替代完整的新账号接入和部署验收。
+接口依据：[CNB 官方 CLI](https://docs.cnb.cool/zh/develops/cnb-cli.html)、[CNB Swagger](https://api.cnb.cool/swagger.json)、[腾讯云 CLI 登录](https://cloud.tencent.com/document/product/440/111345)、[官方 OAuth 实现](https://github.com/TencentCloud/tencentcloud-cli/blob/master/tccli/oauth.py)。[本轮真实 API 验证](validation-summary.md#api-onboarding)覆盖登录及部分配置，不替代完整的新账号接入和部署验收。

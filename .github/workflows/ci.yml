@@ -1,38 +1,27 @@
-name: CI
+name: Verify Skill distribution
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  package:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-      - name: Install validation-only dependencies
-        run: python3 -m pip install --disable-pip-version-check jsonschema==4.25.1 PyYAML==6.0.2
-      - name: Install pinned official OAuth modules for offline contract tests
-        run: |
-          python3 -m pip install --disable-pip-version-check requests==2.32.5 six==1.17.0
-          python3 -m pip install --disable-pip-version-check --no-deps tccli==3.1.162.1
-      - name: Install locked deployment SDK for contract tests
-        run: npm ci --ignore-scripts --prefix assets/cnb-tcr-tat/dependencies
-      - name: Validate public Skill package
-        run: |
-          REQUIRE_FULL_JSONSCHEMA=1 python3 -m unittest discover -s tests -v
-          node --test tests/*.mjs
-          python3 scripts/check-bundle.py
-          python3 -m py_compile scripts/deploydesk_caddy_apply.py scripts/install_shared_caddy_helper.py
-          python3 tests/quick_validate.py .
-          sudo /usr/sbin/visudo -cf references/shared-caddy-v1/examples/deploydesk-caddy-apply.sudoers
+          node-version: '22'
+      - name: Install generator dependencies
+        run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.2 jsonschema==4.25.1
+      - name: Verify installed files and generate both examples offline
+        run: python3 scripts/verify-skill-package.py . --smoke

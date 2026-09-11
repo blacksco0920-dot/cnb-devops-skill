@@ -114,7 +114,7 @@ spec 文件路径必须为绝对路径，顶层 `schema` 为 `cnb-coexistence-sp
 - 文件保留 `sha256/uid/gid/mode`，后三项使用整数；属主和组均须为 root。路径限定为 `/opt/cnb-devops/<project>/<test|production>/v1/<允许的控制文件名>`，文件名由固定程序的 CONTROL_NAMES 定义，不采集运行秘密。本项目的 host-policy.json 必须在保护列表中，摘要与 spec.policy 一致。
 - `caddy` 使用 `cnb-native-caddy-inventory/v1`、status verified 的固定 helper 结果，恰含 schema/status/main_sha256/base_sha256/running_sha256/sites。sites 保留 project/environment/path/site_sha256/policy_sha256/domains/loopback_ports。基线必须已经包含本项目同环境站点，且其 policy_sha256 与 spec.policy 一致；本次比较要求整个站点集合及三项配置摘要不变。首装追加站点先完成[共享入口验收](native-caddy-shared.md)，再将该已验收安装作为应用发布基线。
 
-具体字段校验在 [固定程序](../scripts/verify-coexistence.py)，不同项目和服务数量的离线输入在 [行为用例](../tests/test_verify_coexistence.py)。AI 仅在适配字段时按需读取，不需要从历史项目复制脚本。
+具体字段校验在 [固定程序](../scripts/verify-coexistence.py)，不同项目和服务数量的离线输入在 [公开输入示例](coexistence-examples.md)。AI 仅在适配字段时按需读取，不需要从历史项目复制脚本。
 
 默认预览只读本地输入，不创建输出目录，也不确认 SSH、健康或运行状态。真实 `--apply` 使用严格 known-hosts 的非交互 SSH，以 root 或 `sudo -n` 运行固定只读采集；共享入口沿用 Ubuntu 24.04 原生 systemd Caddy 的受限 inventory，不适用于任意代理或 Docker 网关。入口不重启容器、不修改入口。
 

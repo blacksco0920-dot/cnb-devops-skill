@@ -6,7 +6,7 @@ Let your AI coding assistant set up **test deployments, production releases, and
 
 Built for individual developers and small teams who use AI to write code and want to ship their projects. The AI handles configuration files, deployment scripts, and technical records. You make the business decisions, complete any account actions that require you, and decide when to release to production.
 
-**This is a Preview release**, intended for early users willing to report issues. The supported scope and verification results are described below. End-to-end setup with a fresh account, the experience across AI tools, and first-time setup duration still need validation. See the [Preview release notes](docs/releases/v0.2.0-preview.6.md) for the release scope.
+**This is a Preview release**, intended for early users willing to report issues. The supported scope and verification results are described below. End-to-end setup with a fresh account, the experience across AI tools, and first-time setup duration still need validation. See the [Preview release notes](docs/releases/v0.2.0-preview.7.md) for the release scope.
 
 ## What it helps you do
 
@@ -48,6 +48,8 @@ The AI prefers official sign-in flows or existing initialization credentials. If
    > Please use cnb-devops-skill to check whether this project is supported, set up automated deployment to a test environment, and verify access and basic application behavior. When you need information or an action from me, tell me exactly what to do. Wait for my confirmation before releasing to production.
 3. Complete the actions the AI requests, then open the delivered test URL and check the application. When you are ready to go live, explicitly request a production release, confirm the specific candidate version, and complete the required approvals.
 
+Prefer the published tag `v0.2.0-preview.7`, and record its full commit and actual installation path. Download that tag's source archive or make a shallow clone of the tag to obtain the release snapshot. A full clone still includes the existing public history. See the [release notes](docs/releases/v0.2.0-preview.7.md) for commands.
+
 One person may fill multiple roles if the project's policy permits it. You do not need to write deployment configuration or compile technical evidence yourself. Sensitive values belong only in designated private storage, never in chat or ordinary code repositories.
 
 ## What you should receive
@@ -73,11 +75,11 @@ Reusing the workflow across projects means each repository uses the same method 
 
 ## Verification and technical references
 
-The standard workflow has real-project records covering test-and-production releases, application checks, and off-host recovery. See the [verification history](docs/history/README.md) for prerequisites, scope, and unverified areas. The time taken for an individual case is not a delivery promise for a new project.
+The standard workflow has real-project records covering test-and-production releases, application checks, and off-host recovery. See the [public validation summary](references/validation-summary.md) for prerequisites, scope, and unverified areas. The time taken for an individual case is not a delivery promise for a new project.
 
-Official sign-in, CNB private and Secret repository creation, build settings, Tencent Cloud fixed commands, and dedicated identities have undergone [live API validation](docs/history/2026-09-07-api-live-validation.md). Production, recovery, and test closeout use fixed entry points that save evidence and support repeated resumption. Users do not need to compile technical evidence themselves.
+Official sign-in, CNB private and Secret repository creation, build settings, Tencent Cloud fixed commands, and dedicated identities have undergone [live API validation](references/validation-summary.md#api-onboarding). Production, recovery, and test closeout use fixed entry points that save evidence and support repeated resumption. Users do not need to compile technical evidence themselves.
 
-The latest [unfamiliar-project onboarding](docs/history/2026-09-11-unfamiliar-project-adoption.md) completed a shared-host test deployment, application checks, and database recovery. Work that still required ad hoc orchestration in that run was then incorporated into the [TCR initialization and test closeout entry points](docs/history/2026-09-11-tcr-test-closeout.md). Read-only rechecks and status synchronization have been verified against existing real resources. Creating fresh resources through the new TCR entry point, automated initialization with a fresh account, and overall speed improvements still need live validation. The AI still issues credentials for the TAT deployment identity by calling the API as documented.
+The latest [unfamiliar-project onboarding](references/validation-summary.md#unfamiliar-project) completed a shared-host test deployment, application checks, and database recovery. Work that still required ad hoc orchestration in that run was then incorporated into the [TCR initialization and test closeout entry points](references/validation-summary.md#tcr-closeout). Read-only rechecks and status synchronization have been verified against existing real resources. Creating fresh resources through the new TCR entry point, automated initialization with a fresh account, and overall speed improvements still need live validation. The AI still issues credentials for the TAT deployment identity by calling the API as documented.
 
 The following documents are primarily for the AI to read as needed; you do not need to study each one. The technical documentation is maintained as one set of files, with mixed Chinese and English content. Both READMEs link to the same files, and the AI explains the current steps in your language:
 
@@ -95,7 +97,13 @@ If you encounter a problem, you can ask the AI:
 
 > Please preserve the current progress and prepare a sanitized report suitable for a GitHub Issue. Include the Skill version, local operating system and AI tool, the stage where work stopped, expected and actual results, and the actions I actually had to perform.
 
-Review the report, then submit it through [GitHub Issues](https://github.com/blacksco0920-dot/cnb-devops-skill/issues) in Chinese or English. Do not upload keys, complete configuration files, backups, or full raw logs; the AI should extract only the necessary error information. See the [Preview release notes](docs/releases/v0.2.0-preview.6.md) for versioning, installation, and maintenance conventions.
+Review the report, then submit it through [GitHub Issues](https://github.com/blacksco0920-dot/cnb-devops-skill/issues) in Chinese or English. Do not upload keys, complete configuration files, backups, or full raw logs; the AI should extract only the necessary error information. See the [Preview release notes](docs/releases/v0.2.0-preview.7.md) for versioning, installation, and maintenance conventions.
+
+## Public distribution and contributions
+
+This repository contains releases generated from a private development repository and retains its existing public commits and tags. Each snapshot includes all runnable source, scripts, configuration templates, dependency locks, references, and licenses needed to use the Skill independently. Installation and execution do not require the private repository. Full development records and internal tests remain in development; the public package includes a standalone integrity check.
+
+Contributions and feedback are welcome through public [Issues](https://github.com/blacksco0920-dot/cnb-devops-skill/issues) and [Pull Requests](https://github.com/blacksco0920-dot/cnb-devops-skill/pulls). Maintainers integrate and validate contributions privately, then include them in the next release export. All public runnable source remains MIT licensed, with the same rights to use, modify, and redistribute it.
 
 ## License
 

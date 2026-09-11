@@ -1,0 +1,495 @@
+{
+  "bundle_version": "0.2.0-preview.5",
+  "files": {
+    ".github/workflows/ci.yml": {
+      "mode": "100644",
+      "sha256": "85f931005ce95911eabf3bdae048e03b5996afd792db9af11926fc159d8cfee0"
+    },
+    ".gitignore": {
+      "mode": "100644",
+      "sha256": "ae51735e803eb1245e66bcc542682d6ca42272466325c4dce3ccbbe89d12c0ef"
+    },
+    "LICENSE": {
+      "mode": "100644",
+      "sha256": "1126322e2cc8d165adc4c792eeb195717de2bcc7b39be1ce77959d78e87ef685"
+    },
+    "README.en.md": {
+      "mode": "100644",
+      "sha256": "b2fdbd6053cd56a0e8c1a41c814e8c239f4e335f3e8d7cb80a6fbd95d454915a"
+    },
+    "README.md": {
+      "mode": "100644",
+      "sha256": "741b2d62c53731552a5238aa4f7b9f4641d856103b9c7fae2c3495754847fac4"
+    },
+    "SKILL.md": {
+      "mode": "100644",
+      "sha256": "e1723dc8535cee6d39ad2880112a96efbd73f26ff6d3b67015cf5e80831fe806"
+    },
+    "assets/cnb-tcr-tat/admin/publish-production-approval.mjs": {
+      "mode": "100644",
+      "sha256": "48d9467be1ae9cf184537e0de6102b9598dcb83d25f8dc6f0e109e2b66c69523"
+    },
+    "assets/cnb-tcr-tat/admin/sign-production-approval.mjs": {
+      "mode": "100644",
+      "sha256": "621dc7a79dd77261a36c8f115fac0067c1cb9933128ffc0ffead8c7ff1f76e5c"
+    },
+    "assets/cnb-tcr-tat/bundle.json": {
+      "mode": "100644",
+      "sha256": "077eb0ec6dded50bf07a11ccb2e2ee8814f76d556d6f88c088323eb38a335af3"
+    },
+    "assets/cnb-tcr-tat/ci/candidate_gate.py": {
+      "mode": "100644",
+      "sha256": "aae1dc140c4b5715a5e7bf054b532a6564b63bd891894b3392eacd40ab16a8b4"
+    },
+    "assets/cnb-tcr-tat/ci/candidate_manifest.py": {
+      "mode": "100644",
+      "sha256": "7a0d2b0df0f7c76dae4964ea93f994ef181dd40be2668d9761246d1a2c6b9d2c"
+    },
+    "assets/cnb-tcr-tat/ci/extract-docker-push-digest.sh": {
+      "mode": "100755",
+      "sha256": "369ef30856bc3832cb9705ccb25f5ff36984760aed6363cfbd0d7037a006c5e2"
+    },
+    "assets/cnb-tcr-tat/ci/production-contract.mjs": {
+      "mode": "100644",
+      "sha256": "8ebf96ecdfea14b5f66a7a4e25ba80242b48f5b992e3295ebffe981397f7b9d1"
+    },
+    "assets/cnb-tcr-tat/ci/production_annotations.py": {
+      "mode": "100644",
+      "sha256": "6b5142c59b6c216774fe4820a41b1d479546ec5b0777df54d08bb1b9c6ed23f6"
+    },
+    "assets/cnb-tcr-tat/ci/publish-candidate-tag.sh": {
+      "mode": "100755",
+      "sha256": "343bf74a972bac9ff84d7f5de296a62c387776af33218bb8e6aa287ad09fabc3"
+    },
+    "assets/cnb-tcr-tat/ci/release-identity.mjs": {
+      "mode": "100644",
+      "sha256": "1b3b115cc84d7c09d340e2ed35fc2276f823b376ff9e4f473ee59921885b705b"
+    },
+    "assets/cnb-tcr-tat/ci/release-request.mjs": {
+      "mode": "100644",
+      "sha256": "3ab178e2b43158b8b811e283d1f6b13922222e08595503c127adfa5738a53711"
+    },
+    "assets/cnb-tcr-tat/ci/run-production-deploy.mjs": {
+      "mode": "100644",
+      "sha256": "cdd5cd2c1d05170bce2a14d6af71e52d9f8addf4cdb010b4be7f3b0185324c1d"
+    },
+    "assets/cnb-tcr-tat/ci/run-tat-release.mjs": {
+      "mode": "100644",
+      "sha256": "597b30d31fb55a02784474b338ad99f9fd375295916a423134e1438ca64afc0d"
+    },
+    "assets/cnb-tcr-tat/ci/strict-json.mjs": {
+      "mode": "100644",
+      "sha256": "edc1f147ba4f9fb07a8d2f848e7360a1751563394e5d2c60af31125cf1fe7afe"
+    },
+    "assets/cnb-tcr-tat/ci/test-repair.mjs": {
+      "mode": "100644",
+      "sha256": "abbc2ee74e51dbc59313dba5587d52f56856d86635615e3f110442b409bcac19"
+    },
+    "assets/cnb-tcr-tat/dependencies/SOURCES.md": {
+      "mode": "100644",
+      "sha256": "2d8a4a8da25207a5761f71839885ea3ca044bdc7cb42801bb6b5dcc547510b50"
+    },
+    "assets/cnb-tcr-tat/dependencies/THIRD_PARTY.md": {
+      "mode": "100644",
+      "sha256": "c280f6a25606b97479963d266a736232f3d5b0cc9bf2f40544806f539b2c5bdd"
+    },
+    "assets/cnb-tcr-tat/dependencies/package-lock.json": {
+      "mode": "100644",
+      "sha256": "2e480e70f7652ac7e0753af6e11445a7f93fa4ed911dcf485d28c562a295ffda"
+    },
+    "assets/cnb-tcr-tat/dependencies/package.json": {
+      "mode": "100644",
+      "sha256": "b52f23c648264c0afae3163f6bf0c3f5ccf573331103adf3c0bbf300c9d38b3f"
+    },
+    "assets/cnb-tcr-tat/host/README.md": {
+      "mode": "100644",
+      "sha256": "641ef18d23c3c01185a3aff0865fbfe93ebbe94917041ca5940c967c2609d4be"
+    },
+    "assets/cnb-tcr-tat/host/bootstrap-host.py": {
+      "mode": "100644",
+      "sha256": "f33d0e811d622e8db7238416d26f1a16a0b92099db37c9a62c3f5ab2911eb7b8"
+    },
+    "assets/cnb-tcr-tat/host/configure-native-caddy.py": {
+      "mode": "100644",
+      "sha256": "07a56c80cd3ab1e0a86b0442d4823ca9e6df52b3085ba8bf8abac9c8e6695ba3"
+    },
+    "assets/cnb-tcr-tat/host/install-project.py": {
+      "mode": "100644",
+      "sha256": "d1d022a5604832e237a78796e0237fc88dc4934c7e76a711aa11e5c582f60aeb"
+    },
+    "assets/cnb-tcr-tat/host/production-release.py": {
+      "mode": "100644",
+      "sha256": "34a004f5415ccac852875e7c4ef9813c9b854b49fea457a8365bceb6c6a1ae49"
+    },
+    "assets/cnb-tcr-tat/host/recover-project.py": {
+      "mode": "100644",
+      "sha256": "c2c8270308e6355d302e74a28b70761b0a29751b9bf39bdc5abf46211851c5bd"
+    },
+    "assets/cnb-tcr-tat/host/repair-test-release.py": {
+      "mode": "100644",
+      "sha256": "4941da0e4583b86e67c1e4cd0bb5bb4adfd8ccfa7ef5624d4a8fe8b0b662a29c"
+    },
+    "assets/cnb-tcr-tat/host/setup-project.py": {
+      "mode": "100644",
+      "sha256": "4b77627cfa457e7ab73af7fc835b75d5b5e95d69088bbdf867320ad388fb0e85"
+    },
+    "assets/cnb-tcr-tat/host/tat-command.sh.tmpl": {
+      "mode": "100644",
+      "sha256": "c6b310a7af1abd85bc834393595b82dab16481a5fbcae0f1a9a04a8f8ce06e9d"
+    },
+    "assets/cnb-tcr-tat/host/tat-deploy-test.py": {
+      "mode": "100644",
+      "sha256": "de62a4d0ac4f9493419c54b5746ee1a195afd79deb066d574140efb9261eedf3"
+    },
+    "assets/cnb-tcr-tat/host/upgrade-controller.py": {
+      "mode": "100644",
+      "sha256": "b6ef05323c0b0f0c074358da85d2b5aede4848c78a72aa30da6dc3643faa706f"
+    },
+    "assets/cnb-tcr-tat/project.example.yml": {
+      "mode": "100644",
+      "sha256": "4e69116be539f7ccacb26b32b4205b56c736fb397b446d0dac5375efdbc02763"
+    },
+    "assets/cnb-tcr-tat/project.full.example.yml": {
+      "mode": "100644",
+      "sha256": "426c9cfa73674f2fac325e2672c0c7b0b2374e133c7c72ee27acf44909208cad"
+    },
+    "assets/cnb-tcr-tat/project.schema.json": {
+      "mode": "100644",
+      "sha256": "a1654506c461497fec1b4ab4fd9d332636c736d3714a8ece299e94596884d58e"
+    },
+    "assets/cnb-tcr-tat/templates/github-sync.yml.tmpl": {
+      "mode": "100644",
+      "sha256": "7e3b7700d9e8c8e26588348f6cf623b22c96d9b40931d2157657abf19cd09b86"
+    },
+    "assets/cnb-tcr-tat/templates/render.py": {
+      "mode": "100644",
+      "sha256": "e742c07a31e5d69781bc72179a56d684d40c8de38615edce9ab4647125c59dcc"
+    },
+    "docs/releases/v0.2.0-preview.6.md": {
+      "mode": "100644",
+      "sha256": "760c89532d82058583da1c82ccd0ddc1c86273fac2327ef2c1943061940315ac"
+    },
+    "docs/releases/v0.2.0-preview.7.md": {
+      "mode": "100644",
+      "sha256": "1b38f0572252538789435ed5050b50d93c4c625e79f23c72f39c52d43b06029c"
+    },
+    "references/api-onboarding.md": {
+      "mode": "100644",
+      "sha256": "3216249757d152535505cc625eca552731687d65074e103379cf0b5a562a9d6c"
+    },
+    "references/bootstrap-inputs.md": {
+      "mode": "100644",
+      "sha256": "66c48a103aa317becb1a5969df84c47713395390945adc9e9e9b95340d5611bb"
+    },
+    "references/bootstrap.md": {
+      "mode": "100644",
+      "sha256": "708d21ba5db7ff76eae6a368c6148b3aeaef83ffcf01f94728875bdcf7249e9f"
+    },
+    "references/cnb-deployment-ui.md": {
+      "mode": "100644",
+      "sha256": "43dd99e5921a7515a8cd05a4cfe8cbe812178ecb754d99e357c3c04f52764f95"
+    },
+    "references/cnb-deployment-ui/examples/annotation-readback.yml": {
+      "mode": "100644",
+      "sha256": "8872e8e87c1d7848719c3dfdbf2d388c2e2a2737d63b739f928d47e89aabc6ca"
+    },
+    "references/cnb-deployment-ui/examples/candidate-manifest.json": {
+      "mode": "100644",
+      "sha256": "503ac90c83db205d99332c882bc72d46c8a50e3da46a64f569eab5551e0fa52f"
+    },
+    "references/cnb-deployment-ui/examples/candidate-production-gates.yml": {
+      "mode": "100644",
+      "sha256": "2ebe7f0df364dc77274df3cff04fa11d8dd2644190a7a8f0811aa70b9dad0b3d"
+    },
+    "references/cnb-deployment-ui/examples/execution-adapter.disabled.json": {
+      "mode": "100644",
+      "sha256": "09f6fb9f5907cd10205630e26a666f2cb81244b1f7cc4bea26568b777d1fe537"
+    },
+    "references/cnb-deployment-ui/examples/gate-behavior-cases.json": {
+      "mode": "100644",
+      "sha256": "35bf242bcf42ea4a0caafa6868a7349529c8129ec874f8c3332b405bfa00dca5"
+    },
+    "references/cnb-deployment-ui/examples/production-handoff.pending.json": {
+      "mode": "100644",
+      "sha256": "f78a0472488d71c0a46f01e28a60696ce3337aed80f652fd82b9eeb92ca35916"
+    },
+    "references/cnb-deployment-ui/examples/tag_deploy.yml": {
+      "mode": "100644",
+      "sha256": "a094a81a878906e74a2a4352094d3a55dace2dd5d81ed0929f9480dc9f3cc763"
+    },
+    "references/cnb-openapi.md": {
+      "mode": "100644",
+      "sha256": "676e842f0208976fe975d4d53d346dfee55315d64357737c1c0b1979d0a9fd93"
+    },
+    "references/coexistence-examples.md": {
+      "mode": "100644",
+      "sha256": "5c32133e57260810caa72fa64b1d0b7d3c867a9c5e79318b75d865f8c64820d3"
+    },
+    "references/docker-host-inventory-v2/inventory.schema.json": {
+      "mode": "100644",
+      "sha256": "162a256fa9d588b0a430fba43eb3397ffcc97de7bf1fc628ab6b97afd398a945"
+    },
+    "references/docker-host-inventory-v2/observation.schema.json": {
+      "mode": "100644",
+      "sha256": "74b590f2fb4d27a9dc8f2fe3ee4eecbf36974f86dd2ecf91986c83ca886ec0d8"
+    },
+    "references/docker-host-inventory-v2/request.example.json": {
+      "mode": "100644",
+      "sha256": "0976fe0bb7e6f8c39a6aa52a3e680f8b9aea3d24371275e5c4cc4c93c649628c"
+    },
+    "references/docker-host-inventory-v2/request.schema.json": {
+      "mode": "100644",
+      "sha256": "3c7ca5294739505b66126a484f62826ef61936318ebdbb764cea1f60e976f86c"
+    },
+    "references/docker-host-inventory-v2/topology.schema.json": {
+      "mode": "100644",
+      "sha256": "468d8625da5ef6c566a9a9d087e596aeb815f0f7d5d7a02dc650bb291b634730"
+    },
+    "references/examples/coexistence-inputs.py": {
+      "mode": "100644",
+      "sha256": "59c28b625d4ec42380c5d05e2ebb357f867c3a47fad58576a6b2ef8ec57022b2"
+    },
+    "references/failed-test-repair.md": {
+      "mode": "100644",
+      "sha256": "5fb675bb881ee6ae3fff089d6208dcbe8ee8601c75a86e1954030516e0e386ae"
+    },
+    "references/human-handoffs.md": {
+      "mode": "100644",
+      "sha256": "1fe4d931cfda68c635ea0b3798e5a8574ac451e0a346924d1dbf2532c72c30ad"
+    },
+    "references/native-caddy-shared.md": {
+      "mode": "100644",
+      "sha256": "696ca52829f0b2b06814d0330998410dcdff4756132240218b919507bce6f9c3"
+    },
+    "references/post-release-closeout.md": {
+      "mode": "100644",
+      "sha256": "7f7324ad2acfefd7aad5e6ea5e580b178ea217b1b0eb8579461931b1215f0488"
+    },
+    "references/project-adoption.md": {
+      "mode": "100644",
+      "sha256": "08e96e9b6d4735b24484f38f1226479180b4f7aacf42432584ea205df75ee0a9"
+    },
+    "references/release-safety.md": {
+      "mode": "100644",
+      "sha256": "7f30289f201409f292cde4384a86fede5aeccd8943b3aa7948f912440a684a15"
+    },
+    "references/shared-caddy-v1/contract.md": {
+      "mode": "100644",
+      "sha256": "5b8f32ec0a7579c98f15bb86c78eca76774c55265a6bf7697d80c1af36483bbe"
+    },
+    "references/shared-caddy-v1/examples/baseline-manifest.json": {
+      "mode": "100644",
+      "sha256": "67eb8a402cf0bf2040c1657a0adb9ff69686571a4492a0c646b1db87be3d6c3a"
+    },
+    "references/shared-caddy-v1/examples/baseline-provenance.json": {
+      "mode": "100644",
+      "sha256": "51091eeead17ee488dda4e9654919e7325b1b328dfa5671f97025baacfda875e"
+    },
+    "references/shared-caddy-v1/examples/baseline-receipt.json": {
+      "mode": "100644",
+      "sha256": "3d9ddb24ffe2e6bd9a8db9b7e959c2e7d5fd73ca28ce616e63cacf1aff1cdc35"
+    },
+    "references/shared-caddy-v1/examples/baseline-transaction.json": {
+      "mode": "100644",
+      "sha256": "5922fa036ffc8fb8f30a398cbb516a3cab5e805bada9df3722689847b1f1054e"
+    },
+    "references/shared-caddy-v1/examples/bootstrap-attestation.json": {
+      "mode": "100644",
+      "sha256": "5b92e8e2d68aedb3ef966bc1e73e9f39ba36348fd22b7be4708be69be7937a81"
+    },
+    "references/shared-caddy-v1/examples/bundle-provenance.json": {
+      "mode": "100644",
+      "sha256": "4ea610a2c2aa740b68941836992836586dd655e9d7d8a9821bddb980eaa0cf0e"
+    },
+    "references/shared-caddy-v1/examples/declaration.json": {
+      "mode": "100644",
+      "sha256": "04d4ef1fea7cbb5bbcd4f8364c548de5782a5ba01346acd55be5eaf1670537e9"
+    },
+    "references/shared-caddy-v1/examples/deploydesk-caddy-apply.sudoers": {
+      "mode": "100644",
+      "sha256": "c5c83893f12a393d96cd8acf3f28699766e1604165e1b600e7afa1eabdf2e09f"
+    },
+    "references/shared-caddy-v1/examples/helper-requirement.json": {
+      "mode": "100644",
+      "sha256": "4a2ecd4685bbb8e405cb51c9d06abb414011a14ab6283366278146f0eedc1a67"
+    },
+    "references/shared-caddy-v1/examples/lock-inodes.json": {
+      "mode": "100644",
+      "sha256": "7b07109efd03ca087781c6da6345d826bd9a9d85c453688811b6ff6d13ccda21"
+    },
+    "references/shared-caddy-v1/examples/receipt.json": {
+      "mode": "100644",
+      "sha256": "2e22245b79f1be0b57627f7b75ba97192a48dc97772fa0076fce3903ffcccec9"
+    },
+    "references/shared-caddy-v1/examples/server-contract.json": {
+      "mode": "100644",
+      "sha256": "9f7ac764333d2937a9a4a61821a0e501870e9e28e97dd9fa54dfa5f608fc6b93"
+    },
+    "references/shared-caddy-v1/examples/transaction.json": {
+      "mode": "100644",
+      "sha256": "91d293d1a0453936ba1f7eb3e18d9a8e66279d5f44666e5f6ff285fc8119093b"
+    },
+    "references/shared-caddy-v1/host-handoff.md": {
+      "mode": "100644",
+      "sha256": "5d7d390d33b4096b9000e7cb0be3308b224c3b24ee38e1559cf3ee821385bfe6"
+    },
+    "references/shared-caddy-v1/schemas/baseline-provenance.schema.json": {
+      "mode": "100644",
+      "sha256": "378f9c1f4614ff9c544464b627e320ae24dc339f2531faaa0f8b9a723d32134b"
+    },
+    "references/shared-caddy-v1/schemas/baseline-receipt.schema.json": {
+      "mode": "100644",
+      "sha256": "fcf7b0ae2451e8b5074adf34c0aadbfea2de2a78787a5a80d285bb33b18b94c7"
+    },
+    "references/shared-caddy-v1/schemas/baseline-transaction.schema.json": {
+      "mode": "100644",
+      "sha256": "d7d538fc89f04436653fb694dfb4843b32ae78450495e2dc830eab86c429311f"
+    },
+    "references/shared-caddy-v1/schemas/declaration.schema.json": {
+      "mode": "100644",
+      "sha256": "9a76b9e6a5df90b85a4921f3192e449aa0bafecba64fa7f94f12a6ec0e7d7326"
+    },
+    "references/shared-caddy-v1/schemas/helper-requirement.schema.json": {
+      "mode": "100644",
+      "sha256": "45d4285b715ea0f898d4d7769eeb1e27d7990e658f946b88c2837ddce0e5df77"
+    },
+    "references/shared-caddy-v1/schemas/internal-provenance.schema.json": {
+      "mode": "100644",
+      "sha256": "09ec47599b44a17a701c17c5dbe4b042c288961084de7b6c8e67e33b81429416"
+    },
+    "references/shared-caddy-v1/schemas/receipt.schema.json": {
+      "mode": "100644",
+      "sha256": "1ef0e0fc6ac5c16706ef5327fe2cb05e56acba8bc0ec790e6049909ce27b66b1"
+    },
+    "references/shared-caddy-v1/schemas/server-contract.schema.json": {
+      "mode": "100644",
+      "sha256": "d0e22c1720a913e446840ab5ce0d36bde2569f9620b631d9690c731fd6a88276"
+    },
+    "references/shared-caddy-v1/schemas/server-manifest.schema.json": {
+      "mode": "100644",
+      "sha256": "f50a335a54b9212a7c93ae76ea38aa79a0a45105a940dbc917ab23855a3c22fc"
+    },
+    "references/shared-caddy-v1/schemas/transaction.schema.json": {
+      "mode": "100644",
+      "sha256": "c5c169343ca7d1bdf319743ee850aa48f188439bf4061da121940aa3b7f6215b"
+    },
+    "references/standard-workflow.md": {
+      "mode": "100644",
+      "sha256": "bc487153057aa8c249611e1fac3e1c47669e65d9ee8674611d8ea556d8978bb0"
+    },
+    "references/tcr-setup.md": {
+      "mode": "100644",
+      "sha256": "a008a567767f5534a6da92c15290c4b173d007386d7c9abc604c2e890a963fdf"
+    },
+    "references/validation-summary.md": {
+      "mode": "100644",
+      "sha256": "cb56310ed28a959dd60cf69beed374bf4c335d37c5b57a3dd3b18196f0bf8d96"
+    },
+    "scripts/check-bundle.py": {
+      "mode": "100644",
+      "sha256": "538e793dbbeb9720b3e05357359468b866e138423b9a60561124cef021ff898f"
+    },
+    "scripts/configure-cam.mjs": {
+      "mode": "100644",
+      "sha256": "367a85a31099c823ccfbf9d631cd00060592cb8a8a87e8bf5b134ab420393297"
+    },
+    "scripts/configure-cnb.mjs": {
+      "mode": "100644",
+      "sha256": "2790b9b71da85500f9056bc682000c88637aa682078da4e6a21a84964c6a7869"
+    },
+    "scripts/configure-tat.mjs": {
+      "mode": "100644",
+      "sha256": "e721890f90f2972cc40ec256a8ef556d767fe91e002f2fb11ea0e62fbbd76df0"
+    },
+    "scripts/configure-tcr.mjs": {
+      "mode": "100644",
+      "sha256": "b3838de2ec257ac1280f50ccc0695d9fbda20dd3f6aeb96a642eac79acc30408"
+    },
+    "scripts/deploydesk_caddy_apply.py": {
+      "mode": "100755",
+      "sha256": "4ea57ae26108d394656c74a3cb4ac33903952baddd894bbd82eba1d2c6304f78"
+    },
+    "scripts/extract-docker-push-digest.sh": {
+      "mode": "100755",
+      "sha256": "369ef30856bc3832cb9705ccb25f5ff36984760aed6363cfbd0d7037a006c5e2"
+    },
+    "scripts/grant-test-repair.py": {
+      "mode": "100644",
+      "sha256": "33df897408d94adffaaafc722d378bcf5a563bb0686de99763d8b234025b9c1f"
+    },
+    "scripts/inspect_docker_host.py": {
+      "mode": "100644",
+      "sha256": "e2e406af1e41c3bf50ca0a765014cf84adb676788f6eb5afba7ce99e1a3a4152"
+    },
+    "scripts/inspect_docker_host_v2.py": {
+      "mode": "100644",
+      "sha256": "90b28cd4977ed9b5ee4a5319a265a27d1ea11c82861acfcf0084314a89b0f881"
+    },
+    "scripts/install_shared_caddy_helper.py": {
+      "mode": "100644",
+      "sha256": "96802310fcc9597449c854c044cd3942199c7c3b364f86ceaa7c3938f32cef16"
+    },
+    "scripts/prepare-project.py": {
+      "mode": "100644",
+      "sha256": "f2b262c71e26a4333f8357c8f34c4b1c6e4078a3e34c20d6278f9de594ad266e"
+    },
+    "scripts/reconcile-project-state.py": {
+      "mode": "100644",
+      "sha256": "21dceb9fd3c6792f0c5b592bcc750132229d56331d70263319596042c7f99749"
+    },
+    "scripts/rehearse-native-caddy.py": {
+      "mode": "100644",
+      "sha256": "8afb605ab356001691eee34556c6c751fa4491f341834a8e0c30b92681fc23d6"
+    },
+    "scripts/rehearse-recovery.py": {
+      "mode": "100644",
+      "sha256": "2c3c0c99790e1482fc3ea1a430d2809b8c1a3a0dee148ce27d6fadc731a659f1"
+    },
+    "scripts/release-deployment.mjs": {
+      "mode": "100644",
+      "sha256": "58e7da718fd28326036f86212b5edcfd13d5b3a8d12e7cfb99c7a967b6f6a04f"
+    },
+    "scripts/release-session.mjs": {
+      "mode": "100644",
+      "sha256": "96454923aa2e3365e9fa7b654251fdc21eeb2953b4aec18db2f8b4deb5688418"
+    },
+    "scripts/repair-session.py": {
+      "mode": "100644",
+      "sha256": "ea795c9fe5c81714de8e90c9ceaec59633a7eb7e5e0ade7caa0846a0f1885806"
+    },
+    "scripts/save-cnb-token.py": {
+      "mode": "100644",
+      "sha256": "c8f6543f70d94c66ad639bff9f1135206d1095dd3cffba04a217a7879fd2ebc8"
+    },
+    "scripts/setup-host.py": {
+      "mode": "100644",
+      "sha256": "3211106d73d19cefa82406afd62f45aa38b864ced08dc90fc9f03b9709addb51"
+    },
+    "scripts/tcr-local-state.mjs": {
+      "mode": "100644",
+      "sha256": "c3213c3c7107eed0ac4d870b0abf3494083054bca499064948df28bb16ab1ebc"
+    },
+    "scripts/tencent-session.py": {
+      "mode": "100644",
+      "sha256": "8ce7805baedee1d6e0a6b12d80703a9329920653dd1849959f82d2eb28cb3520"
+    },
+    "scripts/upgrade-controller.py": {
+      "mode": "100644",
+      "sha256": "37c78c804f4756ef10104dca542b92713bb2acffadd07b28f95d1f06f4e4553e"
+    },
+    "scripts/verify-coexistence.py": {
+      "mode": "100644",
+      "sha256": "b7722187e2e5f745def50565c01bd33ca94f42b830004544c27d62d4b4f7a8c4"
+    },
+    "scripts/verify-skill-package.py": {
+      "mode": "100644",
+      "sha256": "df81d16ca2b30dfb4f29ca49c5aa2417b7f473ece8707ec7aa15591b8ea72bfb"
+    },
+    "scripts/verify-test-deployment.mjs": {
+      "mode": "100644",
+      "sha256": "630b68881fb4fb3d0b45a57ba88e88c5052f446c527742da0f9d6de51522170f"
+    }
+  },
+  "schema": "cnb-devops-skill-release/v1",
+  "version": "v0.2.0-preview.7"
+}

@@ -34,7 +34,7 @@ organization role. This CLI has no login `--scope` option. Do not retry login
 as a permission fix. The executor reports `CNB_SCOPE_REQUIRED` with allowlisted
 `required_scopes`; use the [private token entry](api-onboarding.md#cnb-bootstrap-token) and retain
 successful resources. Build-setting PUT was not exercised on that date;
-[PAT follow-up on 2026-09-08](../docs/history/2026-09-07-api-live-validation.md#pat-followup)
+[PAT follow-up on 2026-09-08](validation-summary.md#pat-followup)
 passed private/Secret repository creation, setting writes/readbacks and an
 unchanged repeat with the same journal.
 
@@ -222,7 +222,7 @@ ready-last transition. See the
 
 ## Related automation research
 
-[Public API and low-interaction onboarding findings](../docs/history/2026-09-07-api-onboarding.md)
+[Public API and low-interaction onboarding findings](validation-summary.md#api-and-oidc)
 record the official CLI login paths, TAT maintenance APIs and CNB OIDC plugin.
 The current release runner and signer support the complete STS credential triple.
 [API onboarding](api-onboarding.md) describes the implemented setup tools and

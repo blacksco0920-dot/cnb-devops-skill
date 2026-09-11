@@ -27,7 +27,7 @@
     "dependencies/THIRD_PARTY.md": "c280f6a25606b97479963d266a736232f3d5b0cc9bf2f40544806f539b2c5bdd",
     "dependencies/package-lock.json": "2e480e70f7652ac7e0753af6e11445a7f93fa4ed911dcf485d28c562a295ffda",
     "dependencies/package.json": "b52f23c648264c0afae3163f6bf0c3f5ccf573331103adf3c0bbf300c9d38b3f",
-    "host/README.md": "87883350d3a4fdb5ef3e50a5b38ed01fa7d9f337ec0daace3882cf0ddca85650",
+    "host/README.md": "641ef18d23c3c01185a3aff0865fbfe93ebbe94917041ca5940c967c2609d4be",
     "host/bootstrap-host.py": "f33d0e811d622e8db7238416d26f1a16a0b92099db37c9a62c3f5ab2911eb7b8",
     "host/configure-native-caddy.py": "07a56c80cd3ab1e0a86b0442d4823ca9e6df52b3085ba8bf8abac9c8e6695ba3",
     "host/install-project.py": "d1d022a5604832e237a78796e0237fc88dc4934c7e76a711aa11e5c582f60aeb",
@@ -46,7 +46,7 @@
   },
   "provenance": [
     {
-      "code_rights": "Owner requested local reuse; source has no recorded redistribution license. Verify copyright permission before external publication.",
+      "code_rights": "Source owner confirmed on 2026-09-11 that the extracted deployment code, including production adaptations from ecat-energy and FinAgent, may be publicly redistributed with this Skill under MIT. See dependencies/SOURCES.md; third-party licenses remain separate.",
       "commit": "f52eb1ddf928729b3a4db23d8b0de9211984c4d9",
       "historical_validation": "Test deployment and candidate publication recorded in source project; new CNB production execution was not enabled. Historical evidence does not validate this extracted version.",
       "missing_source": [
@@ -77,7 +77,7 @@
   "status": "local-preview",
   "validation": {
     "administrator_apt_lock_wait": "local checks passed for bounded 120-second dpkg install lock wait and fixed safe bootstrap failure codes; new helpers completed first-attempt setup on both clean round-3 hosts; actual lock-wait contention was not deliberately exercised and apt update lists-lock contention is not covered",
-    "api_onboarding": "2026-09-07: official CNB/Tencent logins, existing CNB metadata, and TAT/CAM configuration/reuse passed; default CNB CLI repository creation blocked by missing group-resource:rw; no new runtime deployment, key issuance or OIDC acceptance. See docs/history/2026-09-07-api-live-validation.md.",
+    "api_onboarding": "2026-09-07: official CNB/Tencent logins, existing CNB metadata, and TAT/CAM configuration/reuse passed; default CNB CLI repository creation blocked by missing group-resource:rw; no new runtime deployment, key issuance or OIDC acceptance. See references/validation-summary.md#api-onboarding.",
     "clean_host_install": "round 3 first-attempt setup passed on both freshly reset Ubuntu 24.04 hosts without compatibility resume or retry; test apply 62.459 seconds and production 52.077 seconds",
     "cloud_evidence": {
       "accepted_installed_locks": {
@@ -107,7 +107,7 @@
       "metadata_note": "Evidence applies only to the exact accepted installations and candidate above. Updating this metadata does not upgrade an installation or attest a newly generated artifact lock.",
       "production_build_url": "https://cnb.cool/laoma-ai/finagent/-/build/logs/cnb-sbq-1k1tmhe79",
       "production_receipt_sha256": "92afefb5786b6feac8ecb05fcaceb68bcce395991c3885157250ce8f640376fc",
-      "report": "docs/history/2026-09-07-complete-rehearsal.md",
+      "report": "references/validation-summary.md#complete-rehearsal",
       "round": 3,
       "scope": "two clean hosts, isolated test and production, actual pipeline/candidate/approval/release, 18 synthetic business checks per environment, PostgreSQL and uploads off-host recovery",
       "skill_commit": "2adb8e8",
