@@ -154,6 +154,19 @@ class CloseoutTests(unittest.TestCase):
         self.assertFalse(current['current_runtime_verified'])
         self.assertEqual(current['next_action'], 'verify_business')
 
+    def test_current_indexes_exact_input_for_independent_read_only_resume(self):
+        self.complete_checks()
+        self.invoke(apply=True)
+        current = json.loads(self.state.read_text())['environments']['production']['current']
+        self.assertEqual(current.get('closeout_spec'), self.ref(self.spec_path))
+        indexed = current['closeout_spec']
+        before = [(p.read_bytes(), p.stat().st_mtime_ns) for p in (self.state, self.document)]
+        resumed = subprocess.run([sys.executable, str(ENTRY), '--spec', indexed['path']],
+                                 capture_output=True, text=True)
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertEqual(json.loads(resumed.stdout)['current']['next_action'], 'none')
+        self.assertEqual(before, [(p.read_bytes(), p.stat().st_mtime_ns) for p in (self.state, self.document)])
+
     def test_completed_closeout_preserves_other_state_and_repeats_without_writes(self):
         self.complete_checks()
         first = self.invoke(apply=True)

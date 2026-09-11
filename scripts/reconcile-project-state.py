@@ -269,6 +269,7 @@ def inspect_spec(spec_path):
                'application_commit': deployment['application_commit'], 'build_id': deployment['build_id'],
                'candidate_tag': deployment['candidate_tag'], 'invocation_id': deployment['invocation_id'],
                'images': images, 'deployment': spec['deployment'], 'verified_at': deployment['verified_at'],
+               'closeout_spec': {'path': str(spec_path), 'sha256': sha(spec_raw)},
                'historical_deployment_verified': True, 'current_runtime_verified': False,
                'checks': {}, 'resource_refs': spec['resource_refs'], 'required_checks': spec['required_checks']}
     for name, ref in spec['checks'].items():

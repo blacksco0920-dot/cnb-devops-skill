@@ -144,6 +144,16 @@ resume inputs there and verify the referenced receipts; older aliases and prose
 are retained history, not competing current sources. Keep the transaction's
 before-state records, other environments and unmanaged document text.
 
+For read-only closeout resumption, resolve `current.closeout_spec`, verify its
+file hash and run `reconcile-project-state.py --spec <indexed path>` without
+`--apply`. The closeout entry records this input reference automatically. Older
+indexes may lack it: consult an explicitly indexed prior execution record;
+do not search unrelated private directories or reconstruct successful steps.
+Apply this route per environment. If an older or test environment has no `current`,
+continue from its existing environment-specific acceptance index and receipts;
+absence of this newer field does not mean deployment is incomplete. Do not copy
+production's `current` into testing or fabricate a production verification receipt.
+
 Declare applicable checks in `required_checks` from the project's accepted
 scope. Missing required receipts stay pending; an empty declaration establishes
 only `deployment_verified`. `declared_acceptance_verified` covers only that
