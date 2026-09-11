@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, cp, writeFile, readFile, readdir, rm, chmod, access, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, cp, writeFile, readFile, readdir, rm, chmod, access, symlink, stat } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir, hostname } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -204,4 +204,137 @@ test('lost publisher response resumes exact server readback without another appr
   } }), /PUBLICATION_FAILED/);
   assert.equal((await f.run('publish', { apply: true })).status, 'signed');
   assert.deepEqual(await readFile(join(f.spec.session_dir, 'approval.json')), approval);
+});
+
+async function completedDeployment(t) {
+  const f = await fixture(t), current = { now: () => f.instant };
+  await f.run('prepare', { apply: true }, current); await f.run('candidate', { apply: true }, current);
+  await f.run('sign', { apply: true, authorized: true }, current); await f.run('publish', { apply: true }, current);
+  const approval = JSON.parse(await readFile(join(f.spec.session_dir, 'approval.json')));
+  const payload = JSON.parse(Buffer.from(approval.payload_b64url, 'base64url'));
+  const result = { ...f.result, approval_id: payload.approval_id, approval_sha256: sha256(canonicalBytes(approval)),
+    candidate_manifest_sha256: f.candidate.manifest_sha256, candidate_bytes_sha256: sha256(f.candidateRaw),
+    release: { ...f.result.release, git_sha: f.candidate.application_commit, controller_commit: f.candidate.controller_commit } };
+  f.annotations.production_deploy_status = 'passed'; f.annotations.production_receipt_sha256 = sha256(canonicalBytes(result));
+  const wire = f.clientFor('apply');
+  wire.task.CommandDocument.Content = Buffer.from('#!/bin/sh\n# production ' + createProductionRequest('apply', f.candidateRaw, approval) + '\n').toString('base64');
+  Object.assign(wire.task.TaskResult, { Output: canonicalBytes(result).toString('base64'),
+    ExecStartTime: new Date(f.instant + 1000).toISOString().replace('.000Z', 'Z'),
+    ExecEndTime: new Date(f.instant + 60000).toISOString().replace('.000Z', 'Z') });
+  let commandReads = 0, taskReads = 0;
+  const originalCommands = wire.client.DescribeCommands, originalTasks = wire.client.DescribeInvocationTasks;
+  wire.client.DescribeCommands = async args => {
+    assert.deepEqual(args, { CommandIds: ['cmd-DEMO1234'], Limit: 1, Offset: 0 }); commandReads++; return originalCommands(args);
+  };
+  wire.client.DescribeInvocationTasks = async args => {
+    assert.deepEqual(args, { Filters: [{ Name: 'invocation-id', Values: ['inv-DEMO1234'] }], HideOutput: false, Limit: 1, Offset: 0 });
+    taskReads++; return originalTasks(args);
+  };
+  return { ...f, wire, commandReads: () => commandReads, taskReads: () => taskReads,
+    verification: { now: () => f.instant + 90000000, createClient: () => wire.client } };
+}
+
+test('verify keeps historical proof after expiry, saves owner-only evidence, and remains read-only on retry', async t => {
+  const f = await completedDeployment(t), input = { invocationId: 'inv-DEMO1234' }, writes = f.writes(), reads = f.reads();
+  assert.equal((await f.run('verify', input, f.verification)).status, 'preview');
+  assert.equal(f.reads(), reads); assert.equal(f.commandReads(), 0);
+  const result = await f.run('verify', { ...input, apply: true }, f.verification);
+  assert.equal(result.status, 'verified'); assert.equal(result.next_action, 'none');
+  const path = join(f.spec.session_dir, 'deployment-verification/receipt.json'), raw = await readFile(path);
+  const receipt = JSON.parse(raw);
+  assert.equal(receipt.schema, 'cnb-deployment-verification/v1'); assert.equal(receipt.build_id, 'cnb-example-123');
+  assert.equal(receipt.application_commit, f.spec.application_commit); assert.equal(receipt.current_runtime_verified, false);
+  assert.equal(receipt.evidence_base, 'receipt_directory'); assert.equal(receipt.evidence.length, 7);
+  assert.equal((await stat(dirname(path))).mode & 0o777, 0o700);
+  assert.equal((await stat(path)).mode & 0o777, 0o600);
+  for (const ref of receipt.evidence) {
+    const evidencePath = join(dirname(path), ref.path);
+    assert.equal(sha256(await readFile(evidencePath)), ref.sha256); assert.equal((await stat(evidencePath)).mode & 0o777, 0o600);
+  }
+  await f.run('verify', { ...input, apply: true }, { ...f.verification, now: () => f.instant + 91000000 });
+  assert.deepEqual(await readFile(path), raw); assert.equal(f.writes(), writes); assert.equal(f.wire.invoked(), 0);
+  assert.equal(f.commandReads(), 2); assert.equal(f.taskReads(), 2); assert.equal(f.reads(), reads + 2);
+  for (const action of ['sign', 'publish']) await assert.rejects(f.run(action, { apply: true, authorized: action === 'sign' }, f.verification), /READINESS_EXPIRED|APPROVAL_EXPIRED/);
+  for (const path of [f.spec.cnb_token_file, f.spec.tat_credentials_file, f.spec.approval_private_key]) await rm(path);
+  const status = await f.run('status', {}, { now: f.verification.now });
+  assert.equal(status.status, 'verified'); assert.equal(status.next_action, 'none');
+  assert.equal(status.deployment.current_runtime_verified, false);
+  assert.doesNotMatch(JSON.stringify(status), /TEST-PAT|TAT-SECRET|TEMP-TOKEN|privateKey/);
+});
+
+test('failed readback keeps bounded partial evidence and retries without promoting a partial receipt', async t => {
+  const f = await completedDeployment(t), args = { apply: true, invocationId: 'inv-DEMO1234' };
+  await assert.rejects(f.run('verify', args, { ...f.verification, fetchImpl: async () => { throw Error('TEST-PAT-MUST-NOT-LEAK'); } }), /DEPLOYMENT_/);
+  const final = join(f.spec.session_dir, 'deployment-verification'), pending = join(f.spec.session_dir, '.deployment-verification-pending');
+  assert.equal(await exists(join(final, 'receipt.json')), false);
+  assert.equal(await exists(join(pending, 'describe-invocation-tasks.json')), true);
+  assert.notEqual((await f.run('status', {}, f.verification)).status, 'verified');
+  assert.equal((await f.run('verify', args, f.verification)).status, 'verified');
+  assert.equal(await exists(pending), false); assert.equal(f.wire.invoked(), 0);
+});
+
+test('verified status revalidates raw execution and receipt rather than trusting a terminal state flag', async t => {
+  const f = await completedDeployment(t), args = { apply: true, invocationId: 'inv-DEMO1234' };
+  await f.run('verify', args, f.verification);
+  const statePath = join(f.spec.session_dir, 'state.json'), state = JSON.parse(await readFile(statePath));
+  const path = join(f.spec.session_dir, 'deployment-verification/describe-invocation-tasks.json');
+  const task = JSON.parse(await readFile(path)); task.InvocationTaskSet[0].TaskResult.ExecEndTime = new Date(f.instant + 7200000).toISOString().replace('.000Z', 'Z');
+  await put(path, task);
+  state.files['deployment-verification/describe-invocation-tasks.json'] = sha256(await readFile(path)); await put(statePath, state);
+  await assert.rejects(f.run('status', {}, f.verification), /DEPLOYMENT_|EVIDENCE_CHANGED/);
+});
+
+test('verify requires one exact invocation and refuses options on unrelated actions', async t => {
+  const f = await fixture(t);
+  await assert.rejects(f.run('verify'), /ARGUMENTS_INVALID/);
+  await assert.rejects(f.run('verify', { invocationId: 'inv-../../wrong' }), /ARGUMENTS_INVALID/);
+  await assert.rejects(f.run('prepare', { invocationId: 'inv-DEMO1234' }), /ARGUMENTS_INVALID/);
+  await assert.rejects(f.run('verify', { invocationId: 'inv-DEMO1234', authorized: true }), /ARGUMENTS_INVALID/);
+});
+
+test('verified preview refuses replacing the already bound invocation', async t => {
+  const f = await completedDeployment(t);
+  await f.run('verify', { apply: true, invocationId: 'inv-DEMO1234' }, f.verification);
+  await assert.rejects(f.run('verify', { invocationId: 'inv-OTHER1234' }, f.verification), /DEPLOYMENT_INVOCATION_CHANGED/);
+});
+
+test('a completed atomic receipt recovers a missing state update but a terminal flag without receipt never proves deployment', async t => {
+  const f = await completedDeployment(t), statePath = join(f.spec.session_dir, 'state.json');
+  const before = JSON.parse(await readFile(statePath)); before.steps.verify = 'complete'; await put(statePath, before);
+  assert.notEqual((await f.run('status', {}, f.verification)).status, 'verified');
+  await f.run('verify', { apply: true, invocationId: 'inv-DEMO1234' }, f.verification);
+  before.steps.verify = 'pending'; await put(statePath, before);
+  assert.equal((await f.run('status', {}, f.verification)).status, 'verified');
+  assert.equal((await f.run('verify', { apply: true, invocationId: 'inv-DEMO1234' }, f.verification)).status, 'verified');
+  assert.equal(f.wire.invoked(), 0);
+});
+
+test('a forged public summary cannot bypass raw standard validation even when local file hashes are rewritten', async t => {
+  const f = await completedDeployment(t);
+  await f.run('verify', { apply: true, invocationId: 'inv-DEMO1234' }, f.verification);
+  const directory = join(f.spec.session_dir, 'deployment-verification'), receiptPath = join(directory, 'receipt.json');
+  const receipt = JSON.parse(await readFile(receiptPath)); receipt.current_runtime_verified = true; await put(receiptPath, receipt);
+  const statePath = join(f.spec.session_dir, 'state.json'), state = JSON.parse(await readFile(statePath));
+  state.files['deployment-verification/receipt.json'] = sha256(await readFile(receiptPath)); await put(statePath, state);
+  await assert.rejects(f.run('status', {}, f.verification), /DEPLOYMENT_RECEIPT_INVALID/);
+});
+
+test('failed live retry preserves historical proof while reporting that the new observation failed', async t => {
+  const f = await completedDeployment(t), args = { apply: true, invocationId: 'inv-DEMO1234' };
+  await f.run('verify', args, f.verification);
+  const path = join(f.spec.session_dir, 'deployment-verification/receipt.json'), raw = await readFile(path);
+  f.annotations.production_deploy_status = 'failed';
+  await assert.rejects(f.run('verify', args, f.verification), /DEPLOYMENT_VERIFICATION_FAILED/);
+  assert.deepEqual(await readFile(path), raw);
+  const status = await f.run('status', {}, f.verification);
+  assert.equal(status.status, 'verified'); assert.equal(status.deployment.current_runtime_verified, false);
+  assert.equal(status.next_action, 'none'); assert.equal(f.wire.invoked(), 0);
+});
+
+test('verify preflight validates the protected TAT binding before transport is available', async t => {
+  const f = await fixture(t);
+  await put(f.spec.production_binding, { ...f.binding, command_id: 'cmd-PENDING0' });
+  await f.run('prepare', { apply: true }); await f.run('candidate', { apply: true });
+  await put(join(f.spec.session_dir, 'approval.json'), canonicalBytes(f.approval));
+  await assert.rejects(f.run('verify', { invocationId: 'inv-DEMO1234' }), /DEPLOYMENT_INPUT_INVALID/);
 });

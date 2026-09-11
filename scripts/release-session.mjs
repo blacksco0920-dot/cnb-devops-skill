@@ -3,7 +3,7 @@
  * State records evidence; it never grants authorization or replaces live gates.
  */
 import { constants } from 'node:fs';
-import { lstat, realpath, open, readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
+import { lstat, realpath, open, readFile, writeFile, mkdir, rename, unlink, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -12,9 +12,12 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseStrictJson } from '../assets/cnb-tcr-tat/ci/strict-json.mjs';
+import { DEPLOYMENT_FILES, deploymentEvidenceFiles, verifyDeploymentEvidence } from './release-deployment.mjs';
 
 const executeFile = promisify(execFile), SDK = 'tencentcloud-sdk-nodejs-tat';
-const ACTIONS = ['prepare', 'candidate', 'sign', 'publish', 'status'];
+const ACTIONS = ['prepare', 'candidate', 'sign', 'publish', 'status', 'verify'];
+const DEPLOYMENT_DIRECTORY = 'deployment-verification';
+const DEPLOYMENT_STATE_FILES = [...DEPLOYMENT_FILES, 'receipt.json'].map(name => `${DEPLOYMENT_DIRECTORY}/${name}`);
 const SPEC_KEYS = ['schema', 'project_dir', 'bundle_dir', 'session_dir', 'bundle_lock_sha256', 'production_lock_sha256',
   'candidate_tag', 'application_commit', 'production_binding', 'approval_private_key', 'cnb_token_file', 'tat_credentials_file'];
 const PATH_KEYS = ['project_dir', 'bundle_dir', 'session_dir', 'production_binding', 'approval_private_key', 'cnb_token_file', 'tat_credentials_file'];
@@ -55,14 +58,15 @@ async function safeRead(path, privateMode = false, maxBytes = 512 * 1024) {
   } finally { await handle?.close(); }
 }
 
-async function atomicJson(path, value) {
+async function atomicBytes(path, raw) {
   const temp = `${path}.${randomUUID()}.tmp`, handle = await open(temp, 'wx', 0o600);
-  try { await handle.writeFile(JSON.stringify(value) + '\n'); await handle.sync(); } finally { await handle.close(); }
+  try { await handle.writeFile(raw); await handle.sync(); } finally { await handle.close(); }
   try {
     await rename(temp, path);
     const directory = await open(dirname(path), 'r'); try { await directory.sync(); } finally { await directory.close(); }
   } finally { await unlink(temp).catch(() => {}); }
 }
+const atomicJson = (path, value) => atomicBytes(path, Buffer.from(JSON.stringify(value) + '\n'));
 
 function privateLocation(path, project) {
   const name = relative(project, path);
@@ -197,7 +201,7 @@ async function loadState(context, now) {
     check(exact(state, ['schema', 'input_sha256', 'started_at', 'updated_at', 'steps', 'files', 'events']) && state.schema === 'cnb-release-session-state/v1'
       && state.input_sha256 === inputHash && object(state.steps) && object(state.files) && Array.isArray(state.events), 'SESSION_INPUT_CHANGED');
     for (const [name, digest] of Object.entries(state.files)) {
-      check(['candidate/annotations.json', 'candidate/candidate.json', 'candidate/readiness.json', 'approval.json', 'sign-result.json', 'publication-result.json'].includes(name)
+      check(['candidate/annotations.json', 'candidate/candidate.json', 'candidate/readiness.json', 'approval.json', 'sign-result.json', 'publication-result.json', ...DEPLOYMENT_STATE_FILES].includes(name)
         && /^[0-9a-f]{64}$/.test(digest), 'STATE_INVALID');
       check(await exists(join(spec.session_dir, name)) && hash(await safeRead(join(spec.session_dir, name), true)) === digest, 'EVIDENCE_CHANGED');
     }
@@ -231,7 +235,7 @@ async function materials(context, now, requireApproval = false, directory = join
   return { config, candidateConfig, candidateRaw, readiness, approval, publicKey, invocationId };
 }
 
-async function annotationGet(context, fetchImpl) {
+async function annotationGet(context, fetchImpl, onRaw) {
   let raw;
   try {
     const token = await tokenFrom(context.spec.cnb_token_file);
@@ -242,11 +246,93 @@ async function annotationGet(context, fetchImpl) {
     for await (const chunk of response.body) { size += chunk.length; check(size <= 256 * 1024, 'CANDIDATE_FETCH_FAILED'); chunks.push(Buffer.from(chunk)); }
     raw = Buffer.concat(chunks);
   } catch { fail('CANDIDATE_FETCH_FAILED'); }
+  if (onRaw) await onRaw(raw);
   const rows = json(raw), values = Object.create(null);
   check(Array.isArray(rows) && rows.length <= 1024, 'ANNOTATIONS_INVALID');
   for (const item of rows) { check(object(item) && typeof item.key === 'string' && typeof item.value === 'string' && !Object.hasOwn(values, item.key), 'ANNOTATIONS_INVALID'); values[item.key] = item.value; }
   check(values.production_readiness_status === 'passed' && values.candidate_commit === context.spec.application_commit, 'READINESS_REQUIRED');
   return values;
+}
+
+async function deploymentInputs(context) {
+  const directory = join(context.spec.session_dir, 'candidate');
+  const approvalRaw = await safeRead(join(context.spec.session_dir, 'approval.json'), true);
+  const readinessRaw = await safeRead(join(directory, 'readiness.json'), true);
+  let inputs;
+  try {
+    context.tat.validateBinding(context.binding, context.config);
+    const payload = context.contract.verifyApproval(context.contract.parseCanonical(approvalRaw), context.publicKey);
+    // Static local preflight only: the later verifier must prove validity across
+    // the actual TAT execution window before anything can become verified.
+    inputs = await materials(context, () => context.contract.utc(payload.issued_at), true);
+  } catch { fail('DEPLOYMENT_INPUT_INVALID'); }
+  return { ...context, ...inputs, readinessRaw, approvalRaw, readinessInvocationId: inputs.invocationId };
+}
+
+function pinDeployment(context, receipt) {
+  return { ...receipt, bundle_lock_sha256: context.spec.bundle_lock_sha256, production_lock_sha256: context.spec.production_lock_sha256 };
+}
+
+async function storedDeployment(context, now) {
+  const directory = join(context.spec.session_dir, DEPLOYMENT_DIRECTORY);
+  if (!await exists(directory)) return null;
+  await safeDirectory(directory, true);
+  const receipt = json(await safeRead(join(directory, 'receipt.json'), true));
+  const verifiedAt = Date.parse(receipt.verified_at);
+  check(Number.isFinite(verifiedAt) && verifiedAt <= now() && new Date(verifiedAt).toISOString() === receipt.verified_at, 'DEPLOYMENT_RECEIPT_INVALID');
+  const inputs = await deploymentInputs(context), evidence = {};
+  for (const name of DEPLOYMENT_FILES) evidence[name] = await safeRead(join(directory, name), true);
+  for (const [name, raw] of Object.entries({ 'candidate.json': inputs.candidateRaw, 'readiness.json': inputs.readinessRaw, 'approval.json': inputs.approvalRaw })) {
+    check(evidence[name].equals(raw), 'DEPLOYMENT_SOURCE_CHANGED');
+  }
+  let expected;
+  try { expected = pinDeployment(context, await verifyDeploymentEvidence({ ...inputs, evidence, invocationId: receipt.invocation_id, now: () => verifiedAt })); }
+  catch { fail('DEPLOYMENT_EVIDENCE_INVALID'); }
+  const files = deploymentEvidenceFiles({ ...inputs, evidence });
+  for (const name of DEPLOYMENT_FILES) check(files[name].equals(evidence[name]), 'DEPLOYMENT_EVIDENCE_INVALID');
+  check(context.contract.canonicalBytes(receipt).equals(context.contract.canonicalBytes(expected)), 'DEPLOYMENT_RECEIPT_INVALID');
+  return receipt;
+}
+
+async function deploymentReadback(context, invocationId, now, fetchImpl, createClient, previous) {
+  const { spec } = context, directory = join(spec.session_dir, DEPLOYMENT_DIRECTORY);
+  const pending = join(spec.session_dir, '.deployment-verification-pending'), inputs = await deploymentInputs(context);
+  if (previous) check(previous.invocation_id === invocationId, 'DEPLOYMENT_INVOCATION_CHANGED');
+  if (!await exists(pending)) await mkdir(pending, { mode: 0o700 });
+  await safeDirectory(pending, true);
+  const target = { schema: 'cnb-deployment-verification-attempt/v1', invocation_id: invocationId, input_sha256: context.inputHash };
+  const targetPath = join(pending, 'target.json');
+  if (await exists(targetPath)) check(context.contract.canonicalBytes(json(await safeRead(targetPath, true))).equals(context.contract.canonicalBytes(target)), 'DEPLOYMENT_INVOCATION_CHANGED');
+  else await atomicJson(targetPath, target);
+  const evidence = {};
+  const capture = async (name, raw) => {
+    check(Buffer.isBuffer(raw) && raw.length > 0 && raw.length <= 512 * 1024, 'DEPLOYMENT_EVIDENCE_INVALID');
+    await atomicBytes(join(pending, name), raw); evidence[name] = raw;
+  };
+  try {
+    const client = await productionClient(context, createClient);
+    // The only cloud operations are these two fixed Describe calls and one GET.
+    const commands = await client.DescribeCommands({ CommandIds: [context.binding.command_id], Limit: 1, Offset: 0 });
+    await capture('describe-commands.json', Buffer.from(JSON.stringify(commands) + '\n'));
+    const tasks = await client.DescribeInvocationTasks({ Filters: [{ Name: 'invocation-id', Values: [invocationId] }], HideOutput: false, Limit: 1, Offset: 0 });
+    await capture('describe-invocation-tasks.json', Buffer.from(JSON.stringify(tasks) + '\n'));
+    await annotationGet(context, fetchImpl, raw => capture('annotations-response.json', raw));
+    const receipt = pinDeployment(context, await verifyDeploymentEvidence({ ...inputs, invocationId, evidence, now }));
+    if (previous) {
+      check(['production_receipt_sha256', 'candidate_bytes_sha256', 'approval_sha256', 'execution_started_at', 'execution_finished_at']
+        .every(key => receipt[key] === previous[key]), 'DEPLOYMENT_EVIDENCE_CHANGED');
+      await rm(pending, { recursive: true }); return previous;
+    }
+    for (const [name, raw] of Object.entries(deploymentEvidenceFiles({ ...inputs, evidence }))) await capture(name, raw);
+    await atomicJson(join(pending, 'receipt.json'), receipt);
+    await unlink(targetPath);
+    await rename(pending, directory);
+    const parent = await open(spec.session_dir, 'r'); try { await parent.sync(); } finally { await parent.close(); }
+    return await storedDeployment(context, now);
+  } catch (error) {
+    if (error instanceof SessionError && error.code.startsWith('DEPLOYMENT_')) throw error;
+    fail('DEPLOYMENT_VERIFICATION_FAILED');
+  }
 }
 
 async function productionClient(context, createClient) {
@@ -259,8 +345,10 @@ async function productionClient(context, createClient) {
 }
 
 /** External effects are injectable at process, HTTP and SDK boundaries for local rehearsal. */
-export async function runSession({ action, specPath, apply = false, authorized = false }, { execute = executeFile, fetchImpl = globalThis.fetch, now = Date.now, createClient } = {}) {
-  check(ACTIONS.includes(action) && typeof apply === 'boolean' && typeof authorized === 'boolean' && !(action === 'status' && apply), 'ARGUMENTS_INVALID');
+export async function runSession({ action, specPath, apply = false, authorized = false, invocationId }, { execute = executeFile, fetchImpl = globalThis.fetch, now = Date.now, createClient } = {}) {
+  check(ACTIONS.includes(action) && typeof apply === 'boolean' && typeof authorized === 'boolean' && !(action === 'status' && apply)
+    && (!authorized || action === 'sign' && apply)
+    && (action === 'verify' ? typeof invocationId === 'string' && /^inv-[A-Za-z0-9-]{8,64}$/.test(invocationId) : invocationId === undefined), 'ARGUMENTS_INVALID');
   check(process.versions.node.split('.')[0] === '22' && typeof process.getuid === 'function' && process.env.CNB !== 'true', 'LOCAL_NODE_22_REQUIRED');
   const context = await loadContext(specPath), { spec } = context;
   const statePath = join(spec.session_dir, 'state.json'), lockPath = join(spec.session_dir, '.lock');
@@ -277,7 +365,9 @@ export async function runSession({ action, specPath, apply = false, authorized =
     const finish = async (status, details = {}) => { state.steps[action] = 'complete'; state.events.push({ action, status, at: stamp(now) }); await save(); return { schema: 'cnb-release-session-result/v1', status, ...details }; };
     const hasCandidate = await exists(join(spec.session_dir, 'candidate'));
     const hasApproval = await exists(join(spec.session_dir, 'approval.json'));
-    if (hasCandidate) {
+    const deployment = ['status', 'verify'].includes(action) ? await storedDeployment(context, now) : null;
+    if (action === 'verify' && deployment) check(deployment.invocation_id === invocationId, 'DEPLOYMENT_INVOCATION_CHANGED');
+    if (hasCandidate && action !== 'verify' && !(action === 'status' && deployment)) {
       try { await materials(context, now, hasApproval); }
       catch (error) {
         if (action !== 'status') throw error;
@@ -287,11 +377,18 @@ export async function runSession({ action, specPath, apply = false, authorized =
       }
     }
     if (action === 'status') {
+      if (deployment) return { schema: 'cnb-release-session-result/v1', status: 'verified', steps: { ...state.steps, verify: 'complete' }, next_action: 'none',
+        deployment, receipt_path: join(spec.session_dir, DEPLOYMENT_DIRECTORY, 'receipt.json'), locked: await lockActive(lockPath) };
       const next = hasApproval ? state.steps.publish === 'complete' ? 'native-production-approval' : 'publish' : hasCandidate ? 'sign' : state.steps.prepare === 'complete' ? 'candidate' : 'prepare';
       return { schema: 'cnb-release-session-result/v1', status: 'observed', steps: state.steps, next_action: next,
         candidate_tag: spec.candidate_tag, application_commit: spec.application_commit, started_at: state.started_at, updated_at: state.updated_at, locked: await lockActive(lockPath) };
     }
     if (!apply) {
+      if (action === 'verify') {
+        check(hasCandidate && hasApproval, 'DEPLOYMENT_INPUT_REQUIRED'); await deploymentInputs(context);
+        return { schema: 'cnb-release-session-result/v1', status: 'preview', action, invocation_id: invocationId,
+          candidate_tag: spec.candidate_tag, next_action: 'verify --apply', cloud_writes: 0 };
+      }
       if (action === 'sign') check(hasCandidate, 'CANDIDATE_REQUIRED');
       if (action === 'publish') return { ...await context.publisher.publishProductionApproval({ ...await materials(context, now, true), now }), next_action: 'publish --apply' };
       return { schema: 'cnb-release-session-result/v1', status: 'preview', action, candidate_tag: spec.candidate_tag,
@@ -307,6 +404,13 @@ export async function runSession({ action, specPath, apply = false, authorized =
       return finish('prepared');
     }
     check(state.steps.prepare === 'complete' && await sdkInstalled(context.production), 'PREPARE_REQUIRED');
+    if (action === 'verify') {
+      check(hasCandidate && hasApproval, 'DEPLOYMENT_INPUT_REQUIRED');
+      await start();
+      const verified = await deploymentReadback(context, invocationId, now, fetchImpl, createClient, deployment);
+      await record(DEPLOYMENT_STATE_FILES);
+      return finish('verified', { next_action: 'none', deployment: verified, receipt_path: join(spec.session_dir, DEPLOYMENT_DIRECTORY, 'receipt.json'), cloud_writes: 0 });
+    }
     if (action === 'candidate') {
       if (hasCandidate && state.steps.candidate === 'complete') return { schema: 'cnb-release-session-result/v1', status: 'candidate', reused: true };
       await start();
@@ -373,14 +477,14 @@ export async function runSession({ action, specPath, apply = false, authorized =
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.length === 1 && args[0] === '--help') { process.stdout.write('Usage: node scripts/release-session.mjs <prepare|candidate|sign|publish|status> --spec <absolute protected JSON> [--apply] [--authorize-production-apply]\nDefault preview is offline. sign --apply requires explicit production authorization. Keep the same spec and session directory across retries.\n'); return; }
+  if (args.length === 1 && args[0] === '--help') { process.stdout.write('Usage: node scripts/release-session.mjs <prepare|candidate|sign|publish|status|verify> --spec <absolute protected JSON> [--apply] [--authorize-production-apply] [--invocation-id <exact TAT invocation>]\nDefault preview is offline. sign --apply requires explicit production authorization. verify requires --invocation-id; verify --apply only reads TAT/CNB and persists local historical proof. Keep the same spec and session directory across retries.\n'); return; }
   const action = args.shift(), options = {};
   for (let i = 0; i < args.length; i++) {
-    const key = args[i]; check(['--spec', '--apply', '--authorize-production-apply'].includes(key) && !Object.hasOwn(options, key), 'ARGUMENTS_INVALID');
-    options[key] = key === '--spec' ? args[++i] : true;
+    const key = args[i]; check(['--spec', '--apply', '--authorize-production-apply', '--invocation-id'].includes(key) && !Object.hasOwn(options, key), 'ARGUMENTS_INVALID');
+    options[key] = ['--spec', '--invocation-id'].includes(key) ? args[++i] : true;
   }
   check(!options['--authorize-production-apply'] || action === 'sign' && options['--apply'], 'ARGUMENTS_INVALID');
-  const result = await runSession({ action, specPath: options['--spec'], apply: options['--apply'] === true, authorized: options['--authorize-production-apply'] === true });
+  const result = await runSession({ action, specPath: options['--spec'], apply: options['--apply'] === true, authorized: options['--authorize-production-apply'] === true, invocationId: options['--invocation-id'] });
   process.stdout.write(JSON.stringify(result) + '\n');
 }
 const invokedPath = process.argv[1] ? await realpath(resolve(process.argv[1])).catch(() => null) : null;

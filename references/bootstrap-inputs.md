@@ -208,7 +208,7 @@ node "$SKILL_DIR/scripts/configure-tat.mjs" \
 <a id="production"></a>
 ## 本机生产准备与授权续接
 
-使用 `scripts/release-session.mjs`，不再临时编写候选下载、凭据加载或签名拼接程序。它调用候选提交中的标准 gate/signer/publisher；不合并 main、不点击 CNB 原生按钮、不执行生产部署。首次使用运行 `node "$SKILL_DIR/scripts/release-session.mjs" --help` 查看完整参数。
+使用 `scripts/release-session.mjs`，不再临时编写候选下载、凭据加载、签名拼接或生产结果回读程序。它调用候选提交中的标准 gate/signer/publisher 和发布验证器；不合并 main、不点击 CNB 原生按钮、不执行生产部署。首次使用运行 `node "$SKILL_DIR/scripts/release-session.mjs" --help` 查看完整参数。
 
 AI 从本项目已审配置和私密凭据记录生成 `0600` 的 spec，并先建 `0700` 的 `session_dir`。路径均为绝对路径；`bundle_dir` 为测试生成包根目录，生产子包固定为其 `production/`。两份 lock 摘要来自已审生成记录；凭据沿用本项目已经批准的用途和范围，不要求用户再填写这些技术字段。
 
@@ -251,7 +251,16 @@ node "$SKILL_DIR/scripts/release-session.mjs" publish --spec "$PRIVATE_DIR/relea
 
 `candidate` 读取 annotations，并用标准 Git gate 验证受控分支、annotated Tag、完整提交和候选；不依赖 Tag 详情 API。保留 `candidate.json`、`readiness.json` 的原始字节。`sign` 必须有已明确的生产意图，按 invocation 独立回读 TAT；`publish` 使用限定仓库的 PAT，预览后写入并逐项回读授权，最后才标 signed。两阶段隔离凭据，CI 和主机不接触签名私钥。
 
-随后由 CNB owner 在同一 Tag 完成原生批准，`tag_deploy.production` 仍会独立校验签名并发布测试过的相同 digest。已有授权不重复询问；原生批准不代替本机签名。实际部署结束后再核对完整镜像、HTTPS/发布身份与项目业务。
+随后由 CNB owner 在同一 Tag 完成原生批准，`tag_deploy.production` 仍会独立校验签名并发布测试过的相同 digest。已有授权不重复询问；原生批准不代替本机签名。实际部署结束后，从本次生产流水线取得精确 TAT invocation ID，复用同一 spec：
+
+```sh
+node "$SKILL_DIR/scripts/release-session.mjs" verify \
+  --spec "$PRIVATE_DIR/release-session.json" --invocation-id "$PRODUCTION_INVOCATION_ID"
+node "$SKILL_DIR/scripts/release-session.mjs" verify \
+  --spec "$PRIVATE_DIR/release-session.json" --invocation-id "$PRODUCTION_INVOCATION_ID" --apply
+```
+
+`verify` 默认离线预览；`--apply` 只读 TAT/CNB 并保存本机证据，核对该次执行的目标、请求、完整 digest、回执与签名有效窗口。它验证历史执行，不证明当前运行或业务已验收。共享主机再使用声明驱动的 `verify-coexistence.py`；业务、页面与恢复使用各自实际回执，最后由 `reconcile-project-state.py` 更新现有本地索引。输入、范围和固定命令见[发布后收尾](post-release-closeout.md)。
 
 中断或换会话时先执行：
 
@@ -259,7 +268,9 @@ node "$SKILL_DIR/scripts/release-session.mjs" publish --spec "$PRIVATE_DIR/relea
 node "$SKILL_DIR/scripts/release-session.mjs" status --spec "$PRIVATE_DIR/release-session.json"
 ```
 
-状态只说明本机执行到哪里，不作为云端成功或授权来源。保持同一 spec 和候选，按返回阶段续接；已有签名必须重新通过有效期、候选和 prepared 绑定校验，发布程序支持对同一已签内容回读复用。签名仅本机落盘：准备错误且尚无签名文件时，可修正输入条件后重新核验再签；已有不完整或非法签名则保留并阻断，不覆盖。不得删状态或证据来规避未知结果。签名最长一小时且不超过 prepared 到期；到期时 `status` 返回 blocked 和 `refresh_readiness_new_session`，按原门禁取得新就绪及授权，并保留旧会话记录。
+`status` 离线核验本机进度与已保存证据，不查询当前云端状态，也不授予发布权限。已有完整且有效的历史执行证明时，返回 `verified`、`next_action=none`；即使原授权现已过期，也按实际执行窗口验证该次发布。尚无该证明时，仍按准备、候选、签名和发布阶段续接；不能把本机阶段完成当作云端发布成功。
+
+新 `sign`/`publish` 始终重新校验当前有效期、候选和 prepared 绑定，历史成功不延长授权。签名最长一小时且不超过 prepared 到期；未完成会话到期时，`status` 返回 blocked 和 `refresh_readiness_new_session`，按原门禁取得新就绪及授权并保留旧记录。准备错误且尚无签名文件时可修正输入后重新核验；已有不完整或非法签名则保留并阻断。不得删改状态或证据来规避未知结果。
 
 <a id="recovery"></a>
 ## 固定导出、下载与离机恢复

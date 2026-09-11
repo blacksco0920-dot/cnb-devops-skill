@@ -16,8 +16,8 @@ execution code. Keep an existing accepted topology unless the user requests a
 change or an observed incompatibility requires one; adopting this default does
 not authorize migrating a working registry or deployment system.
 
-Read repository-local instructions, then `docs/DEPLOYMENT.md` and
-`docs/PROJECT_STATUS.md` when present. Do not ask a human to repeat a fact that
+Read repository-local instructions, then `docs/DEPLOYMENT.md` and the existing
+authoritative status document when present. Do not ask a human to repeat a fact that
 the repository, its accepted receipts, or a supplied control record can show.
 Read [release safety](release-safety.md) for the current candidate/evidence rules,
 the applicable [human handoff](human-handoffs.md) when an input or human action is
@@ -72,9 +72,9 @@ Maintain two living documents in the business repository:
 - `docs/DEPLOYMENT.md`: stable topology, governed branches, build/release flow,
   probes, configuration classes, data/backup/rollback, and only applicable
   shared-host rules.
-- `docs/PROJECT_STATUS.md`: current commits, build/candidate identities, full
-  digest map, evidence, readiness/approval/execution state, blockers, and one
-  next action.
+- The existing authoritative status document (`docs/PROJECT_STATUS.md` for a
+  new project): current commits, build/candidate identities, full digest map,
+  evidence, readiness/approval/execution state, blockers, and one next action.
 
 Expose names and classifications—not values—in `.env.example` and, when CNB
 Secret data is used, `.cnb/secret.example.yml`. Classify a secret as `build`,
@@ -96,6 +96,9 @@ facts before requesting only their undiscoverable inputs.
    until the current records resolve it. Update the index; a new policy decision
    does not rewrite an immutable candidate. Preserve unresolved transaction and
    recovery evidence and follow [release safety](release-safety.md).
+   For a completed production execution, use `release-session.mjs verify` and
+   its retained proof to check authorization across the actual execution window;
+   later expiry does not erase verified history or authorize a new release.
 3. Retain completed maintenance receipts and valid secret receipts. Do not
    repeat completed maintenance by inference or ask for already accepted setup.
    Reuse existing authorization while its recorded scope remains valid; do not
@@ -107,9 +110,9 @@ facts before requesting only their undiscoverable inputs.
    reviewable draft and request only the missing fact, action or confirmation
    through the human handoff process; it does not authorize release or maintenance.
 
-Refresh `docs/PROJECT_STATUS.md` after a release result, failure, recovery,
-policy decision, or handoff. Record the last verification time and evidence
-sources even when an attempted action remains blocked.
+Refresh the existing authoritative status document after a release result,
+failure, recovery, policy decision, or handoff. Record the last verification
+time and evidence sources even when an attempted action remains blocked.
 
 Keep this document as the current index; move phase history into linked records
 instead of accumulating competing resume files. Index private evidence by its
@@ -131,6 +134,23 @@ existing journal before constructing commands; use the fixed entry to resume
 and verify its artifacts. A completed local stage cannot establish current
 cloud status, extend an expired signature, or justify repeating an uncertain
 export. Keep credential values and raw backup contents out of the project index.
+
+After release verification, use [post-release closeout](post-release-closeout.md)
+and `scripts/reconcile-project-state.py` to update the existing local state and
+status document. Preview first; `--apply` writes only local files. The fixed
+`<!-- cnb-devops:current:<env>:begin -->` / `end` block and private
+`environments.<env>.current` are the current index for that environment. Resolve
+resume inputs there and verify the referenced receipts; older aliases and prose
+are retained history, not competing current sources. Keep the transaction's
+before-state records, other environments and unmanaged document text.
+
+Declare applicable checks in `required_checks` from the project's accepted
+scope. Missing required receipts stay pending; an empty declaration establishes
+only `deployment_verified`. `declared_acceptance_verified` covers only that
+declared set, not unlisted business, UI, coexistence or recovery checks. Historical
+deployment proof does not establish current runtime; keep its execution time
+separate from each live observation time. Business and UI adapters remain in
+the business repository.
 
 This compact synthetic example is a PROJECT_STATUS index, not a new receipt
 schema. Replace it with observed project facts; use explicit `unknown` or
@@ -232,9 +252,11 @@ never request secret values in chat.
    policy, including its actor-separation requirements.
 6. Explicitly execute the fixed apply Saved Command with the same digest map;
    approval does not execute production.
-7. Record actual production runtime and public evidence before marking the
-   server delivery complete. On failure, index the transaction and recovery
-   state and follow [release safety](release-safety.md) before another release.
+7. Use the [fixed closeout entries](post-release-closeout.md) to verify production
+   execution, collect applicable current runtime/public and business evidence,
+   and reconcile the existing index before marking the declared delivery complete.
+   On failure, index the transaction and recovery state and follow
+   [release safety](release-safety.md) before another release.
 
 ## Independent client delivery
 
