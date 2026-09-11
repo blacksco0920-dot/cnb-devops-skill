@@ -4,11 +4,20 @@ AI 接入兼容项目时先运行生成器，不重新编写发布控制器。�
 
 AI 执行时配合[完整输入与命令](bootstrap-inputs.md)：包含双环境包路径、SSH/APT 盘点、bootstrap spec、Docker 拉取配置、生产签名与导出下载。示例只用非秘密占位；实际值留在项目批准的私密目录，沿用已有阶段授权。
 
-标准首装使用两台独立的 Ubuntu 24.04 / Linux amd64 主机、Docker Compose、PostgreSQL 16 和可选 Redis 7；应用与发布程序同仓同提交。包内覆盖**测试与候选、显式配置的生产、SSH 首装和隔离恢复**。只请求测试时只配置、操作该环境；其他数据库、已有数据、活动版本升级或复杂共享主机先列出差异，按对应入口处理。
+标准首装使用两台独立的 Ubuntu 24.04 / Linux amd64 主机、Docker Compose、必需的 PostgreSQL 16 和可选 Redis 7；应用与发布程序同仓同提交。无数据库项目和其他数据库不在当前固定运行包支持范围内；不通过新增无业务需要的数据库来适配。包内覆盖**测试与候选、显式配置的生产、SSH 首装和隔离恢复**。只请求测试时只配置、操作该环境；已有数据、活动版本升级或复杂共享主机先列出差异，按对应入口处理。
 
 用户要求在既有两台服务器追加项目时，符合原生 Caddy 条件的采用[同主机追加流程](native-caddy-shared.md)，保留旧项目并分别验证共存；不要默认替换已有环境。
 
 ## 1．生成项目文件
+
+<a id="generator-preflight"></a>
+### 生成前检查
+
+先确认项目适用，再用本次实际使用的 Python 检查 `import yaml, jsonschema`；优先复用已提供或已有的工具虚拟环境。依赖缺失时，在允许安装的范围内由 AI 准备独立虚拟环境并安装下列锁定版本，不改系统 Python。禁止联网或安装时记录这一局部限制，不反复重试生成器、不让用户排查 Python；它不等于项目配置校验失败。
+
+接着核对本次生成所需的非秘密输入。能从代码、已授权账号或已有记录得到的由 AI 填写，缺失项保留在状态文档，按[人员交接](human-handoffs.md#把当前动作交给人)只请求当前必要信息。示例值不能冒充已存在的仓库、目标或资源；只有明确的离线演练可用标明为合成的值做本地生成，产物不能用于真实发布。
+
+### 适配并生成
 
 从[完整配置示例](../assets/cnb-tcr-tat/project.full.example.yml)开始：一个 Web 服务、PostgreSQL 和 uploads，包含隔离的测试/生产配置与恢复范围。它是供 AI 适配的配置起点，不附带业务应用，也不创建云资源。按实际项目改写仓库、域名、Dockerfile、构建上下文、验证/迁移命令、服务端口、身份探针和业务表；不能把示例表名当作已存在或已验收的数据。
 
@@ -17,18 +26,20 @@ AI 执行时配合[完整输入与命令](bootstrap-inputs.md)：包含双环境
 GitHub 为源码入口时显式设置 `github_sync: true`，生成同 SHA 同步工作流；CNB 原生项目保持 false。保存为业务仓库的 `deploy/project.yml`，集中维护非秘密项目差异；服务名和数量由配置决定。
 
 ```sh
-# SKILL_DIR 指向已经加载的 Skill；PROJECT_DIR 指向业务仓库。
-python3 -m pip install PyYAML==6.0.2 jsonschema==4.25.1
-python3 "$SKILL_DIR/scripts/prepare-project.py" \
+# SKILL_DIR 指向已加载的 Skill；PROJECT_DIR 指向业务仓库。
+# GENERATOR_PYTHON 指向已核验依赖的 Python；需安装时在独立虚拟环境运行：
+# "$GENERATOR_PYTHON" -m pip install PyYAML==6.0.2 jsonschema==4.25.1
+"$GENERATOR_PYTHON" -c 'import yaml, jsonschema'
+"$GENERATOR_PYTHON" "$SKILL_DIR/scripts/prepare-project.py" \
   --project-root "$PROJECT_DIR" --config "$PROJECT_DIR/deploy/project.yml" --diff
 # 核对差异后应用本地文件，不调用任何云 API。
-python3 "$SKILL_DIR/scripts/prepare-project.py" \
+"$GENERATOR_PYTHON" "$SKILL_DIR/scripts/prepare-project.py" \
   --project-root "$PROJECT_DIR" --config "$PROJECT_DIR/deploy/project.yml" --apply
 ```
 
 生成的 `deploy/vendor/cnb-devops/` 包含 CI/主机核心、依赖锁、项目策略、Compose、TAT 命令及工件摘要。配置 `production.host`、`production.tat_import`、Ed25519 SPKI PEM 格式的 `production.approval_public_key`，并按需填写 `production.services` 的环境差异后，同次生成独立的 `production/` 子包及生产事件；不配置生产则保持门禁阻断。私钥不进项目、主机或 CI。配置 `recovery` 声明全部持久目录的 `backup/rebuild` 分类和必须非空的业务表。
 
-`.cnb.yml` 保留无关任务；同名任务冲突或手改核心会明确阻断。已有项目文档保留，AI 补充实际结果。普通配置更新重新预览/应用；公共核心升级需检查版本差异，不追随远程 main 自动更新。
+生成器维护 `.cnb.yml` 中自己的事件、`.cnb/tag_deploy.yml`、`deploy/vendor/cnb-devops/` 及其中的 `generation-lock.json`。它保留无关任务，同名事件无归属或受管文件漂移会阻断。生成前不要手写这些位置的发布草稿，即使内容只是退出失败；不伪造锁，也不删除已有项目的配置来绕过冲突。已有冲突先核对来源与差异。已有项目文档保留，AI 补充实际结果；普通配置更新重新预览/应用，公共核心升级检查版本差异，不追随远程 main 自动更新。
 
 构建用 `GIT_SHA`、`BUILD_ID` 两个 Docker build args。每个服务必须暴露精确的发布身份：`schema=cnb-release-identity/v1`、`service`、`git_sha`、`build_id`，可以用随包的 `ci/release-identity.mjs` 生成静态 JSON；动态 API 按配置提供同样数据。`unknown/development` 仅供本地开发，不能通过部署验收。身份文件如何随应用提供是必要的业务适配，不改发布核心。
 
